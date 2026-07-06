@@ -1,0 +1,536 @@
+package fs;
+
+import debug from "../../../MyKernel/src/debug/debug.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import mem from "../../../MyKernel/src/mm/mem.mln";
+import serial from "../../../MyKernel/src/io/serial.mln";
+import ssd from "ssd.mln";
+
+// MyFileSystem (MFS): a flat, FAT-like filesystem over the SSD block device.
+//
+// Disk layout (65536-byte blocks, 16384 blocks = 1 GB):
+//   block 0          superblock (magic, version, max_files)
+//   block 1          file entry table (2048 entries x 32 bytes)
+//   block 2          block allocation bitmap (16384 bits = 2048 bytes)
+//   block 3..16383   data blocks
+//
+// File entry (32 bytes):
+//   off 0   filename (16 bytes, null-terminated)
+//   off 16  first_block (0 = free entry)
+//   off 20  file_size (bytes)
+//   off 24  flags (reserved)
+//   off 28  reserved
+//
+// Data block: bytes[0..4]      = next_block (0 = end of chain),
+//             bytes[4..65536]  = payload (65532 bytes).
+
+i32 MAGIC        = 0x4D465331; // 'MFS1' (MyFileSystem v1)
+i32 VERSION      = 1;
+i32 ENTRY_SIZE   = 32;
+i32 NAME_MAX     = 16;
+
+i32 BLOCK_SIZE   = 65536; // must match ssd block size
+i32 BLOCK_COUNT  = 16384;
+i32 PAYLOAD      = 65532; // BLOCK_SIZE - 4 (next pointer)
+
+// Disk layout. One 65536-byte block holds 2048 entries (65536 / 32) and the
+// allocation bitmap needs only BLOCK_COUNT bits (16384 / 8 = 2048 bytes), so a
+// single block each suffices for the entry table and bitmap.
+i32 SB_BLOCK         = 0;
+i32 ENTRY_BLOCK      = 1; // file entry table (1 block)
+i32 BITMAP_BLOCK     = 2; // block allocation bitmap (1 block)
+i32 DATA_START       = 3;
+i32 ENTRIES_PER_BLOCK = 2048; // BLOCK_SIZE / ENTRY_SIZE
+i32 MAX_FILES        = 2048;  // one full entry block
+
+// Shared block buffer (allocated at init).
+i32 g_buf = 0;
+i32 g_enabled = 0;
+
+// Open file table (in memory). One slot per open file descriptor.
+i32 FD_MAX = 8;
+
+typedef struct {
+    i32 entry_idx;   // file entry index (-1 = unused slot)
+    i32 offset;      // current read/write offset
+    i32 first_block; // first block of the file
+    i32 file_size;   // file size in bytes
+} OpenFile;
+
+OpenFile g_fd_table[8];
+
+// --- buffer field accessors (offset must be 4-aligned for word access) ---
+
+i32 buf_word(i32 off) {
+    return mem.read_word(g_buf + off);
+}
+
+void set_buf_word(i32 off, i32 value) {
+    mem.write_word(g_buf + off, value);
+}
+
+i32 buf_byte(i32 off) {
+    char *p = (char *)(g_buf + off);
+    return (i32)(*p) & 0xFF;
+}
+
+void set_buf_byte(i32 off, i32 value) {
+    char *p = (char *)(g_buf + off);
+    *p = (char)value;
+}
+
+// Byte access to an arbitrary RAM address (used for caller buffers, which are
+// plain byte arrays: one byte per address).
+i32 ram_byte(i32 addr) {
+    char *p = (char *)addr;
+    return (i32)(*p) & 0xFF;
+}
+
+void set_ram_byte(i32 addr, i32 value) {
+    char *p = (char *)addr;
+    *p = (char)value;
+}
+
+void zero_buf() {
+    i32 i = 0;
+    while (i < BLOCK_SIZE) {
+        set_buf_word(i, 0);
+        i = i + 4;
+    }
+}
+
+// --- bitmap helpers (operate on block 5 loaded into g_buf) ---
+
+i32 bitmap_get(i32 block_num) {
+    i32 byte_off = block_num / 8;
+    i32 bit = block_num % 8;
+    i32 b = buf_byte(byte_off);
+    return (b >> bit) & 1;
+}
+
+void bitmap_set(i32 block_num, i32 value) {
+    i32 byte_off = block_num / 8;
+    i32 bit = block_num % 8;
+    i32 b = buf_byte(byte_off);
+
+    // Manipulate only the specific target bit without affecting others
+    if (value != 0) {
+        // Set the bit to 1 using bitwise OR (|) with a mask (1 << bit)
+        b = b | (1 << bit);
+    } else {
+        // Clear the bit to 0 using bitwise AND (&) with an inverted mask (~)
+        b = b & ~(1 << bit);
+    }
+    set_buf_byte(byte_off, b);
+}
+
+// Allocate a free data block. Returns block number, or 0 on failure.
+i32 alloc_block() {
+    ssd.read_block(BITMAP_BLOCK, g_buf);
+    i32 b = DATA_START;
+    while (b < BLOCK_COUNT) {
+        if (bitmap_get(b) == 0) {
+            bitmap_set(b, 1);
+            ssd.write_block(BITMAP_BLOCK, g_buf);
+            return b;
+        }
+        b++;
+    }
+    return 0;
+}
+
+void free_block(i32 block_num) {
+    ssd.read_block(BITMAP_BLOCK, g_buf);
+    bitmap_set(block_num, 0);
+    ssd.write_block(BITMAP_BLOCK, g_buf);
+}
+
+// --- file entry helpers ---
+// Entry `idx` lives at byte (idx * ENTRY_SIZE) within the entry-table block.
+// With MAX_FILES == ENTRIES_PER_BLOCK the table is a single block, but the
+// arithmetic still works should the table ever span more than one block.
+
+i32 entry_block(i32 idx) {
+    return ENTRY_BLOCK + (idx / ENTRIES_PER_BLOCK);
+}
+
+i32 entry_offset(i32 idx) {
+    return (idx % ENTRIES_PER_BLOCK) * ENTRY_SIZE;
+}
+
+// Load the entry's block into g_buf and return the byte offset of the entry.
+i32 load_entry(i32 idx) {
+    ssd.read_block(entry_block(idx), g_buf);
+    return entry_offset(idx);
+}
+
+// Compare the name stored at buffer offset `off` with `name`.
+// Returns 1 if equal, 0 otherwise.
+i32 name_match(i32 off, char* name) {
+    i32 i = 0;
+    while (i < NAME_MAX) {
+        i32 c = buf_byte(off + i);
+        i32 n = (i32)name[i] & 0xFF;
+        if (c != n) {
+            return 0;
+        }
+        if (c == 0) {
+            return 1;
+        }
+        i++;
+    }
+    return 1;
+}
+
+void store_name(i32 off, char* name) {
+    i32 i = 0;
+    while (i < NAME_MAX) {
+        i32 n = (i32)name[i] & 0xFF;
+        set_buf_byte(off + i, n);
+        if (n == 0) {
+            i++;
+            while (i < NAME_MAX) {
+                set_buf_byte(off + i, 0);
+                i++;
+            }
+            return;
+        }
+        i++;
+    }
+}
+
+// Find the entry index for `name`. Returns index, or -1 if not found.
+// The whole entry table is one block, so read it once and scan in memory.
+i32 find_entry_by_name(char* name) {
+    ssd.read_block(ENTRY_BLOCK, g_buf);
+    i32 idx = 0;
+    while (idx < MAX_FILES) {
+        i32 off = idx * ENTRY_SIZE;
+        if (buf_word(off + 16) != 0) { // first_block != 0 => in use
+            if (name_match(off, name) != 0) {
+                return idx;
+            }
+        }
+        idx++;
+    }
+    return -1;
+}
+
+// Find a free entry slot. Returns index, or -1 if the table is full.
+// The whole entry table is one block, so read it once and scan in memory.
+i32 find_free_entry() {
+    ssd.read_block(ENTRY_BLOCK, g_buf);
+    i32 idx = 0;
+    while (idx < MAX_FILES) {
+        i32 off = idx * ENTRY_SIZE;
+        if (buf_word(off + 16) == 0) {
+            return idx;
+        }
+        idx++;
+    }
+    return -1;
+}
+
+i32 find_free_fd() {
+    i32 i = 0;
+    while (i < FD_MAX) {
+        if (g_fd_table[i].entry_idx == -1) {
+            return i;
+        }
+        i++;
+    }
+    return -1;
+}
+
+// --- format / init ---
+
+export void format() {
+    // Superblock.
+    zero_buf();
+    set_buf_word(0, MAGIC);
+    set_buf_word(4, VERSION);
+    set_buf_word(8, MAX_FILES);
+    ssd.write_block(SB_BLOCK, g_buf);
+
+    // Clear the entry table (blocks ENTRY_BLOCK .. BITMAP_BLOCK-1).
+    zero_buf();
+    i32 b = ENTRY_BLOCK;
+    while (b < BITMAP_BLOCK) {
+        ssd.write_block(b, g_buf);
+        b++;
+    }
+
+    // Bitmap: mark the metadata blocks (0 .. DATA_START-1) used, the rest free.
+    zero_buf();
+    i32 i = 0;
+    while (i < DATA_START) {
+        bitmap_set(i, 1);
+        i++;
+    }
+    ssd.write_block(BITMAP_BLOCK, g_buf);
+}
+
+export void init() {
+    if (g_buf == 0) {
+        g_buf = heap.alloc(BLOCK_SIZE);
+    }
+
+    i32 i = 0;
+    while (i < FD_MAX) {
+        g_fd_table[i].entry_idx = -1;
+        i++;
+    }
+
+    // Auto-format if the superblock magic is missing.
+    if (ssd.read_block(SB_BLOCK, g_buf) != 0) {
+        debug.println("fs: no disk (SSD disabled)");
+        return;
+    }
+    if (buf_word(0) != MAGIC) {
+        debug.println("fs: formatting new disk");
+        format();
+    }
+    debug.println("kernel: fs ready");
+    g_enabled = 1;
+}
+
+// --- file operations ---
+
+// Create a file. Returns an fd, or -1 on failure (duplicate / table full).
+export i32 create(char* filename) {
+    if (g_enabled == 0) { return -1; }
+    if (find_entry_by_name(filename) != -1) {
+        return -1; // already exists
+    }
+    i32 idx = find_free_entry();
+    if (idx == -1) {
+        return -1;
+    }
+    i32 first = alloc_block();
+    if (first == 0) {
+        return -1;
+    }
+
+    // Initialise the first data block (empty chain).
+    zero_buf();
+    ssd.write_block(first, g_buf);
+
+    // Write the entry.
+    i32 off = load_entry(idx);
+    store_name(off, filename);
+    set_buf_word(off + 16, first); // first_block
+    set_buf_word(off + 20, 0);     // file_size
+    set_buf_word(off + 24, 0);     // flags
+    set_buf_word(off + 28, 0);     // reserved
+    ssd.write_block(entry_block(idx), g_buf);
+
+    return open(filename);
+}
+
+// Open an existing file. Returns an fd, or -1 if not found / no free fd.
+export i32 open(char* filename) {
+    if (g_enabled == 0) { return -1; }
+    i32 idx = find_entry_by_name(filename);
+    if (idx == -1) {
+        return -1;
+    }
+    i32 fd = find_free_fd();
+    if (fd == -1) {
+        return -1;
+    }
+
+    i32 off = load_entry(idx);
+    g_fd_table[fd].entry_idx = idx;
+    g_fd_table[fd].offset = 0;
+    g_fd_table[fd].first_block = buf_word(off + 16);
+    g_fd_table[fd].file_size = buf_word(off + 20);
+    return fd;
+}
+
+export void close(i32 fd) {
+    if (fd >= 0) {
+        if (fd < FD_MAX) {
+            g_fd_table[fd].entry_idx = -1;
+        }
+    }
+}
+
+// Read up to `size` bytes from fd into the RAM buffer `buf`.
+// Returns the number of bytes read.
+export i32 read(i32 fd, i32 buf, i32 size) {
+    if (fd < 0) { return 0; }
+    if (fd >= FD_MAX) { return 0; }
+    if (g_fd_table[fd].entry_idx == -1) { return 0; }
+
+    i32 file_size = g_fd_table[fd].file_size;
+    i32 offset = g_fd_table[fd].offset;
+    i32 remaining = file_size - offset;
+    if (remaining <= 0) { return 0; }
+    if (size > remaining) { size = remaining; }
+
+    i32 read_total = 0;
+    // Walk the block chain to the block containing `offset`.
+    i32 block = g_fd_table[fd].first_block;
+    i32 skip = offset / PAYLOAD;
+    while (skip > 0) {
+        ssd.read_block(block, g_buf);
+        block = buf_word(0);
+        skip = skip - 1;
+    }
+    i32 in_block = offset % PAYLOAD;
+
+    while (read_total < size) {
+        ssd.read_block(block, g_buf);
+        i32 next = buf_word(0);
+        while (in_block < PAYLOAD) {
+            if (read_total >= size) {
+                g_fd_table[fd].offset = offset + read_total;
+                return read_total;
+            }
+            i32 c = buf_byte(4 + in_block);
+            set_ram_byte(buf + read_total, c);
+            read_total++;
+            in_block++;
+        }
+        in_block = 0;
+        block = next;
+        if (block == 0) {
+            g_fd_table[fd].offset = offset + read_total;
+            return read_total;
+        }
+    }
+    g_fd_table[fd].offset = offset + read_total;
+    return read_total;
+}
+
+// Append `size` bytes from the RAM buffer `buf` to fd.
+// Returns the number of bytes written.
+export i32 write(i32 fd, i32 buf, i32 size) {
+    if (fd < 0) { return 0; }
+    if (fd >= FD_MAX) { return 0; }
+    if (g_fd_table[fd].entry_idx == -1) { return 0; }
+    if (size <= 0) { return 0; }
+
+    i32 file_size = g_fd_table[fd].file_size;
+
+    // Walk to the last block of the chain.
+    i32 block = g_fd_table[fd].first_block;
+    ssd.read_block(block, g_buf);
+    while (buf_word(0) != 0) {
+        block = buf_word(0);
+        ssd.read_block(block, g_buf);
+    }
+    i32 in_block = file_size % PAYLOAD;
+    // A file whose size is an exact multiple of PAYLOAD (and > 0) has a full
+    // last block; start a fresh one.
+    if (file_size > 0) {
+        if (in_block == 0) {
+            i32 nb = alloc_block();
+            if (nb == 0) { return 0; }
+            set_buf_word(0, nb);
+            ssd.write_block(block, g_buf);
+            block = nb;
+            zero_buf();
+            ssd.write_block(block, g_buf);
+        }
+    }
+
+    i32 written = 0;
+    while (written < size) {
+        ssd.read_block(block, g_buf);
+        while (in_block < PAYLOAD) {
+            if (written >= size) {
+                ssd.write_block(block, g_buf);
+                return finish_write(fd, file_size + written);
+            }
+            i32 c = ram_byte(buf + written);
+            set_buf_byte(4 + in_block, c);
+            written++;
+            in_block++;
+        }
+        // Block full: allocate and link the next one.
+        if (written < size) {
+            i32 nb = alloc_block();
+            if (nb == 0) {
+                set_buf_word(0, 0);
+                ssd.write_block(block, g_buf);
+                return finish_write(fd, file_size + written);
+            }
+            set_buf_word(0, nb);
+            ssd.write_block(block, g_buf);
+            block = nb;
+            zero_buf();
+            ssd.write_block(block, g_buf);
+            in_block = 0;
+        } else {
+            ssd.write_block(block, g_buf);
+        }
+    }
+    return finish_write(fd, file_size + written);
+}
+
+// Persist the new size to the file entry and fd table. Returns the number of
+// bytes written in this call so write() can report it to the caller.
+i32 finish_write(i32 fd, i32 new_size) {
+    i32 written = new_size - g_fd_table[fd].file_size;
+    i32 idx = g_fd_table[fd].entry_idx;
+    i32 off = load_entry(idx);
+    set_buf_word(off + 20, new_size);
+    ssd.write_block(entry_block(idx), g_buf);
+    g_fd_table[fd].file_size = new_size;
+    return written;
+}
+
+// Remove a file by name. Returns 0 on success, -1 if not found.
+export i32 remove(char* filename) {
+    i32 idx = find_entry_by_name(filename);
+    if (idx == -1) {
+        return -1;
+    }
+    i32 off = load_entry(idx);
+    i32 block = buf_word(off + 16);
+
+    // Free the block chain.
+    while (block != 0) {
+        ssd.read_block(block, g_buf);
+        i32 next = buf_word(0);
+        free_block(block);
+        block = next;
+    }
+
+    // Clear the entry.
+    off = load_entry(idx);
+    set_buf_word(off + 16, 0);
+    set_buf_word(off + 20, 0);
+    set_buf_byte(off, 0);
+    ssd.write_block(entry_block(idx), g_buf);
+    return 0;
+}
+
+// Print all files and their sizes to the serial console. Names are emitted a
+// byte at a time straight from the buffer to avoid a local copy.
+export void list() {
+    if (g_enabled == 0) { return; }
+    debug.println("--- fs list ---");
+    ssd.read_block(ENTRY_BLOCK, g_buf);
+    i32 idx = 0;
+    while (idx < MAX_FILES) {
+        i32 off = idx * ENTRY_SIZE;
+        if (buf_word(off + 16) != 0) {
+            i32 size = buf_word(off + 20);
+            debug.print("  ");
+            i32 i = 0;
+            while (i < NAME_MAX) {
+                i32 c = buf_byte(off + i);
+                if (c == 0) {
+                    i = NAME_MAX;
+                } else {
+                    serial.putc(c);
+                    i++;
+                }
+            }
+            debug.printf(" (%i bytes)\n", size);
+        }
+        idx++;
+    }
+}

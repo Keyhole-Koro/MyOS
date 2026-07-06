@@ -1,0 +1,141 @@
+package dom;
+
+import debug from "../../../MyKernel/src/debug/debug.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import { halt_cpu } from "../../../MyKernel/src/arch/halt.masm";
+
+export u16 NODE_ROOT      = 0;
+export u16 NODE_SYSTEM    = 1;
+export u16 NODE_PROCESS   = 2;
+export u16 NODE_DEVICE    = 3;
+export u16 NODE_DIRECTORY = 4;
+export u16 NODE_FILE      = 5;
+export u16 NODE_UI        = 6;
+export u16 NODE_DESKTOP   = 7;
+export u16 NODE_WINDOW    = 8;
+export u16 NODE_BOX       = 9;
+export u16 NODE_TEXT      = 10;
+export u16 NODE_BUTTON    = 11;
+export u16 NODE_TIMER     = 12;
+
+typedef struct {
+    u16 id;
+    u16 kind;
+    char *name;
+    u16 parent;
+    u16 first_child;
+    u16 next_sibling;
+} Node;
+
+i32 g_next_node_id = 1; // 0 is invalid/null
+i32 g_root_node_id = 0;
+
+// Up to 256 nodes for now to keep memory small
+Node *g_node_table[256];
+
+export Node* get_node(i32 id) {
+    if (id == 0) { return (Node*)0; }
+    if (id >= g_next_node_id) { return (Node*)0; }
+    return g_node_table[(i32)id];
+}
+
+export i32 create_node(i32 kind, char *name) {
+    if (g_next_node_id >= 256) {
+        debug.println("dom panic: out of node ids");
+        halt_cpu();
+    }
+
+    Node *n = (Node *)heap.alloc(16); // 16 bytes for alignment
+    i32 id = g_next_node_id;
+    g_next_node_id = g_next_node_id + 1;
+
+    n->id = (u16)id;
+    n->kind = (u16)kind;
+    n->name = name;
+    n->parent = 0;
+    n->first_child = 0;
+    n->next_sibling = 0;
+
+    g_node_table[(i32)id] = n;
+    return id;
+}
+
+export void append_child(i32 parent_id, i32 child_id) {
+    Node *parent = get_node(parent_id);
+    Node *child = get_node(child_id);
+
+    if ((i32)parent != 0) {
+        if ((i32)child != 0) {
+            child->parent = (u16)parent_id;
+            child->next_sibling = 0;
+
+            if (parent->first_child == 0) {
+                parent->first_child = (u16)child_id;
+            } else {
+                Node *curr = get_node((i32)parent->first_child);
+                while (curr->next_sibling != 0) {
+                    curr = get_node((i32)curr->next_sibling);
+                }
+                curr->next_sibling = (u16)child_id;
+            }
+        }
+    }
+}
+
+void print_indent(i32 depth) {
+    i32 i = 0;
+    while (i < depth) {
+        debug.print("  ");
+        i = i + 1;
+    }
+}
+
+void dump_node(i32 node_id, i32 depth) {
+    Node *n = get_node(node_id);
+    if ((i32)n != 0) {
+        print_indent(depth);
+        debug.printf("Node(id=%i, kind=%i) ", (i32)n->id, (i32)n->kind);
+        if ((i32)n->name != 0) {
+            debug.print((char*)n->name);
+        } else {
+            debug.print("?");
+        }
+        debug.println("");
+
+        i32 child_id = (i32)n->first_child;
+        while (child_id != 0) {
+            dump_node(child_id, depth + 1);
+            Node *child = get_node(child_id);
+            child_id = (i32)child->next_sibling;
+        }
+    }
+}
+
+export void dump() {
+    debug.println("--- Kernel Object Tree ---");
+    dump_node(g_root_node_id, 0);
+    debug.println("--------------------------");
+}
+
+export void init() {
+    i32 root = create_node(NODE_ROOT, "root");
+    g_root_node_id = root;
+
+    i32 sys = create_node(NODE_SYSTEM, "system");
+    append_child(root, sys);
+
+    i32 proc = create_node(NODE_PROCESS, "process");
+    append_child(sys, proc);
+
+    i32 dev = create_node(NODE_DEVICE, "device");
+    append_child(sys, dev);
+
+    i32 fs_node = create_node(NODE_DIRECTORY, "fs");
+    append_child(dev, fs_node);
+
+    i32 ui = create_node(NODE_UI, "ui");
+    append_child(sys, ui);
+    
+    i32 desktop = create_node(NODE_DESKTOP, "desktop");
+    append_child(ui, desktop);
+}
