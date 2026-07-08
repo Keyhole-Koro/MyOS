@@ -1,0 +1,81 @@
+package shell;
+
+import debug from "../../../MyKernel/src/debug/debug.mln";
+import fs from "../fs/fs.mln";
+import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+
+i32 SERIAL_RX_ADDR = 0x24000004;
+i32 SERIAL_LSR_ADDR = 0x24000005;
+
+i32 read_char() {
+    i32* lsr = (i32*)SERIAL_LSR_ADDR;
+    // Wait until DR (bit 0) is set
+    while ((*lsr & 1) == 0) {
+        scheduler.sleep(1); // Yield to prevent hanging UI task
+    }
+    i32* rx = (i32*)SERIAL_RX_ADDR;
+    return *rx & 0xFF;
+}
+
+i32 str_eq(char* a, char* b) {
+    i32 i = 0;
+    while (1) {
+        i32 ca = (i32)a[i] & 0xFF;
+        i32 cb = (i32)b[i] & 0xFF;
+        if (ca != cb) { return 0; }
+        if (ca == 0) { return 1; }
+        i = i + 1;
+    }
+}
+
+export void run() {
+    debug.println("Starting OS shell...");
+    char buf[128];
+    i32 len = 0;
+
+    while (1) {
+        debug.print("MyOS> ");
+        len = 0;
+        
+        while (1) {
+            i32 c = read_char();
+            if (c == 13 || c == 10) {
+                debug.println("");
+                break;
+            }
+            if (c == 8 || c == 127) {
+                if (len > 0) {
+                    len = len - 1;
+                    // Backspace, space, backspace to erase char on terminal
+                    debug.print("\b \b");
+                }
+            } else {
+                if (len < 127) {
+                    buf[len] = c;
+                    len = len + 1;
+                    char tmp[2];
+                    tmp[0] = c;
+                    tmp[1] = 0;
+                    debug.print(tmp);
+                }
+            }
+        }
+        buf[len] = 0;
+
+        if (len > 0) {
+            if (str_eq(&buf[0], "help") != 0) {
+                debug.println("Commands:");
+                debug.println("  help  - Show this help");
+                debug.println("  ls    - List files");
+                debug.println("  hello - Print a greeting");
+            } else if (str_eq(&buf[0], "ls") != 0) {
+                fs.list();
+            } else if (str_eq(&buf[0], "hello") != 0) {
+                debug.println("Hello from MyOS Shell!");
+            } else {
+                debug.print("Unknown command: ");
+                debug.println(&buf[0]);
+            }
+        }
+    }
+}
