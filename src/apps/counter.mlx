@@ -2,10 +2,14 @@ import heap from "../../../MyKernel/src/mm/heap.mln";
 import dom from "../ui/dom.mln";
 
 i32 g_clicks = 0;
+i32 g_label_id = 0;
 
 // Click handler. dom.dispatch_click invokes this indirectly with the button id.
+// It bumps the counter and updates the label text so the next render shows it.
 void on_click(i32 id) {
     g_clicks = g_clicks + 1;
+    if (g_clicks == 1) { dom.set_text(g_label_id, "clicks: 1"); }
+    if (g_clicks == 2) { dom.set_text(g_label_id, "clicks: 2"); }
 }
 
 // Declarative UI: mydomc expands the JSX-like return into dom.create_* calls
@@ -25,10 +29,16 @@ i32 main() {
     i32 win = build_ui();
     dom.append_child(dom.desktop_id(), win);
 
-    // The button is the window's first child. Click it twice.
+    // The button is the window's first child; the label is the button's sibling.
     i32 btn = dom.first_child(win);
-    dom.dispatch_click(btn); // g_clicks -> 1
-    dom.dispatch_click(btn); // g_clicks -> 2
+    g_label_id = dom.next_sibling(btn);
+
+    dom.render_desktop();     // initial paint: "clicks: 0"
+
+    dom.dispatch_click(btn);  // g_clicks -> 1, label -> "clicks: 1"
+    dom.dispatch_click(btn);  // g_clicks -> 2, label -> "clicks: 2"
+
+    dom.render_desktop();     // repaint with the updated label
 
     dom.dump();
 
