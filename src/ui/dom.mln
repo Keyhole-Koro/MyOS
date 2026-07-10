@@ -2,6 +2,7 @@ package dom;
 
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
+import graphics from "graphics.mln";
 import { halt_cpu } from "../../../MyKernel/src/arch/halt.masm";
 
 export u16 NODE_ROOT      = 0;
@@ -328,6 +329,91 @@ export void dump() {
     debug.println("--- Kernel Object Tree ---");
     dump_node(g_root_node_id, 0);
     debug.println("--------------------------");
+}
+
+// --- renderer ---
+// Walk the UI subtree and paint each node with graphics.*. The renderer and a
+// window manager are one for now: z-order is sibling order (later siblings on
+// top), and hover/pressed looks come from the node's state bitmask. graphics.mln
+// is untouched; this only reads node props and calls its draw primitives.
+
+void draw_node(Node *n) {
+    i32 kind = (i32)n->kind;
+    i32 x = (i32)n->x;
+    i32 y = (i32)n->y;
+    i32 w = (i32)n->w;
+    i32 h = (i32)n->h;
+    i32 state = (i32)n->state;
+
+    i32 black = graphics.rgb(0, 0, 0);
+    i32 white = graphics.rgb(255, 255, 255);
+
+    // Copy the NODE_* u16 globals into i32 locals before comparing. Comparing an
+    // i32 against a `u16` global directly (kind == NODE_WINDOW) miscompiles and is
+    // always false, even when both hold the same value; the local coerces cleanly.
+    i32 kw = NODE_WINDOW;
+    i32 kb = NODE_BUTTON;
+    i32 kt = NODE_TEXT;
+    i32 pressed = STATE_PRESSED;
+    i32 hovered = STATE_HOVERED;
+
+    if (kind == kw) {
+        graphics.fill_rect(x, y, w, h, white);
+        graphics.draw_rect(x, y, w, h, graphics.rgb(136, 136, 136));
+        if ((i32)n->text != 0) {
+            graphics.draw_text(x + 20, y + 8, (char*)n->text, black, white);
+        }
+    } else if (kind == kb) {
+        i32 face = graphics.rgb(204, 204, 204);
+        if ((state & pressed) != 0) {
+            face = graphics.rgb(150, 150, 150);
+        } else if ((state & hovered) != 0) {
+            face = graphics.rgb(180, 210, 255);
+        }
+        graphics.fill_rect(x, y, w, h, face);
+        graphics.draw_rect(x, y, w, h, black);
+        if ((i32)n->text != 0) {
+            graphics.draw_text(x + 12, y + 8, (char*)n->text, black, face);
+        }
+    } else if (kind == kt) {
+        if ((i32)n->text != 0) {
+            graphics.draw_text(x, y, (char*)n->text, black, white);
+        }
+    }
+    // Structural nodes (root/system/process/...) draw nothing.
+}
+
+// Render node_id and its descendants. Skips invisible subtrees. Sibling order is
+// paint order, so later children appear on top.
+export void render(i32 node_id) {
+    Node *n = get_node(node_id);
+    if ((i32)n == 0) { return; }
+    if (((i32)n->state & STATE_VISIBLE) == 0) { return; }
+
+    draw_node(n);
+
+    i32 child_id = (i32)n->first_child;
+    while (child_id != 0) {
+        render(child_id);
+        Node *child = get_node(child_id);
+        child_id = (i32)child->next_sibling;
+    }
+}
+
+// Repaint the whole UI: clear the desktop, render each top-level window under it,
+// then flip the frame to the display. The desktop node is a structural container
+// with no STATE_VISIBLE, so we render its children directly rather than gating on
+// the desktop's own visibility. Display size is inlined (1024x768) because reading
+// graphics.DISPLAY_WIDTH cross-package needs an explicit symbol import the
+// compiler doesn't emit; passing it as a call arg is fine, globals are not.
+export void render_desktop() {
+    graphics.fill_rect(0, 0, 1024, 768, graphics.rgb(30, 30, 40));
+    i32 child_id = first_child(g_desktop_node_id);
+    while (child_id != 0) {
+        render(child_id);
+        child_id = next_sibling(child_id);
+    }
+    graphics.present();
 }
 
 export void init() {
