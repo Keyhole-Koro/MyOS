@@ -1,0 +1,36 @@
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import dom from "../ui/dom.mln";
+
+i32 g_clicks = 0;
+
+// Click handler. dom.dispatch_click invokes this indirectly with the button id.
+void on_click(i32 id) {
+    g_clicks = g_clicks + 1;
+}
+
+// Declarative UI: mydomc expands the JSX-like return into dom.create_* calls
+// that build the tree and hand back the window node id. The surrounding MyLang
+// source (imports, handler, main) is preserved verbatim.
+i32 build_ui() {
+    return <Window title="Counter" x={100} y={100} w={600} h={400}>
+        <Button text="CLICK ME" x={120} y={130} w={150} h={60} onClick={on_click} />
+        <Text text="clicks: 0" x={320} y={150} />
+    </Window>;
+}
+
+i32 main() {
+    heap.init();
+    dom.init();
+
+    i32 win = build_ui();
+    dom.append_child(dom.desktop_id(), win);
+
+    // The button is the window's first child. Click it twice.
+    i32 btn = dom.first_child(win);
+    dom.dispatch_click(btn); // g_clicks -> 1
+    dom.dispatch_click(btn); // g_clicks -> 2
+
+    dom.dump();
+
+    return g_clicks; // expect 2
+}
