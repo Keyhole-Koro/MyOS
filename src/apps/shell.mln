@@ -3,18 +3,16 @@ package shell;
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import fs from "../fs/fs.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+import serial from "../../../MyKernel/src/io/serial.mln";
 
-i32 SERIAL_RX_ADDR = 0x24000004;
-i32 SERIAL_LSR_ADDR = 0x24000005;
-
+// Block until a keystroke is available in the serial input queue, yielding the
+// CPU while waiting. The serial IRQ handler fills the queue from hardware RX;
+// reading the queue (not hardware RX) avoids racing the IRQ handler for bytes.
 i32 read_char() {
-    i32* lsr = (i32*)SERIAL_LSR_ADDR;
-    // Wait until DR (bit 0) is set
-    while ((*lsr & 1) == 0) {
-        scheduler.sleep(1); // Yield to prevent hanging UI task
+    while (serial.has_input() == 0) {
+        scheduler.sleep(1); // Yield so other tasks (the UI) keep running.
     }
-    i32* rx = (i32*)SERIAL_RX_ADDR;
-    return *rx & 0xFF;
+    return serial.read_input();
 }
 
 i32 str_eq(char* a, char* b) {
