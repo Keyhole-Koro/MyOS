@@ -160,6 +160,21 @@ export i32 get_state_flag(i32 id, i32 flag) {
     return 0;
 }
 
+// Named state setters. Other packages can't pass dom.STATE_* as an argument (an
+// `export u16` global doesn't resolve as a cross-package symbol), so these expose
+// the common flags by name. `on` is 0 to clear, non-zero to set.
+export void set_hovered(i32 id, i32 on) {
+    set_state_flag(id, STATE_HOVERED, on);
+}
+
+export void set_pressed(i32 id, i32 on) {
+    set_state_flag(id, STATE_PRESSED, on);
+}
+
+export void set_visible(i32 id, i32 on) {
+    set_state_flag(id, STATE_VISIBLE, on);
+}
+
 // Store a click handler (a function pointer, passed as i32) on a node. The
 // handler is invoked by dispatch_click via an indirect call. 0 clears it.
 export void set_on_click(i32 id, i32 handler) {
@@ -406,14 +421,78 @@ export void render(i32 node_id) {
 // the desktop's own visibility. Display size is inlined (1024x768) because reading
 // graphics.DISPLAY_WIDTH cross-package needs an explicit symbol import the
 // compiler doesn't emit; passing it as a call arg is fine, globals are not.
-export void render_desktop() {
+// Draw the scene into the back buffer WITHOUT flipping it to the display. Use
+// this when the caller wants to overlay something (e.g. the mouse cursor) before
+// presenting. Call present() yourself afterwards.
+export void render_scene() {
     graphics.fill_rect(0, 0, 1024, 768, graphics.rgb(30, 30, 40));
     i32 child_id = first_child(g_desktop_node_id);
     while (child_id != 0) {
         render(child_id);
         child_id = next_sibling(child_id);
     }
+}
+
+export void render_desktop() {
+    render_scene();
     graphics.present();
+}
+
+// --- hit-test ---
+// True if (px, py) is inside a node's bounds. Nodes with zero size never hit.
+i32 node_contains(Node *n, i32 px, i32 py) {
+    i32 x = (i32)n->x;
+    i32 y = (i32)n->y;
+    i32 w = (i32)n->w;
+    i32 h = (i32)n->h;
+    if (w == 0) { return 0; }
+    if (h == 0) { return 0; }
+    if (px < x) { return 0; }
+    if (py < y) { return 0; }
+    if (px >= x + w) { return 0; }
+    if (py >= y + h) { return 0; }
+    return 1;
+}
+
+// Return the id of the topmost visible node in node_id's subtree whose bounds
+// contain (px, py), or 0 if none. Later siblings are on top (paint order), so we
+// scan children last-to-topmost by taking the deepest/last hit.
+i32 hit_test(i32 node_id, i32 px, i32 py) {
+    Node *n = get_node(node_id);
+    if ((i32)n == 0) { return 0; }
+    if (((i32)n->state & STATE_VISIBLE) == 0) { return 0; }
+
+    i32 found = 0;
+    if (node_contains(n, px, py) != 0) {
+        found = node_id;
+    }
+
+    // A child that also contains the point wins over the parent, and a later
+    // child wins over an earlier one (it paints on top).
+    i32 child_id = (i32)n->first_child;
+    while (child_id != 0) {
+        i32 child_hit = hit_test(child_id, px, py);
+        if (child_hit != 0) {
+            found = child_hit;
+        }
+        Node *child = get_node(child_id);
+        child_id = (i32)child->next_sibling;
+    }
+    return found;
+}
+
+// Return the topmost UI node under (x, y), searching the whole desktop. 0 if none.
+export i32 find_at(i32 x, i32 y) {
+    i32 child_id = first_child(g_desktop_node_id);
+    i32 found = 0;
+    while (child_id != 0) {
+        i32 hit = hit_test(child_id, x, y);
+        if (hit != 0) {
+            found = hit;
+        }
+        child_id = next_sibling(child_id);
+    }
+    return found;
 }
 
 export void init() {
