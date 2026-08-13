@@ -12,9 +12,9 @@ void on_click(i32 id) {
     if (g_clicks == 2) { dom.set_text(g_label_id, "clicks: 2"); }
 }
 
-// Declarative UI: mydomc expands the JSX-like return into dom.create_* calls
-// that build the tree and hand back the window node id. The surrounding MyLang
-// source (imports, handler, main) is preserved verbatim.
+// Declarative UI. Each element calls the dom function of the same name and its
+// properties fill that function's parameters, so the compiler lowers this into
+// dom.Window / dom.Button / dom.Text calls that hand back the window node id.
 i32 build_ui() {
     return <Window title="Counter" x={100} y={100} w={600} h={400}>
         <Button text="CLICK ME" x={120} y={130} w={150} h={60} onClick={on_click} />

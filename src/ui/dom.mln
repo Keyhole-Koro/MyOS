@@ -285,6 +285,30 @@ export i32 create_text(char *text, i32 x, i32 y) {
     return id;
 }
 
+// ---------------------------------------------------------------------------
+// DOM syntax elements.
+//
+// `<Window title="A" x={0} y={0} w={1} h={1}/>` in a .dom.mln source lowers to
+// a call to the function of the same name, with each property handed to the
+// parameter of the same name, and children passed to append_child. The element
+// vocabulary therefore lives here rather than in the compiler: adding an
+// element means adding a function, and its parameters are its properties.
+// ---------------------------------------------------------------------------
+
+export i32 Window(char *title, i32 x, i32 y, i32 w, i32 h) {
+    return create_window(title, x, y, w, h);
+}
+
+export i32 Button(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
+    i32 id = create_button(text, x, y, w, h);
+    set_on_click(id, onClick);
+    return id;
+}
+
+export i32 Text(char *text, i32 x, i32 y) {
+    return create_text(text, x, y);
+}
+
 void print_indent(i32 depth) {
     i32 i = 0;
     while (i < depth) {
