@@ -1,0 +1,46 @@
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import dom from "../ui/dom.mln";
+
+i32 g_clicks = 0;
+i32 g_label_id = 0;
+
+// Click handler. dom.dispatch_click invokes this indirectly with the button id.
+// It bumps the counter and updates the label text so the next render shows it.
+void on_click(i32 id) {
+    g_clicks = g_clicks + 1;
+    if (g_clicks == 1) { dom.set_text(g_label_id, "clicks: 1"); }
+    if (g_clicks == 2) { dom.set_text(g_label_id, "clicks: 2"); }
+}
+
+// Declarative UI. Each element calls the dom function of the same name and its
+// properties fill that function's parameters, so the compiler lowers this into
+// dom.Window / dom.Button / dom.Text calls that hand back the window node id.
+i32 build_ui() {
+    return <Window title="Counter" x={100} y={100} w={600} h={400}>
+        <Button text="CLICK ME" x={120} y={130} w={150} h={60} onClick={on_click} />
+        <Text text="clicks: 0" x={320} y={150} />
+    </Window>;
+}
+
+i32 main() {
+    heap.init();
+    dom.init();
+
+    i32 win = build_ui();
+    dom.append_child(dom.desktop_id(), win);
+
+    // The button is the window's first child; the label is the button's sibling.
+    i32 btn = dom.first_child(win);
+    g_label_id = dom.next_sibling(btn);
+
+    dom.render_desktop();     // initial paint: "clicks: 0"
+
+    dom.dispatch_click(btn);  // g_clicks -> 1, label -> "clicks: 1"
+    dom.dispatch_click(btn);  // g_clicks -> 2, label -> "clicks: 2"
+
+    dom.render_desktop();     // repaint with the updated label
+
+    dom.dump();
+
+    return g_clicks; // expect 2
+}

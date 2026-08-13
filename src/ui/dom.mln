@@ -2,6 +2,7 @@ package dom;
 
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
+import graphics from "graphics.mln";
 import { halt_cpu } from "../../../MyKernel/src/arch/halt.masm";
 
 export u16 NODE_ROOT      = 0;
@@ -18,6 +19,34 @@ export u16 NODE_TEXT      = 10;
 export u16 NODE_BUTTON    = 11;
 export u16 NODE_TIMER     = 12;
 
+// Accessibility roles (ISSUE-024). Separate from `kind`: automation locators
+// query by `role` (get_by_role("button")), while `kind` is the OS-structural
+// node type. UI create helpers set both. These are sequential and would suit an
+// enum, but stay `export u16` globals so other packages (main.mln) can read
+// them as dom.ROLE_BUTTON -- enum members do not survive cross-package linking.
+export u16 ROLE_NONE    = 0;
+export u16 ROLE_ROOT    = 1;
+export u16 ROLE_DESKTOP = 2;
+export u16 ROLE_WINDOW  = 3;
+export u16 ROLE_BUTTON  = 4;
+export u16 ROLE_TEXT    = 5;
+
+// State flags, stored as a bitmask in `Node.state`. MyLang has no bool, so
+// these are combined/tested with i32 bit ops (state & STATE_HOVERED). Written
+// as binary literals so the bit position is obvious. Kept as `export u16`
+// globals (not an enum): enum members do not survive cross-package reference
+// (they mangle to p_NAME and fail to link), whereas exported globals do.
+export u16 STATE_VISIBLE = 0b00001;
+export u16 STATE_ENABLED = 0b00010;
+export u16 STATE_HOVERED = 0b00100;
+export u16 STATE_PRESSED = 0b01000;
+export u16 STATE_FOCUSED = 0b10000;
+
+// Measured layout: u16=2B, char*/i32=4B, pointers 4B-aligned, no trailing
+// padding. Offsets: id=0 kind=2 name=4 parent=8 first_child=10 next_sibling=12
+// role=14 text=16 x=20 y=22 w=24 h=26 state=28 _pad=30 on_click=32 -> sizeof=36.
+// The _pad keeps on_click (i32, a function pointer) on a 4B boundary; each char*
+// (name at 4, text at 16) is likewise 4B-aligned. Allocated as 36.
 typedef struct {
     u16 id;
     u16 kind;
@@ -25,10 +54,20 @@ typedef struct {
     u16 parent;
     u16 first_child;
     u16 next_sibling;
+    u16 role;        // ROLE_* ; 0 = none
+    char *text;      // display text / accessible name ; 0 = none
+    u16 x;           // bounds (non-negative; UI nodes only, else 0)
+    u16 y;
+    u16 w;
+    u16 h;
+    u16 state;       // STATE_* bitmask
+    u16 _pad;        // alignment padding so on_click sits on a 4B boundary
+    i32 on_click;    // click handler function pointer (i32) ; 0 = none
 } Node;
 
 i32 g_next_node_id = 1; // 0 is invalid/null
 i32 g_root_node_id = 0;
+i32 g_desktop_node_id = 0; // set in init(); UI attaches under this
 
 // Up to 256 nodes for now to keep memory small
 Node *g_node_table[256];
@@ -45,7 +84,7 @@ export i32 create_node(i32 kind, char *name) {
         halt_cpu();
     }
 
-    Node *n = (Node *)heap.alloc(16); // 16 bytes for alignment
+    Node *n = (Node *)heap.alloc(36); // sizeof(Node)=36
     i32 id = g_next_node_id;
     g_next_node_id = g_next_node_id + 1;
 
@@ -56,8 +95,113 @@ export i32 create_node(i32 kind, char *name) {
     n->first_child = 0;
     n->next_sibling = 0;
 
+    // UI / automation props default to empty; UI create helpers fill them in.
+    n->role = ROLE_NONE;
+    n->text = (char*)0;
+    n->x = 0;
+    n->y = 0;
+    n->w = 0;
+    n->h = 0;
+    n->state = 0;
+    n->_pad = 0;
+    n->on_click = 0;
+
     g_node_table[(i32)id] = n;
     return id;
+}
+
+// --- prop accessors ---
+
+export void set_bounds(i32 id, i32 x, i32 y, i32 w, i32 h) {
+    Node *n = get_node(id);
+    if ((i32)n != 0) {
+        n->x = (u16)x;
+        n->y = (u16)y;
+        n->w = (u16)w;
+        n->h = (u16)h;
+    }
+}
+
+export void set_text(i32 id, char *text) {
+    Node *n = get_node(id);
+    if ((i32)n != 0) {
+        n->text = text;
+    }
+}
+
+export void set_role(i32 id, i32 role) {
+    Node *n = get_node(id);
+    if ((i32)n != 0) {
+        n->role = (u16)role;
+    }
+}
+
+// Set (on != 0) or clear (on == 0) one STATE_* bit.
+export void set_state_flag(i32 id, i32 flag, i32 on) {
+    Node *n = get_node(id);
+    if ((i32)n != 0) {
+        i32 state = (i32)n->state;
+        if (on != 0) {
+            n->state = (u16)(state | flag);
+        } else {
+            n->state = (u16)(state & (~flag));
+        }
+    }
+}
+
+// Return 1 if the given STATE_* bit is set, else 0.
+export i32 get_state_flag(i32 id, i32 flag) {
+    Node *n = get_node(id);
+    if ((i32)n != 0) {
+        if (((i32)n->state & flag) != 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// Named state setters. Other packages can't pass dom.STATE_* as an argument (an
+// `export u16` global doesn't resolve as a cross-package symbol), so these expose
+// the common flags by name. `on` is 0 to clear, non-zero to set.
+export void set_hovered(i32 id, i32 on) {
+    set_state_flag(id, STATE_HOVERED, on);
+}
+
+export void set_pressed(i32 id, i32 on) {
+    set_state_flag(id, STATE_PRESSED, on);
+}
+
+export void set_visible(i32 id, i32 on) {
+    set_state_flag(id, STATE_VISIBLE, on);
+}
+
+// Store a click handler (a function pointer, passed as i32) on a node. The
+// handler is invoked by dispatch_click via an indirect call. 0 clears it.
+export void set_on_click(i32 id, i32 handler) {
+    Node *n = get_node(id);
+    if ((i32)n != 0) {
+        n->on_click = handler;
+    }
+}
+
+// Return the click handler stored on a node, or 0 if none.
+export i32 get_on_click(i32 id) {
+    Node *n = get_node(id);
+    if ((i32)n != 0) {
+        return n->on_click;
+    }
+    return 0;
+}
+
+// Invoke a node's click handler, if any. The handler is called as handler(id)
+// through an indirect call. Returns 1 if a handler ran, else 0.
+export i32 dispatch_click(i32 id) {
+    i32 handler = get_on_click(id);
+    if (handler != 0) {
+        handler(id);
+        return 1;
+    }
+    return 0;
 }
 
 export void append_child(i32 parent_id, i32 child_id) {
@@ -82,12 +226,120 @@ export void append_child(i32 parent_id, i32 child_id) {
     }
 }
 
+// --- UI node create helpers ---
+// Each sets kind + role + bounds + text + default state (visible/enabled) in one
+// call, so callers (and the MyDOMTranspiler output) don't repeat the setup.
+
+// Return the id of the fixed desktop node created by init(); UI attaches here.
+export i32 desktop_id() {
+    return g_desktop_node_id;
+}
+
+// Tree navigation. Return 0 when there is no such node. Used by the renderer,
+// hit-test, and callers that need to reach a built subtree's children.
+export i32 first_child(i32 id) {
+    Node *n = get_node(id);
+    if ((i32)n != 0) {
+        return (i32)n->first_child;
+    }
+    return 0;
+}
+
+export i32 next_sibling(i32 id) {
+    Node *n = get_node(id);
+    if ((i32)n != 0) {
+        return (i32)n->next_sibling;
+    }
+    return 0;
+}
+
+// Note: NODE_*/ROLE_*/STATE_* are `export u16` globals; pass them bare as
+// function args. Casting them like (i32)STATE_VISIBLE makes semantic report
+// `undefined identifier` (see docs/DOM_SPEC.md), so no casts here.
+export i32 create_window(char *title, i32 x, i32 y, i32 w, i32 h) {
+    i32 id = create_node(NODE_WINDOW, title);
+    set_role(id, ROLE_WINDOW);
+    set_bounds(id, x, y, w, h);
+    set_text(id, title);
+    set_state_flag(id, STATE_VISIBLE, 1);
+    set_state_flag(id, STATE_ENABLED, 1);
+    return id;
+}
+
+export i32 create_button(char *label, i32 x, i32 y, i32 w, i32 h) {
+    i32 id = create_node(NODE_BUTTON, label);
+    set_role(id, ROLE_BUTTON);
+    set_bounds(id, x, y, w, h);
+    set_text(id, label);
+    set_state_flag(id, STATE_VISIBLE, 1);
+    set_state_flag(id, STATE_ENABLED, 1);
+    return id;
+}
+
+export i32 create_text(char *text, i32 x, i32 y) {
+    i32 id = create_node(NODE_TEXT, text);
+    set_role(id, ROLE_TEXT);
+    set_bounds(id, x, y, 0, 0);
+    set_text(id, text);
+    set_state_flag(id, STATE_VISIBLE, 1);
+    return id;
+}
+
+// ---------------------------------------------------------------------------
+// DOM syntax elements.
+//
+// `<Window title="A" x={0} y={0} w={1} h={1}/>` in a .dom.mln source lowers to
+// a call to the function of the same name, with each property handed to the
+// parameter of the same name, and children passed to append_child. The element
+// vocabulary therefore lives here rather than in the compiler: adding an
+// element means adding a function, and its parameters are its properties.
+// ---------------------------------------------------------------------------
+
+export i32 Window(char *title, i32 x, i32 y, i32 w, i32 h) {
+    return create_window(title, x, y, w, h);
+}
+
+export i32 Button(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
+    i32 id = create_button(text, x, y, w, h);
+    set_on_click(id, onClick);
+    return id;
+}
+
+export i32 Text(char *text, i32 x, i32 y) {
+    return create_text(text, x, y);
+}
+
 void print_indent(i32 depth) {
     i32 i = 0;
     while (i < depth) {
         debug.print("  ");
         i = i + 1;
     }
+}
+
+// Print "[role=R x=.. y=.. w=.. h=.. vis en ho pr fo]" for nodes that carry
+// UI props. Structural nodes (role=0, no bounds) print nothing extra.
+void dump_props(Node *n) {
+    i32 role = (i32)n->role;
+    i32 w = (i32)n->w;
+    i32 h = (i32)n->h;
+    i32 state = (i32)n->state;
+    // Nothing interesting to show for plain structural nodes.
+    if (role == 0) {
+        if (w == 0) {
+            if (h == 0) {
+                if (state == 0) { return; }
+            }
+        }
+    }
+    debug.printf(" [role=%i x=%i y=%i w=%i h=%i",
+                 role, (i32)n->x, (i32)n->y, w, h);
+    if ((state & STATE_VISIBLE) != 0) { debug.print(" vis"); }
+    if ((state & STATE_ENABLED) != 0) { debug.print(" en"); }
+    if ((state & STATE_HOVERED) != 0) { debug.print(" ho"); }
+    if ((state & STATE_PRESSED) != 0) { debug.print(" pr"); }
+    if ((state & STATE_FOCUSED) != 0) { debug.print(" fo"); }
+    debug.print("]");
 }
 
 void dump_node(i32 node_id, i32 depth) {
@@ -100,6 +352,7 @@ void dump_node(i32 node_id, i32 depth) {
         } else {
             debug.print("?");
         }
+        dump_props(n);
         debug.println("");
 
         i32 child_id = (i32)n->first_child;
@@ -115,6 +368,155 @@ export void dump() {
     debug.println("--- Kernel Object Tree ---");
     dump_node(g_root_node_id, 0);
     debug.println("--------------------------");
+}
+
+// --- renderer ---
+// Walk the UI subtree and paint each node with graphics.*. The renderer and a
+// window manager are one for now: z-order is sibling order (later siblings on
+// top), and hover/pressed looks come from the node's state bitmask. graphics.mln
+// is untouched; this only reads node props and calls its draw primitives.
+
+void draw_node(Node *n) {
+    i32 kind = (i32)n->kind;
+    i32 x = (i32)n->x;
+    i32 y = (i32)n->y;
+    i32 w = (i32)n->w;
+    i32 h = (i32)n->h;
+    i32 state = (i32)n->state;
+
+    i32 black = graphics.rgb(0, 0, 0);
+    i32 white = graphics.rgb(255, 255, 255);
+
+    // Copy the NODE_* u16 globals into i32 locals before comparing. Comparing an
+    // i32 against a `u16` global directly (kind == NODE_WINDOW) miscompiles and is
+    // always false, even when both hold the same value; the local coerces cleanly.
+    i32 kw = NODE_WINDOW;
+    i32 kb = NODE_BUTTON;
+    i32 kt = NODE_TEXT;
+    i32 pressed = STATE_PRESSED;
+    i32 hovered = STATE_HOVERED;
+
+    if (kind == kw) {
+        graphics.fill_rect(x, y, w, h, white);
+        graphics.draw_rect(x, y, w, h, graphics.rgb(136, 136, 136));
+        if ((i32)n->text != 0) {
+            graphics.draw_text(x + 20, y + 8, (char*)n->text, black, white);
+        }
+    } else if (kind == kb) {
+        i32 face = graphics.rgb(204, 204, 204);
+        if ((state & pressed) != 0) {
+            face = graphics.rgb(150, 150, 150);
+        } else if ((state & hovered) != 0) {
+            face = graphics.rgb(180, 210, 255);
+        }
+        graphics.fill_rect(x, y, w, h, face);
+        graphics.draw_rect(x, y, w, h, black);
+        if ((i32)n->text != 0) {
+            graphics.draw_text(x + 12, y + 8, (char*)n->text, black, face);
+        }
+    } else if (kind == kt) {
+        if ((i32)n->text != 0) {
+            graphics.draw_text(x, y, (char*)n->text, black, white);
+        }
+    }
+    // Structural nodes (root/system/process/...) draw nothing.
+}
+
+// Render node_id and its descendants. Skips invisible subtrees. Sibling order is
+// paint order, so later children appear on top.
+export void render(i32 node_id) {
+    Node *n = get_node(node_id);
+    if ((i32)n == 0) { return; }
+    if (((i32)n->state & STATE_VISIBLE) == 0) { return; }
+
+    draw_node(n);
+
+    i32 child_id = (i32)n->first_child;
+    while (child_id != 0) {
+        render(child_id);
+        Node *child = get_node(child_id);
+        child_id = (i32)child->next_sibling;
+    }
+}
+
+// Repaint the whole UI: clear the desktop, render each top-level window under it,
+// then flip the frame to the display. The desktop node is a structural container
+// with no STATE_VISIBLE, so we render its children directly rather than gating on
+// the desktop's own visibility. Display size is inlined (1024x768) because reading
+// graphics.DISPLAY_WIDTH cross-package needs an explicit symbol import the
+// compiler doesn't emit; passing it as a call arg is fine, globals are not.
+// Draw the scene into the back buffer WITHOUT flipping it to the display. Use
+// this when the caller wants to overlay something (e.g. the mouse cursor) before
+// presenting. Call present() yourself afterwards.
+export void render_scene() {
+    graphics.fill_rect(0, 0, 1024, 768, graphics.rgb(30, 30, 40));
+    i32 child_id = first_child(g_desktop_node_id);
+    while (child_id != 0) {
+        render(child_id);
+        child_id = next_sibling(child_id);
+    }
+}
+
+export void render_desktop() {
+    render_scene();
+    graphics.present();
+}
+
+// --- hit-test ---
+// True if (px, py) is inside a node's bounds. Nodes with zero size never hit.
+i32 node_contains(Node *n, i32 px, i32 py) {
+    i32 x = (i32)n->x;
+    i32 y = (i32)n->y;
+    i32 w = (i32)n->w;
+    i32 h = (i32)n->h;
+    if (w == 0) { return 0; }
+    if (h == 0) { return 0; }
+    if (px < x) { return 0; }
+    if (py < y) { return 0; }
+    if (px >= x + w) { return 0; }
+    if (py >= y + h) { return 0; }
+    return 1;
+}
+
+// Return the id of the topmost visible node in node_id's subtree whose bounds
+// contain (px, py), or 0 if none. Later siblings are on top (paint order), so we
+// scan children last-to-topmost by taking the deepest/last hit.
+i32 hit_test(i32 node_id, i32 px, i32 py) {
+    Node *n = get_node(node_id);
+    if ((i32)n == 0) { return 0; }
+    if (((i32)n->state & STATE_VISIBLE) == 0) { return 0; }
+
+    i32 found = 0;
+    if (node_contains(n, px, py) != 0) {
+        found = node_id;
+    }
+
+    // A child that also contains the point wins over the parent, and a later
+    // child wins over an earlier one (it paints on top).
+    i32 child_id = (i32)n->first_child;
+    while (child_id != 0) {
+        i32 child_hit = hit_test(child_id, px, py);
+        if (child_hit != 0) {
+            found = child_hit;
+        }
+        Node *child = get_node(child_id);
+        child_id = (i32)child->next_sibling;
+    }
+    return found;
+}
+
+// Return the topmost UI node under (x, y), searching the whole desktop. 0 if none.
+export i32 find_at(i32 x, i32 y) {
+    i32 child_id = first_child(g_desktop_node_id);
+    i32 found = 0;
+    while (child_id != 0) {
+        i32 hit = hit_test(child_id, x, y);
+        if (hit != 0) {
+            found = hit;
+        }
+        child_id = next_sibling(child_id);
+    }
+    return found;
 }
 
 export void init() {
@@ -138,4 +540,5 @@ export void init() {
     
     i32 desktop = create_node(NODE_DESKTOP, "desktop");
     append_child(ui, desktop);
+    g_desktop_node_id = desktop;
 }
