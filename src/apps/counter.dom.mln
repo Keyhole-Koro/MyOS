@@ -1,46 +1,73 @@
-import heap from "../../../MyKernel/src/mm/heap.mln";
+package counter;
+
 import dom from "../ui/dom.mln";
+
+// Click counter demo app.
+//
+// The window is described declaratively: each element calls the dom function of
+// the same name, every property is handed to the parameter of the same name,
+// and children become dom.append_child. mount() builds that tree, attaches it
+// to the desktop, and keeps the label id so the handler can rewrite its text.
+//
+// Interaction is not this app's concern. The compositor hit-tests the pointer
+// and calls whatever handler the hit node carries, so all this app does to
+// become clickable is pass on_click as the Button's onClick property.
 
 i32 g_clicks = 0;
 i32 g_label_id = 0;
 
-// Click handler. dom.dispatch_click invokes this indirectly with the button id.
-// It bumps the counter and updates the label text so the next render shows it.
+char g_click_buf[32];
+
+// Bumps the counter and rewrites the label text; the next render picks up the
+// new text from the node. dom.dispatch_click invokes this indirectly with the
+// button id.
 void on_click(i32 id) {
     g_clicks = g_clicks + 1;
-    if (g_clicks == 1) { dom.set_text(g_label_id, "clicks: 1"); }
-    if (g_clicks == 2) { dom.set_text(g_label_id, "clicks: 2"); }
+
+    g_click_buf[0] = 99; g_click_buf[1] = 108; g_click_buf[2] = 105;
+    g_click_buf[3] = 99; g_click_buf[4] = 107; g_click_buf[5] = 115;
+    g_click_buf[6] = 58; g_click_buf[7] = 32;
+
+    if (g_clicks == 0) {
+        g_click_buf[8] = 48;
+        g_click_buf[9] = 0;
+    } else {
+        i32 temp = g_clicks;
+        i32 num_digits = 0;
+        while (temp > 0) {
+            num_digits = num_digits + 1;
+            temp = temp / 10;
+        }
+
+        temp = g_clicks;
+        i32 i = 8 + num_digits - 1;
+        g_click_buf[8 + num_digits] = 0;
+
+        while (temp > 0) {
+            i32 d = temp % 10;
+            g_click_buf[i] = 48 + d;
+            temp = temp / 10;
+            i = i - 1;
+        }
+    }
+    dom.set_text(g_label_id, &g_click_buf[0]);
 }
 
-// Declarative UI. Each element calls the dom function of the same name and its
-// properties fill that function's parameters, so the compiler lowers this into
-// dom.Window / dom.Button / dom.Text calls that hand back the window node id.
 i32 build_ui() {
-    return <Window title="Counter" x={100} y={100} w={600} h={400}>
+    return <Window title="MyKernel Window" x={100} y={100} w={600} h={400}>
         <Button text="CLICK ME" x={120} y={130} w={150} h={60} onClick={on_click} />
         <Text text="clicks: 0" x={320} y={150} />
     </Window>;
 }
 
-i32 main() {
-    heap.init();
-    dom.init();
-
+// Build the window, mount it on the desktop and remember the label. Returns the
+// window node id. The button is the window's first child; the label follows it.
+export i32 mount() {
     i32 win = build_ui();
     dom.append_child(dom.desktop_id(), win);
 
-    // The button is the window's first child; the label is the button's sibling.
     i32 btn = dom.first_child(win);
     g_label_id = dom.next_sibling(btn);
 
-    dom.render_desktop();     // initial paint: "clicks: 0"
-
-    dom.dispatch_click(btn);  // g_clicks -> 1, label -> "clicks: 1"
-    dom.dispatch_click(btn);  // g_clicks -> 2, label -> "clicks: 2"
-
-    dom.render_desktop();     // repaint with the updated label
-
-    dom.dump();
-
-    return g_clicks; // expect 2
+    return win;
 }

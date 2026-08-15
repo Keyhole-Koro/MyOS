@@ -1,0 +1,104 @@
+package compositor;
+
+import dom from "dom.mln";
+import graphics from "graphics.mln";
+import mouse from "../../../MyKernel/src/io/mouse.mln";
+import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+
+// Presents the DOM scene and turns mouse events into DOM interactions.
+//
+// The compositor knows no node ids. Every interaction starts from
+// dom.find_at(x, y), so whatever tree the running apps built is what gets
+// hovered, pressed and clicked; a node participates simply by being hit-
+// testable, and it reacts to a click by having an on_click handler.
+
+// Draw a small arrow cursor at (mx, my). A white edge keeps it visible on any
+// background. Drawn last, after the DOM scene, so it sits on top of everything.
+void draw_cursor(i32 mx, i32 my) {
+    i32 black = graphics.rgb(0, 0, 0);
+    i32 white = graphics.rgb(255, 255, 255);
+    graphics.draw_line(mx, my, mx + 10, my + 10, white);
+    graphics.draw_line(mx, my, mx + 8, my + 12, black);
+    graphics.draw_line(mx, my, mx + 12, my + 8, black);
+    graphics.fill_rect(mx, my, 2, 2, black);
+}
+
+// Render the DOM scene, overlay the cursor at (mx, my), then flip the frame.
+void present_frame(i32 mx, i32 my) {
+    dom.render_scene();
+    draw_cursor(mx, my);
+    graphics.present();
+}
+
+// Interactive loop, event-driven. The mouse IRQ handler drains the hardware
+// event FIFO into mouse's software queue; each pass consumes every queued
+// event and edge-detects the button per event, so a click whose press and
+// release both happened since the last pass still dispatches (nothing shorter
+// than a display frame is lost anymore). The live registers stay authoritative
+// for the cursor position and hover state, so a dropped event can delay a
+// repaint but never wedge a node in a pressed or hovered state.
+export void run() {
+    i32 prev_left = 0;
+    i32 pressed_id = 0; // node currently held down, 0 if none
+    i32 hot_id = 0;     // node currently hovered, 0 if none
+    i32 prev_mx = -1;
+    i32 prev_my = -1;
+
+    while (1) {
+        i32 dirty = 0;
+
+        // Consume all queued events. Clicks are dispatched at the event's own
+        // coordinates: where the press happened, not where the pointer is now.
+        while (mouse.has_event() != 0) {
+            i32 ex = mouse.event_x();
+            i32 ey = mouse.event_y();
+            i32 eb = mouse.event_btn() & 1;
+            mouse.pop_event();
+
+            if (eb != 0) {
+                if (prev_left == 0) {
+                    // Press edge: whatever sits under the pointer takes it.
+                    i32 hit = dom.find_at(ex, ey);
+                    if (hit != 0) {
+                        dom.set_pressed(hit, 1);
+                        pressed_id = hit;
+                        dom.dispatch_click(hit); // may change the node's text
+                        dirty = 1;
+                    }
+                }
+            } else {
+                // Release: un-press whatever this loop pressed, not whatever
+                // happens to be under the pointer now.
+                if (pressed_id != 0) {
+                    dom.set_pressed(pressed_id, 0);
+                    pressed_id = 0;
+                    dirty = 1;
+                }
+            }
+            prev_left = eb;
+        }
+
+        // Live state drives the cursor and hover.
+        i32 mx = mouse.x();
+        i32 my = mouse.y();
+
+        i32 hit = dom.find_at(mx, my);
+        if (hit != hot_id) {
+            if (hot_id != 0) { dom.set_hovered(hot_id, 0); }
+            if (hit != 0) { dom.set_hovered(hit, 1); }
+            hot_id = hit;
+            dirty = 1;
+        }
+
+        if (mx != prev_mx) { dirty = 1; }
+        if (my != prev_my) { dirty = 1; }
+
+        if (dirty != 0) {
+            present_frame(mx, my);
+            prev_mx = mx;
+            prev_my = my;
+        }
+
+        scheduler.sleep(1); // yield the CPU to other tasks between passes
+    }
+}
