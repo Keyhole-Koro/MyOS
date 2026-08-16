@@ -65,6 +65,17 @@ typedef struct {
     i32 on_click;    // click handler function pointer (i32) ; 0 = none
 } Node;
 
+// Damage rectangle: the union of every node area that changed since the last
+// render, in display coordinates. render_scene repaints only this region, so a
+// hover highlight or a label rewrite costs its own rectangle instead of the
+// whole screen (measured: a full repaint is ~735k guest instructions).
+//
+// Empty is encoded as g_damage_x1 <= g_damage_x0, which is what reset leaves.
+i32 g_damage_x0 = 0;
+i32 g_damage_y0 = 0;
+i32 g_damage_x1 = 0;
+i32 g_damage_y1 = 0;
+
 i32 g_next_node_id = 1; // 0 is invalid/null
 i32 g_root_node_id = 0;
 i32 g_desktop_node_id = 0; // set in init(); UI attaches under this
@@ -115,6 +126,10 @@ export i32 create_node(i32 kind, char *name) {
 export void set_bounds(i32 id, i32 x, i32 y, i32 w, i32 h) {
     Node *n = get_node(id);
     if ((i32)n != 0) {
+        // Damage the old area as well as the new one, so vacating a region
+        // repaints the background that was underneath.
+        damage_node(id);
+        damage_rect(x, y, w, h);
         n->x = (u16)x;
         n->y = (u16)y;
         n->w = (u16)w;
@@ -125,7 +140,9 @@ export void set_bounds(i32 id, i32 x, i32 y, i32 w, i32 h) {
 export void set_text(i32 id, char *text) {
     Node *n = get_node(id);
     if ((i32)n != 0) {
+        damage_node(id);   // old string's extent
         n->text = text;
+        damage_node(id);   // new string may be longer
     }
 }
 
@@ -136,15 +153,41 @@ export void set_role(i32 id, i32 role) {
     }
 }
 
+// True if changing `flag` on this node changes how it looks. Only buttons draw
+// differently when hovered or pressed (see draw_node), so flagging a window or
+// a label as hovered must not damage its area -- the pointer crossing a window
+// would otherwise repaint the whole window for no visible difference.
+i32 state_is_visible(Node *n, i32 flag) {
+    i32 kind = (i32)n->kind;
+    i32 kb = NODE_BUTTON;
+    i32 hovered = STATE_HOVERED;
+    i32 pressed = STATE_PRESSED;
+    if (flag == hovered) {
+        if (kind == kb) { return 1; }
+        return 0;
+    }
+    if (flag == pressed) {
+        if (kind == kb) { return 1; }
+        return 0;
+    }
+    return 1; // visibility and everything else always matter
+}
+
 // Set (on != 0) or clear (on == 0) one STATE_* bit.
 export void set_state_flag(i32 id, i32 flag, i32 on) {
     Node *n = get_node(id);
     if ((i32)n != 0) {
         i32 state = (i32)n->state;
-        if (on != 0) {
-            n->state = (u16)(state | flag);
-        } else {
-            n->state = (u16)(state & (~flag));
+        i32 next = state & (~flag);
+        if (on != 0) { next = state | flag; }
+        // Only damage when the bit actually changes: the compositor sets
+        // hovered/pressed every pass, and repainting on a no-op change would
+        // defeat the whole point.
+        if (next != state) {
+            n->state = (u16)next;
+            if (state_is_visible(n, flag) != 0) {
+                damage_node(id);
+            }
         }
     }
 }
@@ -205,6 +248,7 @@ export i32 dispatch_click(i32 id) {
 }
 
 export void append_child(i32 parent_id, i32 child_id) {
+    damage_node(child_id);
     Node *parent = get_node(parent_id);
     Node *child = get_node(child_id);
 
@@ -424,12 +468,43 @@ void draw_node(Node *n) {
 
 // Render node_id and its descendants. Skips invisible subtrees. Sibling order is
 // paint order, so later children appear on top.
+// True if a node's own area overlaps the damage region. Nodes that do not are
+// skipped without drawing: the clip rectangle would discard their pixels
+// anyway, but only after paying for the glyph and fill work that produced
+// them, which is the cost partial repaint exists to avoid.
+i32 node_in_damage(Node *n) {
+    if (g_damage_x1 <= g_damage_x0) { return 1; } // no region: draw everything
+
+    i32 w = (i32)n->w;
+    i32 h = (i32)n->h;
+    if (w == 0) {
+        i32 len = 0;
+        if ((i32)n->text != 0) {
+            char *t = (char*)n->text;
+            while (t[len] != 0) { len = len + 1; }
+        }
+        w = len * 8;
+        h = 8;
+    }
+    i32 x0 = (i32)n->x;
+    i32 y0 = (i32)n->y;
+    if (x0 + w <= g_damage_x0) { return 0; }
+    if (y0 + h <= g_damage_y0) { return 0; }
+    if (x0 >= g_damage_x1) { return 0; }
+    if (y0 >= g_damage_y1) { return 0; }
+    return 1;
+}
+
 export void render(i32 node_id) {
     Node *n = get_node(node_id);
     if ((i32)n == 0) { return; }
     if (((i32)n->state & STATE_VISIBLE) == 0) { return; }
 
-    draw_node(n);
+    // Children are visited regardless: a child can overlap the damage region
+    // even when its parent does not.
+    if (node_in_damage(n) != 0) {
+        draw_node(n);
+    }
 
     i32 child_id = (i32)n->first_child;
     while (child_id != 0) {
@@ -448,13 +523,107 @@ export void render(i32 node_id) {
 // Draw the scene into the back buffer WITHOUT flipping it to the display. Use
 // this when the caller wants to overlay something (e.g. the mouse cursor) before
 // presenting. Call present() yourself afterwards.
-export void render_scene() {
+// Add a rectangle to the damage region. Clipped to the display, so callers can
+// pass node bounds without worrying about off-screen nodes.
+export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
+    i32 x0 = x;
+    i32 y0 = y;
+    i32 x1 = x + w;
+    i32 y1 = y + h;
+
+    if (x0 < 0) { x0 = 0; }
+    if (y0 < 0) { y0 = 0; }
+    if (x1 > 1024) { x1 = 1024; }
+    if (y1 > 768) { y1 = 768; }
+    if (x1 <= x0) { return; }
+    if (y1 <= y0) { return; }
+
+    if (g_damage_x1 <= g_damage_x0) {
+        // Region was empty: this rectangle becomes it.
+        g_damage_x0 = x0;
+        g_damage_y0 = y0;
+        g_damage_x1 = x1;
+        g_damage_y1 = y1;
+        return;
+    }
+    if (x0 < g_damage_x0) { g_damage_x0 = x0; }
+    if (y0 < g_damage_y0) { g_damage_y0 = y0; }
+    if (x1 > g_damage_x1) { g_damage_x1 = x1; }
+    if (y1 > g_damage_y1) { g_damage_y1 = y1; }
+}
+
+// Mark a node's own area as needing repaint. Text nodes carry no width/height
+// of their own, so they damage a line-height band wide enough for their string.
+export void damage_node(i32 id) {
+    Node *n = get_node(id);
+    if ((i32)n == 0) { return; }
+
+    i32 w = (i32)n->w;
+    i32 h = (i32)n->h;
+    if (w == 0) {
+        // Text: 8x8 glyphs, so the band is 8 tall and 8 per character wide.
+        i32 len = 0;
+        if ((i32)n->text != 0) {
+            char *t = (char*)n->text;
+            while (t[len] != 0) { len = len + 1; }
+        }
+        w = len * 8;
+        h = 8;
+    }
+    damage_rect((i32)n->x, (i32)n->y, w, h);
+}
+
+export i32 has_damage() {
+    if (g_damage_x1 > g_damage_x0) { return 1; }
+    return 0;
+}
+
+export void clear_damage() {
+    g_damage_x0 = 0;
+    g_damage_y0 = 0;
+    g_damage_x1 = 0;
+    g_damage_y1 = 0;
+}
+
+// Repaint every node, ignoring the damage region. Used for the first frame and
+// whenever a caller wants an unconditional repaint.
+export void render_all() {
     graphics.fill_rect(0, 0, 1024, 768, graphics.rgb(30, 30, 40));
     i32 child_id = first_child(g_desktop_node_id);
     while (child_id != 0) {
         render(child_id);
         child_id = next_sibling(child_id);
     }
+    clear_damage();
+}
+
+// Repaint just the damaged region: clear it to the desktop colour, then redraw
+// every node that overlaps it. Nodes outside the region are skipped entirely,
+// which is where the saving comes from -- a hover highlight redraws one button,
+// not all 786432 pixels. Falls back to a full repaint when nothing is marked,
+// so a caller that never damages anything still gets a correct frame.
+export void render_scene() {
+    if (g_damage_x1 <= g_damage_x0) {
+        render_all();
+        return;
+    }
+
+    i32 dx = g_damage_x0;
+    i32 dy = g_damage_y0;
+    i32 dw = g_damage_x1 - g_damage_x0;
+    i32 dh = g_damage_y1 - g_damage_y0;
+
+    graphics.set_clip(dx, dy, dw, dh);
+    graphics.fill_rect(dx, dy, dw, dh, graphics.rgb(30, 30, 40));
+
+    i32 child_id = first_child(g_desktop_node_id);
+    while (child_id != 0) {
+        render(child_id);
+        child_id = next_sibling(child_id);
+    }
+
+    graphics.clear_clip();
+    clear_damage();
 }
 
 export void render_desktop() {
