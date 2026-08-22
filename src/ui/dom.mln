@@ -2,6 +2,7 @@ package dom;
 
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
+import serial from "../../../MyKernel/src/io/serial.mln";
 import graphics from "graphics.mln";
 import { halt_cpu } from "../../../MyKernel/src/arch/halt.masm";
 
@@ -412,6 +413,120 @@ export void dump() {
     debug.println("--- Kernel Object Tree ---");
     dump_node(g_root_node_id, 0);
     debug.println("--------------------------");
+}
+
+// --- machine-readable snapshot (MYOS-004 UI automation) ---
+// dump()/dump_node() above are for humans reading the serial log; this section
+// mirrors them but emits one JSON object per node (JSON Lines), stable enough
+// for a host-side client (qa/mydomtester) to parse into a locator tree.
+
+// role is compared as a local i32 copy: comparing an i32 against a `u16`
+// export global directly (role == ROLE_BUTTON) miscompiles to always-false,
+// same pitfall noted on draw_node above.
+char* role_name(i32 role) {
+    i32 r_root = ROLE_ROOT;
+    i32 r_desktop = ROLE_DESKTOP;
+    i32 r_window = ROLE_WINDOW;
+    i32 r_button = ROLE_BUTTON;
+    i32 r_text = ROLE_TEXT;
+    if (role == r_root) { return "root"; }
+    if (role == r_desktop) { return "desktop"; }
+    if (role == r_window) { return "window"; }
+    if (role == r_button) { return "button"; }
+    if (role == r_text) { return "text"; }
+    return "none";
+}
+
+// Emit one char, escaping the handful of bytes that would break JSON string
+// syntax. UI text in this codebase is plain ASCII labels, so this does not
+// attempt full JSON/unicode escaping -- just enough to stay well-formed.
+void putc_json_escaped(i32 c) {
+    if (c == '"') { serial.putc('\\'); serial.putc('"'); return; }
+    if (c == '\\') { serial.putc('\\'); serial.putc('\\'); return; }
+    if (c == '\n') { serial.putc('\\'); serial.putc('n'); return; }
+    serial.putc(c);
+}
+
+void print_json_string(char* s) {
+    serial.putc('"');
+    if (s) {
+        i32 i = 0;
+        while (s[i] != 0) {
+            putc_json_escaped(s[i]);
+            i = i + 1;
+        }
+    }
+    serial.putc('"');
+}
+
+void print_json_bool(i32 v) {
+    if (v != 0) {
+        debug.print("true");
+    } else {
+        debug.print("false");
+    }
+}
+
+void dump_node_json(i32 node_id) {
+    Node *n = get_node(node_id);
+    if ((i32)n == 0) { return; }
+
+    i32 state = (i32)n->state;
+    i32 visible = 0;
+    if ((state & STATE_VISIBLE) != 0) { visible = 1; }
+    i32 enabled = 0;
+    if ((state & STATE_ENABLED) != 0) { enabled = 1; }
+    i32 hovered = 0;
+    if ((state & STATE_HOVERED) != 0) { hovered = 1; }
+    i32 pressed = 0;
+    if ((state & STATE_PRESSED) != 0) { pressed = 1; }
+    i32 focused = 0;
+    if ((state & STATE_FOCUSED) != 0) { focused = 1; }
+
+    debug.print("{\"id\":");
+    debug.printf("%i", (i32)n->id);
+    debug.print(",\"parent\":");
+    debug.printf("%i", (i32)n->parent);
+    debug.print(",\"role\":");
+    print_json_string(role_name((i32)n->role));
+    debug.print(",\"name\":");
+    print_json_string((char*)n->name);
+    debug.print(",\"text\":");
+    print_json_string((char*)n->text);
+    debug.print(",\"x\":");
+    debug.printf("%i", (i32)n->x);
+    debug.print(",\"y\":");
+    debug.printf("%i", (i32)n->y);
+    debug.print(",\"w\":");
+    debug.printf("%i", (i32)n->w);
+    debug.print(",\"h\":");
+    debug.printf("%i", (i32)n->h);
+    debug.print(",\"visible\":");
+    print_json_bool(visible);
+    debug.print(",\"enabled\":");
+    print_json_bool(enabled);
+    debug.print(",\"hovered\":");
+    print_json_bool(hovered);
+    debug.print(",\"pressed\":");
+    print_json_bool(pressed);
+    debug.print(",\"focused\":");
+    print_json_bool(focused);
+    debug.println("}");
+
+    i32 child_id = (i32)n->first_child;
+    while (child_id != 0) {
+        dump_node_json(child_id);
+        Node *child = get_node(child_id);
+        child_id = (i32)child->next_sibling;
+    }
+}
+
+// Print the whole tree as JSON Lines, bracketed by markers a host-side reader
+// can scan for on the serial stream (mixed in with ordinary debug output).
+export void dump_json() {
+    debug.println("---DOM-SNAPSHOT-BEGIN---");
+    dump_node_json(g_root_node_id);
+    debug.println("---DOM-SNAPSHOT-END---");
 }
 
 // --- renderer ---

@@ -4,6 +4,7 @@ import debug from "../../../MyKernel/src/debug/debug.mln";
 import fs from "../fs/fs.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import serial from "../../../MyKernel/src/io/serial.mln";
+import dom from "../ui/dom.mln";
 
 // Block until a keystroke is available in the serial input queue, yielding the
 // CPU while waiting. The serial IRQ handler fills the queue from hardware RX;
@@ -66,8 +67,14 @@ export void run() {
                 debug.println("  help  - Show this help");
                 debug.println("  ls    - List files");
                 debug.println("  hello - Print a greeting");
+                debug.println("  dom   - Dump the DOM/accessibility tree as JSON (UI automation)");
             } else if (str_eq(&buf[0], "ls") != 0) {
                 fs.list();
+            } else if (str_eq(&buf[0], "dom") != 0) {
+                // a control-stdio client sends this over serial RX and
+                // scans TX for the ---DOM-SNAPSHOT-BEGIN/END--- markers dump_json
+                // wraps its output in.
+                dom.dump_json();
             } else if (str_eq(&buf[0], "hello") != 0) {
                 debug.println("Hello from MyOS Shell!");
             } else {
