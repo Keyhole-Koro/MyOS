@@ -1,0 +1,46 @@
+name: CI - MyOS
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test-myos:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout root repository (MyComputer)
+        uses: actions/checkout@v4
+        with:
+          repository: Keyhole-Koro/MyComputer
+          submodules: recursive
+          path: MyComputer
+
+      - name: Checkout MyOS (Current PR/Branch)
+        uses: actions/checkout@v4
+        with:
+          path: MyComputer/system/MyOS
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential g++
+
+      - name: Run MyOS DOM Tests (MYOS-004)
+        working-directory: MyComputer
+        run: |
+          make dom-tester-test
