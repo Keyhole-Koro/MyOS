@@ -6,60 +6,95 @@ import mem from "../../../MyKernel/src/mm/mem.mln";
 import serial from "../../../MyKernel/src/io/serial.mln";
 import ssd from "ssd.mln";
 
-// MyFileSystem (MFS): a flat, FAT-like filesystem over the SSD block device.
+// =========================================================================
+// MyFileSystem (MFS): Direct File Descriptor (mfd) Subsystem (No RAM Cache)
+// =========================================================================
 //
-// Disk layout (65536-byte blocks, 16384 blocks = 1 GB):
-//   block 0          superblock (magic, version, max_files)
-//   block 1          file entry table (2048 entries x 32 bytes)
-//   block 2          block allocation bitmap (16384 bits = 2048 bytes)
-//   block 3..16383   data blocks
+// --- Architecture & Disk Constraints ---
+// 1. Block Size: Fixed 65,536 bytes (64 KiB), matching hardware SSD block size.
+// 2. Capacity: 16,384 blocks = 1,073,741,824 bytes (1 GiB) addressable space.
+// 3. File Limit: Max 2,048 files (fits in 1 single 64 KiB entry table block).
+// 4. Filename Length: Max 15 printable ASCII characters + 1 null terminator (16 bytes).
+// 5. Data Block Payload: 65,532 bytes. First 4 bytes hold the next-block pointer (0 = EOF).
+// 6. Direct Storage Access: No intermediate RAM cache; metadata changes (size) are
+//    written directly to SSD Block 1 on write operations.
 //
-// File entry (32 bytes):
-//   off 0   filename (16 bytes, null-terminated)
-//   off 16  first_block (0 = free entry)
-//   off 20  file_size (bytes)
-//   off 24  flags (reserved)
-//   off 28  reserved
+// Disk Layout:
+//   Block 0          Superblock (magic: 'MFS1', version: 1, max_files: 2048)
+//   Block 1          File entry table (2048 entries x 32 bytes = 65,536 bytes)
+//   Block 2          Block allocation bitmap (16,384 bits = 2,048 bytes in 1 block)
+//   Block 3..16383   Data blocks (16,381 data blocks = ~1.02 GB usable)
 //
-// Data block: bytes[0..4]      = next_block (0 = end of chain),
-//             bytes[4..65536]  = payload (65532 bytes).
+// File entry on disk (32 bytes per entry):
+//   Offset  0..15 : filename (16 bytes, null-terminated ASCII)
+//   Offset 16..19 : first_block (i32: 0 = free entry, >0 = first data block index)
+//   Offset 20..23 : file_size (i32: size in bytes)
+//   Offset 24..27 : flags (i32: reserved)
+//   Offset 28..31 : reserved (i32)
 
-i32 MAGIC        = 0x4D465331; // 'MFS1' (MyFileSystem v1)
-i32 VERSION      = 1;
-i32 ENTRY_SIZE   = 32;
-i32 NAME_MAX     = 16;
+export i32 MAGIC        = 0x4D465331; // 'MFS1' (MyFileSystem v1)
+export i32 VERSION      = 1;
+export i32 ENTRY_SIZE   = 32;
+export i32 NAME_MAX     = 16;
 
-i32 BLOCK_SIZE   = 65536; // must match ssd block size
-i32 BLOCK_COUNT  = 16384;
-i32 PAYLOAD      = 65532; // BLOCK_SIZE - 4 (next pointer)
+export i32 BLOCK_SIZE   = 65536; // must match ssd block size
+export i32 BLOCK_COUNT  = 16384;
+export i32 PAYLOAD      = 65532; // BLOCK_SIZE - 4 (next pointer)
 
-// Disk layout. One 65536-byte block holds 2048 entries (65536 / 32) and the
-// allocation bitmap needs only BLOCK_COUNT bits (16384 / 8 = 2048 bytes), so a
-// single block each suffices for the entry table and bitmap.
-i32 SB_BLOCK         = 0;
-i32 ENTRY_BLOCK      = 1; // file entry table (1 block)
-i32 BITMAP_BLOCK     = 2; // block allocation bitmap (1 block)
-i32 DATA_START       = 3;
-i32 ENTRIES_PER_BLOCK = 2048; // BLOCK_SIZE / ENTRY_SIZE
-i32 MAX_FILES        = 2048;  // one full entry block
+export i32 SB_BLOCK         = 0;
+export i32 ENTRY_BLOCK      = 1; // file entry table (1 block)
+export i32 BITMAP_BLOCK     = 2; // block allocation bitmap (1 block)
+export i32 DATA_START       = 3;
+export i32 ENTRIES_PER_BLOCK = 2048; // BLOCK_SIZE / ENTRY_SIZE
+export i32 MAX_FILES        = 2048;  // one full entry block
 
 // Shared block buffer (allocated at init).
+// Constraint: Single global transfer buffer; file operations are synchronous and non-reentrant.
 i32 g_buf = 0;
 i32 g_enabled = 0;
 
-// Open file table (in memory). One slot per open file descriptor.
-i32 FD_MAX = 8;
+// =========================================================================
+// 1. Open File & Descriptor Table (mfile & mfd)
+// =========================================================================
+//
+// --- File Descriptor Constraints & Invariants ---
+// 1. Table Capacity: Max 8 open descriptors system-wide (FD_MAX = 8).
+// 2. Reserved Descriptors:
+//      mfd 0 : STDIN  (FD_TYPE_SERIAL, read-only)
+//      mfd 1 : STDOUT (FD_TYPE_SERIAL, write-only)
+//      mfd 2 : STDERR (FD_TYPE_SERIAL, write-only)
+// 3. User Descriptors: Allocated dynamically from mfd 3 up to (FD_MAX - 1).
+// 4. Descriptor Metadata: Each open file handle holds its own cursor (offset)
+//    and loaded metadata (entry_idx, first_block, file_size).
+
+export i32 FD_TYPE_UNUSED = 0;
+export i32 FD_TYPE_SERIAL = 1; // stdin / stdout / stderr
+export i32 FD_TYPE_FILE   = 2; // MFS file on SSD
+
+export i32 FD_MAX = 8;
+
+export i32 SEEK_SET = 0;
+export i32 SEEK_CUR = 1;
+export i32 SEEK_END = 2;
 
 typedef struct {
-    i32 entry_idx;   // file entry index (-1 = unused slot)
-    i32 offset;      // current read/write offset
-    i32 first_block; // first block of the file
-    i32 file_size;   // file size in bytes
+    i32 type;        // FD_TYPE_UNUSED, FD_TYPE_SERIAL, FD_TYPE_FILE
+    i32 entry_idx;   // Disk entry index (-1 if unused/serial)
+    i32 offset;      // Read/write byte cursor position
+    i32 first_block; // First block of the file on SSD
+    i32 file_size;   // Size of the file in bytes
+    i32 flags;       // Access flags (1 = Read, 2 = Write, 3 = Read/Write)
 } OpenFile;
 
 OpenFile g_fd_table[8];
 
-// --- buffer field accessors (offset must be 4-aligned for word access) ---
+// =========================================================================
+// 2. Buffer Field Accessors & RAM Helpers
+// =========================================================================
+//
+// --- Memory Alignment Constraints ---
+// * Word accessors (buf_word/set_buf_word) require 4-byte aligned offsets.
+// * Byte accessors operate with 0xFF masking to prevent sign-extension issues.
 
 i32 buf_word(i32 off) {
     return mem.read_word(g_buf + off);
@@ -79,8 +114,6 @@ void set_buf_byte(i32 off, i32 value) {
     *p = (char)value;
 }
 
-// Byte access to an arbitrary RAM address (used for caller buffers, which are
-// plain byte arrays: one byte per address).
 i32 ram_byte(i32 addr) {
     char *p = (char *)addr;
     return (i32)(*p) & 0xFF;
@@ -99,7 +132,9 @@ void zero_buf() {
     }
 }
 
-// --- bitmap helpers (operate on block 5 loaded into g_buf) ---
+// =========================================================================
+// 3. Bitmap Helpers (Block Allocation)
+// =========================================================================
 
 i32 bitmap_get(i32 block_num) {
     i32 byte_off = block_num / 8;
@@ -113,18 +148,15 @@ void bitmap_set(i32 block_num, i32 value) {
     i32 bit = block_num % 8;
     i32 b = buf_byte(byte_off);
 
-    // Manipulate only the specific target bit without affecting others
     if (value != 0) {
-        // Set the bit to 1 using bitwise OR (|) with a mask (1 << bit)
         b = b | (1 << bit);
     } else {
-        // Clear the bit to 0 using bitwise AND (&) with an inverted mask (~)
         b = b & ~(1 << bit);
     }
     set_buf_byte(byte_off, b);
 }
 
-// Allocate a free data block. Returns block number, or 0 on failure.
+// Allocate a free data block from the SSD bitmap. Returns block number or 0 if full.
 i32 alloc_block() {
     ssd.read_block(BITMAP_BLOCK, g_buf);
     i32 b = DATA_START;
@@ -145,10 +177,9 @@ void free_block(i32 block_num) {
     ssd.write_block(BITMAP_BLOCK, g_buf);
 }
 
-// --- file entry helpers ---
-// Entry `idx` lives at byte (idx * ENTRY_SIZE) within the entry-table block.
-// With MAX_FILES == ENTRIES_PER_BLOCK the table is a single block, but the
-// arithmetic still works should the table ever span more than one block.
+// =========================================================================
+// 4. File Entry & On-Disk Helpers
+// =========================================================================
 
 i32 entry_block(i32 idx) {
     return ENTRY_BLOCK + (idx / ENTRIES_PER_BLOCK);
@@ -158,14 +189,11 @@ i32 entry_offset(i32 idx) {
     return (idx % ENTRIES_PER_BLOCK) * ENTRY_SIZE;
 }
 
-// Load the entry's block into g_buf and return the byte offset of the entry.
 i32 load_entry(i32 idx) {
     ssd.read_block(entry_block(idx), g_buf);
     return entry_offset(idx);
 }
 
-// Compare the name stored at buffer offset `off` with `name`.
-// Returns 1 if equal, 0 otherwise.
 i32 name_match(i32 off, char* name) {
     i32 i = 0;
     while (i < NAME_MAX) {
@@ -199,8 +227,6 @@ void store_name(i32 off, char* name) {
     }
 }
 
-// Find the entry index for `name`. Returns index, or -1 if not found.
-// The whole entry table is one block, so read it once and scan in memory.
 i32 find_entry_by_name(char* name) {
     ssd.read_block(ENTRY_BLOCK, g_buf);
     i32 idx = 0;
@@ -216,8 +242,6 @@ i32 find_entry_by_name(char* name) {
     return -1;
 }
 
-// Find a free entry slot. Returns index, or -1 if the table is full.
-// The whole entry table is one block, so read it once and scan in memory.
 i32 find_free_entry() {
     ssd.read_block(ENTRY_BLOCK, g_buf);
     i32 idx = 0;
@@ -231,10 +255,52 @@ i32 find_free_entry() {
     return -1;
 }
 
-i32 find_free_fd() {
-    i32 i = 0;
+// =========================================================================
+// 5. Descriptor Table & Path Operations
+// =========================================================================
+
+void fd_table_init() {
+    // 0: stdin (Serial input)
+    g_fd_table[0].type = FD_TYPE_SERIAL;
+    g_fd_table[0].entry_idx = -1;
+    g_fd_table[0].offset = 0;
+    g_fd_table[0].first_block = 0;
+    g_fd_table[0].file_size = 0;
+    g_fd_table[0].flags = 1; // Read
+
+    // 1: stdout (Serial output)
+    g_fd_table[1].type = FD_TYPE_SERIAL;
+    g_fd_table[1].entry_idx = -1;
+    g_fd_table[1].offset = 0;
+    g_fd_table[1].first_block = 0;
+    g_fd_table[1].file_size = 0;
+    g_fd_table[1].flags = 2; // Write
+
+    // 2: stderr (Serial output)
+    g_fd_table[2].type = FD_TYPE_SERIAL;
+    g_fd_table[2].entry_idx = -1;
+    g_fd_table[2].offset = 0;
+    g_fd_table[2].first_block = 0;
+    g_fd_table[2].file_size = 0;
+    g_fd_table[2].flags = 2; // Write
+
+    // 3..7: unused
+    i32 i = 3;
     while (i < FD_MAX) {
-        if (g_fd_table[i].entry_idx == -1) {
+        g_fd_table[i].type = FD_TYPE_UNUSED;
+        g_fd_table[i].entry_idx = -1;
+        g_fd_table[i].offset = 0;
+        g_fd_table[i].first_block = 0;
+        g_fd_table[i].file_size = 0;
+        g_fd_table[i].flags = 0;
+        i++;
+    }
+}
+
+i32 find_free_fd() {
+    i32 i = 3; // Descriptors 0, 1, 2 are reserved for standard streams
+    while (i < FD_MAX) {
+        if (g_fd_table[i].type == FD_TYPE_UNUSED) {
             return i;
         }
         i++;
@@ -242,17 +308,44 @@ i32 find_free_fd() {
     return -1;
 }
 
-// --- format / init ---
+// --- Path Resolution Constraints ---
+// 1. Absolute paths with leading '/' (e.g. "/readme.txt") and relative paths ("readme.txt")
+//    are normalized to the same file entry name.
+// 2. Path components longer than (NAME_MAX - 1 = 15 characters) are truncated.
+void path_clean_name(char* path, char* out_name) {
+    if (path == 0) {
+        out_name[0] = 0;
+        return;
+    }
+    i32 start = 0;
+    if (path[0] == '/') {
+        start = 1;
+    }
+    i32 i = 0;
+    while (i < NAME_MAX - 1) {
+        char c = path[start + i];
+        out_name[i] = c;
+        if (c == 0) {
+            return;
+        }
+        i++;
+    }
+    out_name[NAME_MAX - 1] = 0;
+}
+
+// =========================================================================
+// 6. Format / Init
+// =========================================================================
 
 export void format() {
-    // Superblock.
+    // Superblock
     zero_buf();
     set_buf_word(0, MAGIC);
     set_buf_word(4, VERSION);
     set_buf_word(8, MAX_FILES);
     ssd.write_block(SB_BLOCK, g_buf);
 
-    // Clear the entry table (blocks ENTRY_BLOCK .. BITMAP_BLOCK-1).
+    // Clear entry table (Block 1)
     zero_buf();
     i32 b = ENTRY_BLOCK;
     while (b < BITMAP_BLOCK) {
@@ -260,7 +353,7 @@ export void format() {
         b++;
     }
 
-    // Bitmap: mark the metadata blocks (0 .. DATA_START-1) used, the rest free.
+    // Bitmap: metadata blocks (0..2) marked used, data blocks (3..16383) marked free
     zero_buf();
     i32 i = 0;
     while (i < DATA_START) {
@@ -275,13 +368,9 @@ export void init() {
         g_buf = heap.alloc(BLOCK_SIZE);
     }
 
-    i32 i = 0;
-    while (i < FD_MAX) {
-        g_fd_table[i].entry_idx = -1;
-        i++;
-    }
+    fd_table_init();
 
-    // Auto-format if the superblock magic is missing.
+    // Auto-format if superblock magic is missing
     if (ssd.read_block(SB_BLOCK, g_buf) != 0) {
         debug.println("fs: no disk (SSD disabled)");
         return;
@@ -294,12 +383,20 @@ export void init() {
     g_enabled = 1;
 }
 
-// --- file operations ---
+// =========================================================================
+// 7. File Operations (open, create, read, write, seek, close, remove, list)
+// =========================================================================
 
-// Create a file. Returns an fd, or -1 on failure (duplicate / table full).
-export i32 create(char* filename) {
+// Create a file by path. Returns an mfd, or -1 on failure.
+// Constraint: Fails if file already exists or if disk entry table / bitmap is full.
+export i32 create(char* path) {
     if (g_enabled == 0) { return -1; }
-    if (find_entry_by_name(filename) != -1) {
+    
+    char clean_name[16];
+    path_clean_name(path, &clean_name[0]);
+    if (clean_name[0] == 0) { return -1; }
+
+    if (find_entry_by_name(&clean_name[0]) != -1) {
         return -1; // already exists
     }
     i32 idx = find_free_entry();
@@ -311,186 +408,269 @@ export i32 create(char* filename) {
         return -1;
     }
 
-    // Initialise the first data block (empty chain).
+    // Initialize the first data block (0 next pointer)
     zero_buf();
     ssd.write_block(first, g_buf);
 
-    // Write the entry.
+    // Write entry to disk
     i32 off = load_entry(idx);
-    store_name(off, filename);
+    store_name(off, &clean_name[0]);
     set_buf_word(off + 16, first); // first_block
     set_buf_word(off + 20, 0);     // file_size
     set_buf_word(off + 24, 0);     // flags
     set_buf_word(off + 28, 0);     // reserved
     ssd.write_block(entry_block(idx), g_buf);
 
-    return open(filename);
+    return open(path);
 }
 
-// Open an existing file. Returns an fd, or -1 if not found / no free fd.
-export i32 open(char* filename) {
+// Open an existing file by path. Returns an mfd, or -1 if not found / table full.
+export i32 open(char* path) {
     if (g_enabled == 0) { return -1; }
-    i32 idx = find_entry_by_name(filename);
+
+    char clean_name[16];
+    path_clean_name(path, &clean_name[0]);
+    if (clean_name[0] == 0) { return -1; }
+
+    i32 idx = find_entry_by_name(&clean_name[0]);
     if (idx == -1) {
         return -1;
     }
     i32 fd = find_free_fd();
     if (fd == -1) {
-        return -1;
+        return -1; // no free descriptor slot in g_fd_table (max 8)
     }
 
     i32 off = load_entry(idx);
+    g_fd_table[fd].type = FD_TYPE_FILE;
     g_fd_table[fd].entry_idx = idx;
     g_fd_table[fd].offset = 0;
     g_fd_table[fd].first_block = buf_word(off + 16);
     g_fd_table[fd].file_size = buf_word(off + 20);
+    g_fd_table[fd].flags = 3; // Read/Write
     return fd;
 }
 
+// Close an open descriptor.
+// Constraint: Descriptors 0..2 (stdin/stdout/stderr) are preserved and never closed.
 export void close(i32 fd) {
-    if (fd >= 0) {
-        if (fd < FD_MAX) {
+    if (fd >= 3 && fd < FD_MAX) {
+        if (g_fd_table[fd].type == FD_TYPE_FILE) {
+            g_fd_table[fd].type = FD_TYPE_UNUSED;
             g_fd_table[fd].entry_idx = -1;
+            g_fd_table[fd].offset = 0;
+            g_fd_table[fd].first_block = 0;
+            g_fd_table[fd].file_size = 0;
         }
     }
 }
 
-// Read up to `size` bytes from fd into the RAM buffer `buf`.
-// Returns the number of bytes read.
-export i32 read(i32 fd, i32 buf, i32 size) {
-    if (fd < 0) { return 0; }
-    if (fd >= FD_MAX) { return 0; }
-    if (g_fd_table[fd].entry_idx == -1) { return 0; }
+// Seek offset on fd. Returns new offset, or -1 on error.
+// Supported whence modes: SEEK_SET (0), SEEK_CUR (1), SEEK_END (2).
+export i32 seek(i32 fd, i32 offset, i32 whence) {
+    if (fd < 0 || fd >= FD_MAX) { return -1; }
+    if (g_fd_table[fd].type != FD_TYPE_FILE) { return -1; }
 
-    i32 file_size = g_fd_table[fd].file_size;
-    i32 offset = g_fd_table[fd].offset;
-    i32 remaining = file_size - offset;
-    if (remaining <= 0) { return 0; }
-    if (size > remaining) { size = remaining; }
+    i32 fsize = g_fd_table[fd].file_size;
 
-    i32 read_total = 0;
-    // Walk the block chain to the block containing `offset`.
-    i32 block = g_fd_table[fd].first_block;
-    i32 skip = offset / PAYLOAD;
-    while (skip > 0) {
-        ssd.read_block(block, g_buf);
-        block = buf_word(0);
-        skip = skip - 1;
+    i32 target = g_fd_table[fd].offset;
+    if (whence == SEEK_SET) {
+        target = offset;
+    } else if (whence == SEEK_CUR) {
+        target = target + offset;
+    } else if (whence == SEEK_END) {
+        target = fsize + offset;
+    } else {
+        return -1;
     }
-    i32 in_block = offset % PAYLOAD;
 
-    while (read_total < size) {
-        ssd.read_block(block, g_buf);
-        i32 next = buf_word(0);
-        while (in_block < PAYLOAD) {
-            if (read_total >= size) {
+    if (target < 0) {
+        target = 0;
+    }
+    g_fd_table[fd].offset = target;
+    return target;
+}
+
+// Read up to `size` bytes from fd into RAM buffer `buf`.
+// Returns the count of bytes read.
+export i32 read(i32 fd, i32 buf, i32 size) {
+    if (fd < 0 || fd >= FD_MAX) { return 0; }
+    if (size <= 0) { return 0; }
+
+    // Case 1: Serial Standard Input (non-blocking poll)
+    if (g_fd_table[fd].type == FD_TYPE_SERIAL) {
+        i32 count = 0;
+        while (count < size) {
+            if (serial.has_input() == 0) {
+                break;
+            }
+            i32 c = serial.read_input();
+            set_ram_byte(buf + count, c);
+            count++;
+        }
+        return count;
+    }
+
+    // Case 2: MFS Disk File
+    if (g_fd_table[fd].type == FD_TYPE_FILE) {
+        if (g_fd_table[fd].entry_idx == -1) { return 0; }
+
+        i32 file_size = g_fd_table[fd].file_size;
+        i32 offset = g_fd_table[fd].offset;
+        i32 remaining = file_size - offset;
+        if (remaining <= 0) { return 0; }
+        if (size > remaining) { size = remaining; }
+
+        i32 read_total = 0;
+        i32 block = g_fd_table[fd].first_block;
+        i32 skip = offset / PAYLOAD;
+        while (skip > 0) {
+            ssd.read_block(block, g_buf);
+            block = buf_word(0);
+            skip = skip - 1;
+        }
+        i32 in_block = offset % PAYLOAD;
+
+        while (read_total < size) {
+            ssd.read_block(block, g_buf);
+            i32 next = buf_word(0);
+            while (in_block < PAYLOAD) {
+                if (read_total >= size) {
+                    g_fd_table[fd].offset = offset + read_total;
+                    return read_total;
+                }
+                i32 c = buf_byte(4 + in_block);
+                set_ram_byte(buf + read_total, c);
+                read_total++;
+                in_block++;
+            }
+            in_block = 0;
+            block = next;
+            if (block == 0) {
                 g_fd_table[fd].offset = offset + read_total;
                 return read_total;
             }
-            i32 c = buf_byte(4 + in_block);
-            set_ram_byte(buf + read_total, c);
-            read_total++;
-            in_block++;
         }
-        in_block = 0;
-        block = next;
-        if (block == 0) {
-            g_fd_table[fd].offset = offset + read_total;
-            return read_total;
-        }
+        g_fd_table[fd].offset = offset + read_total;
+        return read_total;
     }
-    g_fd_table[fd].offset = offset + read_total;
-    return read_total;
+
+    return 0;
 }
 
-// Append `size` bytes from the RAM buffer `buf` to fd.
-// Returns the number of bytes written.
-export i32 write(i32 fd, i32 buf, i32 size) {
-    if (fd < 0) { return 0; }
-    if (fd >= FD_MAX) { return 0; }
-    if (g_fd_table[fd].entry_idx == -1) { return 0; }
-    if (size <= 0) { return 0; }
-
-    i32 file_size = g_fd_table[fd].file_size;
-
-    // Walk to the last block of the chain.
-    i32 block = g_fd_table[fd].first_block;
-    ssd.read_block(block, g_buf);
-    while (buf_word(0) != 0) {
-        block = buf_word(0);
-        ssd.read_block(block, g_buf);
-    }
-    i32 in_block = file_size % PAYLOAD;
-    // A file whose size is an exact multiple of PAYLOAD (and > 0) has a full
-    // last block; start a fresh one.
-    if (file_size > 0) {
-        if (in_block == 0) {
-            i32 nb = alloc_block();
-            if (nb == 0) { return 0; }
-            set_buf_word(0, nb);
-            ssd.write_block(block, g_buf);
-            block = nb;
-            zero_buf();
-            ssd.write_block(block, g_buf);
-        }
-    }
-
-    i32 written = 0;
-    while (written < size) {
-        ssd.read_block(block, g_buf);
-        while (in_block < PAYLOAD) {
-            if (written >= size) {
-                ssd.write_block(block, g_buf);
-                return finish_write(fd, file_size + written);
-            }
-            i32 c = ram_byte(buf + written);
-            set_buf_byte(4 + in_block, c);
-            written++;
-            in_block++;
-        }
-        // Block full: allocate and link the next one.
-        if (written < size) {
-            i32 nb = alloc_block();
-            if (nb == 0) {
-                set_buf_word(0, 0);
-                ssd.write_block(block, g_buf);
-                return finish_write(fd, file_size + written);
-            }
-            set_buf_word(0, nb);
-            ssd.write_block(block, g_buf);
-            block = nb;
-            zero_buf();
-            ssd.write_block(block, g_buf);
-            in_block = 0;
-        } else {
-            ssd.write_block(block, g_buf);
-        }
-    }
-    return finish_write(fd, file_size + written);
-}
-
-// Persist the new size to the file entry and fd table. Returns the number of
-// bytes written in this call so write() can report it to the caller.
+// Internal helper: updates file size directly to SSD Block 1 and syncs all open handles
 i32 finish_write(i32 fd, i32 new_size) {
     i32 written = new_size - g_fd_table[fd].file_size;
     i32 idx = g_fd_table[fd].entry_idx;
     i32 off = load_entry(idx);
     set_buf_word(off + 20, new_size);
     ssd.write_block(entry_block(idx), g_buf);
-    g_fd_table[fd].file_size = new_size;
+    
+    // Update size across all descriptors sharing this entry_idx
+    i32 i = 3;
+    while (i < FD_MAX) {
+        if (g_fd_table[i].type == FD_TYPE_FILE && g_fd_table[i].entry_idx == idx) {
+            g_fd_table[i].file_size = new_size;
+        }
+        i++;
+    }
     return written;
 }
 
-// Remove a file by name. Returns 0 on success, -1 if not found.
-export i32 remove(char* filename) {
-    i32 idx = find_entry_by_name(filename);
+// Write `size` bytes from RAM buffer `buf` to fd.
+// Returns the count of bytes written.
+export i32 write(i32 fd, i32 buf, i32 size) {
+    if (fd < 0 || fd >= FD_MAX) { return 0; }
+    if (size <= 0) { return 0; }
+
+    // Case 1: Serial Standard Output / Error
+    if (g_fd_table[fd].type == FD_TYPE_SERIAL) {
+        i32 i = 0;
+        while (i < size) {
+            i32 c = ram_byte(buf + i);
+            serial.putc(c);
+            i++;
+        }
+        return size;
+    }
+
+    // Case 2: MFS Disk File (appends and extends block chain as needed)
+    if (g_fd_table[fd].type == FD_TYPE_FILE) {
+        if (g_fd_table[fd].entry_idx == -1) { return 0; }
+
+        i32 file_size = g_fd_table[fd].file_size;
+
+        // Walk to the last block of the chain
+        i32 block = g_fd_table[fd].first_block;
+        ssd.read_block(block, g_buf);
+        while (buf_word(0) != 0) {
+            block = buf_word(0);
+            ssd.read_block(block, g_buf);
+        }
+        i32 in_block = file_size % PAYLOAD;
+        if (file_size > 0) {
+            if (in_block == 0) {
+                i32 nb = alloc_block();
+                if (nb == 0) { return 0; }
+                set_buf_word(0, nb);
+                ssd.write_block(block, g_buf);
+                block = nb;
+                zero_buf();
+                ssd.write_block(block, g_buf);
+            }
+        }
+
+        i32 written = 0;
+        while (written < size) {
+            ssd.read_block(block, g_buf);
+            while (in_block < PAYLOAD) {
+                if (written >= size) {
+                    ssd.write_block(block, g_buf);
+                    return finish_write(fd, file_size + written);
+                }
+                i32 c = ram_byte(buf + written);
+                set_buf_byte(4 + in_block, c);
+                written++;
+                in_block++;
+            }
+            if (written < size) {
+                i32 nb = alloc_block();
+                if (nb == 0) {
+                    set_buf_word(0, 0);
+                    ssd.write_block(block, g_buf);
+                    return finish_write(fd, file_size + written);
+                }
+                set_buf_word(0, nb);
+                ssd.write_block(block, g_buf);
+                block = nb;
+                zero_buf();
+                ssd.write_block(block, g_buf);
+                in_block = 0;
+            } else {
+                ssd.write_block(block, g_buf);
+            }
+        }
+        return finish_write(fd, file_size + written);
+    }
+
+    return 0;
+}
+
+// Remove a file by path. Returns 0 on success, -1 if not found.
+// Frees the SSD block chain and clears entry from Block 1.
+export i32 remove(char* path) {
+    char clean_name[16];
+    path_clean_name(path, &clean_name[0]);
+    if (clean_name[0] == 0) { return -1; }
+
+    i32 idx = find_entry_by_name(&clean_name[0]);
     if (idx == -1) {
         return -1;
     }
     i32 off = load_entry(idx);
     i32 block = buf_word(off + 16);
 
-    // Free the block chain.
+    // Free block chain
     while (block != 0) {
         ssd.read_block(block, g_buf);
         i32 next = buf_word(0);
@@ -498,17 +678,27 @@ export i32 remove(char* filename) {
         block = next;
     }
 
-    // Clear the entry.
+    // Clear disk entry
     off = load_entry(idx);
     set_buf_word(off + 16, 0);
     set_buf_word(off + 20, 0);
     set_buf_byte(off, 0);
     ssd.write_block(entry_block(idx), g_buf);
+
+    // Invalidate any open descriptors targeting this entry
+    i32 i = 3;
+    while (i < FD_MAX) {
+        if (g_fd_table[i].type == FD_TYPE_FILE && g_fd_table[i].entry_idx == idx) {
+            g_fd_table[i].type = FD_TYPE_UNUSED;
+            g_fd_table[i].entry_idx = -1;
+        }
+        i++;
+    }
+
     return 0;
 }
 
-// Print all files and their sizes to the serial console. Names are emitted a
-// byte at a time straight from the buffer to avoid a local copy.
+// List all files and sizes to the serial console.
 export void list() {
     if (g_enabled == 0) { return; }
     debug.println("--- fs list ---");
