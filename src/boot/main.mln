@@ -1,0 +1,62 @@
+import debug from "../../../MyKernel/src/debug/debug.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import dom from "../ui/dom.mln";
+import fs from "../fs/fs.mln";
+import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+import irq_dispatch from "../../../MyKernel/src/kernel/irq_dispatch.mln";
+import irq from "../../../MyKernel/src/arch/irq.mln";
+import shell from "../apps/shell.mln";
+import compositor from "../ui/compositor.mln";
+import counter from "../apps/counter.dom.mln";
+
+// System bring-up.
+//
+// This is the OS's entry point, not the kernel's. It lives in MyOS because
+// most of what it does is OS work -- starting the DOM, the filesystem, the
+// compositor and the apps -- and only the first few lines are kernel
+// services being handed their turn. Keeping it in MyKernel was what made the
+// two submodules import each other, so that neither could build alone.
+//
+// The direction here is one-way: MyOS reaches into MyKernel for heap,
+// scheduler, irq and debug, and nothing in MyKernel points back.
+
+void kernel_boot_banner() {
+    debug.println("kernel: boot");
+}
+
+void kernel_arch_init() {
+    debug.println("kernel: arch init");
+    heap.init();
+    debug.println("kernel: heap ready");
+}
+
+void kernel_init() {
+    kernel_boot_banner();
+    kernel_arch_init();
+
+    dom.init();
+    debug.println("kernel: dom ready");
+
+    // Apps own their windows; the kernel only starts them. counter.mount()
+    // builds its tree and attaches it to the desktop.
+    counter.mount();
+    dom.dump();
+
+    fs.init();
+
+    debug.println("kernel: enabling interrupts for event queue");
+    scheduler.init();
+    irq.set_handler();
+    irq.enable();
+
+    debug.println("kernel: spawning shell task");
+    scheduler.spawn_task(shell.run);
+
+    debug.println("ui: click the button (window must have focus)");
+    compositor.run();
+}
+
+i32 kernel_main() {
+    kernel_init();
+    return 0;
+}
