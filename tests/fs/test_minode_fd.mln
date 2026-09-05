@@ -1,0 +1,122 @@
+import debug from "../../../MyKernel/src/debug/debug.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import fs from "../../src/fs/fs.mln";
+import serial from "../../../MyKernel/src/io/serial.mln";
+import { halt_cpu } from "../../../MyKernel/src/arch/halt.masm";
+
+i32 SEEK_SET = 0;
+i32 SEEK_CUR = 1;
+i32 SEEK_END = 2;
+
+void set_byte(i32 addr, i32 value) {
+    char *p = (char *)addr;
+    *p = (char)value;
+}
+
+i32 get_byte(i32 addr) {
+    char *p = (char *)addr;
+    return (i32)(*p) & 0xFF;
+}
+
+void print_buf(i32 buf, i32 len) {
+    i32 i = 0;
+    while (i < len) {
+        serial.putc(get_byte(buf + i));
+        i = i + 1;
+    }
+}
+
+void test_minode_and_fd() {
+    debug.println("--- Starting minode & mfd tests ---");
+
+    // 1. Test standard descriptor (fd = 1 stdout)
+    i32 sbuf = heap.alloc(16);
+    set_byte(sbuf + 0, 72);  // H
+    set_byte(sbuf + 1, 101); // e
+    set_byte(sbuf + 2, 108); // l
+    set_byte(sbuf + 3, 108); // l
+    set_byte(sbuf + 4, 111); // o
+    set_byte(sbuf + 5, 32);  // space
+    set_byte(sbuf + 6, 70);  // F
+    set_byte(sbuf + 7, 68);  // D
+    set_byte(sbuf + 8, 49);  // 1
+    set_byte(sbuf + 9, 10);  // \n
+    fs.write(1, sbuf, 10);   // Writes to stdout/serial via unified mfd 1
+
+    // 2. Test file creation with leading slash path resolution
+    i32 wbuf = heap.alloc(32);
+    // "ABCDEFGHIJ"
+    i32 i = 0;
+    while (i < 10) {
+        set_byte(wbuf + i, 65 + i);
+        i = i + 1;
+    }
+
+    i32 fd1 = fs.create("/alphabet.txt");
+    if (fd1 < 0) {
+        debug.println("[FAIL] failed to create /alphabet.txt");
+        halt_cpu();
+    }
+    debug.printf("Created /alphabet.txt on mfd %i\n", fd1);
+    fs.write(fd1, wbuf, 10);
+    fs.close(fd1);
+
+    // 3. Test multi-handle concurrent open on the same file
+    i32 h1 = fs.open("/alphabet.txt");
+    i32 h2 = fs.open("alphabet.txt"); // without leading slash
+    debug.printf("Opened h1=%i, h2=%i (concurrent FDs for same minode)\n", h1, h2);
+
+    if (h1 < 0 || h2 < 0 || h1 == h2) {
+        debug.println("[FAIL] expected distinct positive FDs");
+        halt_cpu();
+    }
+
+    // Read first 4 bytes from h1 -> "ABCD"
+    i32 rbuf1 = heap.alloc(16);
+    i32 n1 = fs.read(h1, rbuf1, 4);
+    debug.print("h1 read 4 bytes: ");
+    print_buf(rbuf1, n1);
+    debug.println("");
+
+    // Seek h2 to offset 4 (SEEK_SET) and read 4 bytes -> "EFGH"
+    fs.seek(h2, 4, SEEK_SET);
+    i32 rbuf2 = heap.alloc(16);
+    i32 n2 = fs.read(h2, rbuf2, 4);
+    debug.print("h2 read 4 bytes after seek: ");
+    print_buf(rbuf2, n2);
+    debug.println("");
+
+    // Verify h1 offset is still 4, read next 2 bytes from h1 -> "EF"
+    i32 rbuf3 = heap.alloc(16);
+    i32 n3 = fs.read(h1, rbuf3, 2);
+    debug.print("h1 read next 2 bytes: ");
+    print_buf(rbuf3, n3);
+    debug.println("");
+
+    fs.close(h1);
+    fs.close(h2);
+
+    // 4. Test remove
+    i32 rem_res = fs.remove("/alphabet.txt");
+    debug.printf("Removed /alphabet.txt result: %i\n", rem_res);
+
+    i32 h3 = fs.open("/alphabet.txt");
+    if (h3 != -1) {
+        debug.println("[FAIL] /alphabet.txt should not exist after remove");
+        halt_cpu();
+    }
+
+    debug.println("Minode and FD tests PASSED!");
+    halt_cpu();
+}
+
+void kernel_init() {
+    heap.init();
+    fs.init();
+    test_minode_and_fd();
+}
+
+i32 kernel_main() {
+    kernel_init();
+    return 0;
+}

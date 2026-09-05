@@ -1,0 +1,5 @@
+import { kernel_main } from "test_fs_smoke.mln"
+
+__START__:
+  call kernel_main
+  halt

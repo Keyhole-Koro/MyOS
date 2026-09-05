@@ -1,0 +1,5 @@
+import { kernel_main } from "test_minode_fd.mln"
+
+__START__:
+  call kernel_main
+  halt
