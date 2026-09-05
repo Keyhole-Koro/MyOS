@@ -1,7 +1,7 @@
 package counter;
 
 import dom from "../ui/dom.mln";
-import str from "../../../MyKernel/src/lib/str.mln";
+import strbuf from "../../../MyKernel/src/lib/strbuf.mln";
 
 // Click counter demo app.
 //
@@ -25,11 +25,10 @@ char g_click_buf[32];
 void on_click(i32 id) {
     g_clicks = g_clicks + 1;
 
-    g_click_buf[0] = 99; g_click_buf[1] = 108; g_click_buf[2] = 105;
-    g_click_buf[3] = 99; g_click_buf[4] = 107; g_click_buf[5] = 115;
-    g_click_buf[6] = 58; g_click_buf[7] = 32;
+    i32 n = strbuf.reset(&g_click_buf[0]);
+    n = strbuf.append(&g_click_buf[0], 32, n, "clicks: ");
+    n = strbuf.append_i32(&g_click_buf[0], 32, n, g_clicks);
 
-    str.itoa(g_clicks, &g_click_buf[8]);
     dom.set_text(g_label_id, &g_click_buf[0]);
 }
 
