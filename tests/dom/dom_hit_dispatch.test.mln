@@ -1,0 +1,70 @@
+import debug from "../../../MyKernel/src/debug/debug.mln";
+import test from "../../../MyKernel/tests/libs/test.mln";
+import dom from "../../src/ui/dom.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
+
+// Pins the interaction contract the compositor relies on: it holds no node ids
+// and starts every interaction from a hit test, so what must hold is that
+// find_at returns the node under a point and dispatch_click runs that node's
+// own handler. Two buttons are mounted so a hit can be wrong rather than
+// merely absent.
+
+i32 g_hits_a = 0;
+i32 g_hits_b = 0;
+
+void on_a(i32 id) {
+    g_hits_a = g_hits_a + 1;
+    debug.printf("a(%d);", id);
+}
+
+void on_b(i32 id) {
+    g_hits_b = g_hits_b + 1;
+    debug.printf("b(%d);", id);
+}
+
+// Click wherever the pointer is, the way the compositor does: hit-test first,
+// then dispatch to whatever came back.
+i32 click_at(i32 x, i32 y) {
+    i32 hit = dom.find_at(x, y);
+    if (hit != 0) {
+        dom.dispatch_click(hit);
+    }
+    return hit;
+}
+
+test("dom_hit_dispatch", {
+    expect: "TRACE:a(9);b(10);miss=0;a(9);a=2;b=1";
+    step: 10000000;
+}, () => {
+    heap.init();
+    dom.init();
+
+    i32 win = dom.create_window("W", 0, 0, 400, 300);
+    dom.append_child(dom.desktop_id(), win);
+
+    i32 a = dom.create_button("A", 10, 10, 100, 50);
+    dom.set_on_click(a, on_a);
+    dom.append_child(win, a);
+
+    i32 b = dom.create_button("B", 200, 10, 100, 50);
+    dom.set_on_click(b, on_b);
+    dom.append_child(win, b);
+
+    debug.print("TRACE:");
+
+    click_at(50, 30);   // inside A
+    click_at(240, 30);  // inside B
+
+    // Outside both buttons: the hit is the window, which carries no handler, so
+    // nothing runs and neither counter moves.
+    i32 outside = click_at(350, 250);
+    i32 missed = 0;
+    if (outside == a) { missed = 1; }
+    if (outside == b) { missed = 1; }
+    debug.printf("miss=%d;", missed);
+
+    click_at(50, 30);   // A again
+
+    debug.printf("a=%d;b=%d", g_hits_a, g_hits_b);
+    test.pass();
+});

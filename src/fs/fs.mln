@@ -3,6 +3,7 @@ package fs;
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import mem from "../../../MyKernel/src/mm/mem.mln";
+import bitset from "../../../MyKernel/src/lib/bitset.mln";
 import serial from "../../../MyKernel/src/io/serial.mln";
 import ssd from "ssd.mln";
 
@@ -136,39 +137,37 @@ void zero_buf() {
 // 3. Bitmap Helpers (Block Allocation)
 // =========================================================================
 
+// The bitmap lives in the block buffer g_buf points at, so every helper here
+// is std bitset over that buffer. bitset indexes with shifts rather than the
+// `/ 8` and `% 8` this used to do, which the target has no instruction for.
+
 i32 bitmap_get(i32 block_num) {
-    i32 byte_off = block_num / 8;
-    i32 bit = block_num % 8;
-    i32 b = buf_byte(byte_off);
-    return (b >> bit) & 1;
+    char *bits = (char *)g_buf;
+    return bitset.get(bits, block_num);
 }
 
 void bitmap_set(i32 block_num, i32 value) {
-    i32 byte_off = block_num / 8;
-    i32 bit = block_num % 8;
-    i32 b = buf_byte(byte_off);
-
-    if (value != 0) {
-        b = b | (1 << bit);
-    } else {
-        b = b & ~(1 << bit);
-    }
-    set_buf_byte(byte_off, b);
+    char *bits = (char *)g_buf;
+    bitset.put(bits, block_num, value);
 }
 
 // Allocate a free data block from the SSD bitmap. Returns block number or 0 if full.
+//
+// bitset.find_clear skips whole bytes of 0xFF, so a nearly full disk costs one
+// load per 8 blocks instead of one per block -- this used to test every bit of
+// the 16,384 in turn.
 i32 alloc_block() {
     ssd.read_block(BITMAP_BLOCK, g_buf);
-    i32 b = DATA_START;
-    while (b < BLOCK_COUNT) {
-        if (bitmap_get(b) == 0) {
-            bitmap_set(b, 1);
-            ssd.write_block(BITMAP_BLOCK, g_buf);
-            return b;
-        }
-        b++;
+    char *bits = (char *)g_buf;
+
+    i32 b = bitset.find_clear(bits, BLOCK_COUNT, DATA_START);
+    if (b < 0) {
+        return 0;
     }
-    return 0;
+
+    bitset.set(bits, b);
+    ssd.write_block(BITMAP_BLOCK, g_buf);
+    return b;
 }
 
 void free_block(i32 block_num) {
