@@ -1,0 +1,48 @@
+import debug from "../../../MyKernel/src/debug/debug.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+import irq from "../../../MyKernel/src/arch/irq.mln";
+import irq_dispatch from "../../../MyKernel/src/kernel/irq_dispatch.mln";
+import dom from "../../src/ui/dom.mln";
+import graphics from "../../src/ui/graphics.mln";
+import counter from "../../src/apps/counter.dom.mln";
+
+// Boots the counter window with no shell, draws one frame, and stops.
+//
+// It exists because the headless UI automation cannot attach to the real
+// system: main.mln runs the shell alongside the compositor, the two interleave
+// their serial output byte by byte, and the split "MyOS>" never matches the
+// marker control_stdio.rs waits for (MYOS-011). With a single printing task the
+// prompt comes out whole, so mydomtester can attach, screenshot and click.
+//
+// What it is for:
+//
+//   myemu -i <image> --timer-interval 0    a correct frame, for comparison
+//   myemu -i <image>                       the same frame under timer load
+//
+// That pair is how the timer starvation was found: the guest issued every fill
+// at the right coordinates and the DMA received them, but at a 1 ms tick it
+// never got far enough to issue them all. Keep it around as the baseline for
+// "is the compositor drawing what it means to draw".
+
+// A second task, like main.mln spawns the shell, but silent so serial output
+// stays whole for control-stdio.
+void idler() {
+    while (1) { scheduler.sleep(1); }
+}
+
+i32 kernel_main() {
+    heap.init();
+    dom.init();
+    counter.mount();
+    scheduler.init();
+    irq.set_handler();
+    irq.enable();
+    scheduler.spawn_task(idler);
+
+    dom.render_all();
+    graphics.present();
+    debug.println("MyOS>");
+    while (1) { }
+    return 0;
+}
