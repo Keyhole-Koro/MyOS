@@ -1,6 +1,7 @@
 package graphics;
 
 import font from "font8x8.mln";
+import str from "../../../../toolchain/MyStdLib/str.mln";
 
 export i32 VRAM_BASE = 0x30000000;
 export i32 DISPLAY_WIDTH = 1024;
@@ -336,33 +337,20 @@ export void draw_text_scaled(i32 x, i32 y, char* s, i32 fg, i32 bg, i32 scale) {
 // Draw a signed 32-bit integer in base 10 at (x, y). Returns the x coordinate
 // just past the last glyph so callers can chain draws.
 export i32 draw_int(i32 x, i32 y, i32 value, i32 fg, i32 bg) {
+    // str.itoa already does the sign, the zero case, and the digit-order
+    // reversal (11 bytes covers "-2147483648" plus the terminator); this just
+    // walks the resulting string and draws it, the same as draw_text.
+    char digits[12];
+    str.itoa(value, &digits[0]);
+
     i32 cx = x;
-    if (value < 0) {
-        draw_char(cx, y, 45, fg, bg); // '-'
+    i32 i = 0;
+    i32 c = (i32)digits[0] & 0xFF;
+    while (c != 0) {
+        draw_char(cx, y, c, fg, bg);
         cx = cx + font.glyph_w();
-        value = 0 - value;
-    }
-
-    // Emit digits into a small stack buffer (max 10 for i32), then draw in
-    // order. MyLang has no dynamic arrays, so use a fixed local buffer.
-    i32 digits[10];
-    i32 n = 0;
-    if (value == 0) {
-        digits[0] = 0;
-        n = 1;
-    } else {
-        while (value > 0) {
-            digits[n] = value % 10;
-            value = value / 10;
-            n = n + 1;
-        }
-    }
-
-    i32 i = n - 1;
-    while (i >= 0) {
-        draw_char(cx, y, 48 + digits[i], fg, bg); // '0' + digit
-        cx = cx + font.glyph_w();
-        i = i - 1;
+        i = i + 1;
+        c = (i32)digits[i] & 0xFF;
     }
     return cx;
 }
