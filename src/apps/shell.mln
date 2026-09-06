@@ -5,7 +5,7 @@ import fs from "../fs/fs.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import serial from "../../../MyKernel/src/io/serial.mln";
 import dom from "../ui/dom.mln";
-import str from "../../../MyKernel/src/lib/str.mln";
+import str from "../../../../toolchain/MyStdLib/str.mln";
 
 // Block until a keystroke is available in the serial input queue, yielding the
 // CPU while waiting. The serial IRQ handler fills the queue from hardware RX;
