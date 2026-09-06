@@ -8,6 +8,8 @@ import bytes from "../../../../toolchain/MyStdLib/bytes.mln";
 import str from "../../../../toolchain/MyStdLib/str.mln";
 import serial from "../../../MyKernel/src/io/serial.mln";
 import ssd from "ssd.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 
 // =========================================================================
 // MyFileSystem (MFS): Direct File Descriptor (mfd) Subsystem (No RAM Cache)
@@ -34,6 +36,30 @@ import ssd from "ssd.mln";
 //   Offset 20..23 : file_size (i32: size in bytes)
 //   Offset 24..27 : flags (i32: reserved)
 //   Offset 28..31 : reserved (i32)
+
+// Error type for the Result<i32, FsError> operations below. A payload
+// variant carries whatever made the call fail, the way an exception object
+// would -- constructing one is a two-step, since `Ok(...)`/`Err(...)`/a
+// variant with a payload can only appear as the whole right-hand side of an
+// assignment or initializer (a nested construction like `Err(BadFd(fd))`
+// isn't accepted): build the FsError value first, then wrap it.
+//
+//     FsError cause = BadFd(fd);
+//     Result<i32, FsError> err = Err(cause);
+//     return err;
+export enum FsError {
+    Disabled,        // filesystem not enabled (SSD absent / not formatted)
+    InvalidName,     // path cleans to an empty name
+    AlreadyExists,   // create(): a file with this name already exists
+    NoFreeSlot,      // entry table (create) or fd table (open) is full
+    AllocFailed,     // create()/write(): no free data block on the SSD
+    NotFound,        // open()/remove(): no file with this name
+    BadFd(i32),      // the fd that was out of range or not an open descriptor
+    WrongType(i32),  // the fd that was open, but not the kind this call needs
+    BadWhence(i32),  // seek(): the whence value, none of SEEK_SET/CUR/END
+    Closed(i32),     // the fd whose backing file entry was removed out from under it
+    InvalidSize(i32),// the size argument, <= 0
+}
 
 export i32 MAGIC        = 0x4D465331; // 'MFS1' (MyFileSystem v1)
 export i32 VERSION      = 1;
@@ -158,18 +184,20 @@ void bitmap_set(i32 block_num, i32 value) {
 // bitset.find_clear skips whole bytes of 0xFF, so a nearly full disk costs one
 // load per 8 blocks instead of one per block -- this used to test every bit of
 // the 16,384 in turn.
-i32 alloc_block() {
+Option<i32> alloc_block() {
     ssd.read_block(BITMAP_BLOCK, g_buf);
     char *bits = (char *)g_buf;
 
     i32 b = bitset.find_clear(bits, BLOCK_COUNT, DATA_START);
     if (b < 0) {
-        return 0;
+        Option<i32> none = None;
+        return none;
     }
 
     bitset.set(bits, b);
     ssd.write_block(BITMAP_BLOCK, g_buf);
-    return b;
+    Option<i32> found = Some(b);
+    return found;
 }
 
 void free_block(i32 block_num) {
@@ -212,32 +240,36 @@ void store_name(i32 off, char* name) {
     bytes.zero(&dst[written], NAME_MAX - written);
 }
 
-i32 find_entry_by_name(char* name) {
+Option<i32> find_entry_by_name(char* name) {
     ssd.read_block(ENTRY_BLOCK, g_buf);
     i32 idx = 0;
     while (idx < MAX_FILES) {
         i32 off = idx * ENTRY_SIZE;
         if (buf_word(off + 16) != 0) { // first_block != 0 => in use
             if (name_match(off, name) != 0) {
-                return idx;
+                Option<i32> found = Some(idx);
+                return found;
             }
         }
         idx++;
     }
-    return -1;
+    Option<i32> none = None;
+    return none;
 }
 
-i32 find_free_entry() {
+Option<i32> find_free_entry() {
     ssd.read_block(ENTRY_BLOCK, g_buf);
     i32 idx = 0;
     while (idx < MAX_FILES) {
         i32 off = idx * ENTRY_SIZE;
         if (buf_word(off + 16) == 0) {
-            return idx;
+            Option<i32> found = Some(idx);
+            return found;
         }
         idx++;
     }
-    return -1;
+    Option<i32> none = None;
+    return none;
 }
 
 // =========================================================================
@@ -282,15 +314,17 @@ void fd_table_init() {
     }
 }
 
-i32 find_free_fd() {
+Option<i32> find_free_fd() {
     i32 i = 3; // Descriptors 0, 1, 2 are reserved for standard streams
     while (i < FD_MAX) {
         if (g_fd_table[i].type == FD_TYPE_UNUSED) {
-            return i;
+            Option<i32> found = Some(i);
+            return found;
         }
         i++;
     }
-    return -1;
+    Option<i32> none = None;
+    return none;
 }
 
 // --- Path Resolution Constraints ---
@@ -365,25 +399,44 @@ export void init() {
 // 7. File Operations (open, create, read, write, seek, close, remove, list)
 // =========================================================================
 
-// Create a file by path. Returns an mfd, or -1 on failure.
+// Create a file by path. On success, opens it and returns its mfd (same as
+// open() would).
 // Constraint: Fails if file already exists or if disk entry table / bitmap is full.
-export i32 create(char* path) {
-    if (g_enabled == 0) { return -1; }
-    
+export Result<i32, FsError> create(char* path) {
+    if (g_enabled == 0) {
+        FsError cause = Disabled;
+        Result<i32, FsError> err = Err(cause);
+        return err;
+    }
+
     char clean_name[16];
     path_clean_name(path, &clean_name[0]);
-    if (clean_name[0] == 0) { return -1; }
+    if (clean_name[0] == 0) {
+        FsError cause = InvalidName;
+        Result<i32, FsError> err = Err(cause);
+        return err;
+    }
 
-    if (find_entry_by_name(&clean_name[0]) != -1) {
-        return -1; // already exists
+    Option<i32> existing = find_entry_by_name(&clean_name[0]);
+    i32 already = case existing of { Some(v) -> 1; None -> 0; };
+    if (already != 0) {
+        FsError cause = AlreadyExists;
+        Result<i32, FsError> err = Err(cause);
+        return err;
     }
-    i32 idx = find_free_entry();
+    Option<i32> free_entry = find_free_entry();
+    i32 idx = case free_entry of { Some(v) -> v; None -> -1; };
     if (idx == -1) {
-        return -1;
+        FsError cause = NoFreeSlot;
+        Result<i32, FsError> err = Err(cause);
+        return err;
     }
-    i32 first = alloc_block();
+    Option<i32> free_block = alloc_block();
+    i32 first = case free_block of { Some(v) -> v; None -> 0; };
     if (first == 0) {
-        return -1;
+        FsError cause = AllocFailed;
+        Result<i32, FsError> err = Err(cause);
+        return err;
     }
 
     // Initialize the first data block (0 next pointer)
@@ -399,34 +452,55 @@ export i32 create(char* path) {
     set_buf_word(off + 28, 0);     // reserved
     ssd.write_block(entry_block(idx), g_buf);
 
-    return open(path);
+    // A function can't `return` another function's aggregate-returning call
+    // directly (no lvalue to copy from); binding it to a local first gives
+    // the codegen an address to forward through our own hidden out-pointer.
+    Result<i32, FsError> r = open(path);
+    return r;
 }
 
-// Open an existing file by path. Returns an mfd, or -1 if not found / table full.
-export i32 open(char* path) {
-    if (g_enabled == 0) { return -1; }
+// Open an existing file by path. Returns its mfd.
+export Result<i32, FsError> open(char* path) {
+    if (g_enabled == 0) {
+        FsError cause = Disabled;
+        Result<i32, FsError> err = Err(cause);
+        return err;
+    }
 
     char clean_name[16];
     path_clean_name(path, &clean_name[0]);
-    if (clean_name[0] == 0) { return -1; }
-
-    i32 idx = find_entry_by_name(&clean_name[0]);
-    if (idx == -1) {
-        return -1;
+    if (clean_name[0] == 0) {
+        FsError cause = InvalidName;
+        Result<i32, FsError> err = Err(cause);
+        return err;
     }
-    i32 fd = find_free_fd();
+
+    Option<i32> entry = find_entry_by_name(&clean_name[0]);
+    i32 idx = case entry of { Some(v) -> v; None -> -1; };
+    if (idx == -1) {
+        FsError cause = NotFound;
+        Result<i32, FsError> err = Err(cause);
+        return err;
+    }
+    Option<i32> free_fd = find_free_fd();
+    i32 fd = case free_fd of { Some(v) -> v; None -> -1; };
     if (fd == -1) {
-        return -1; // no free descriptor slot in g_fd_table (max 8)
+        FsError cause = NoFreeSlot;
+        Result<i32, FsError> err = Err(cause); // no free descriptor slot in g_fd_table (max 8)
+        return err;
     }
 
     i32 off = load_entry(idx);
-    g_fd_table[fd].type = FD_TYPE_FILE;
-    g_fd_table[fd].entry_idx = idx;
-    g_fd_table[fd].offset = 0;
-    g_fd_table[fd].first_block = buf_word(off + 16);
-    g_fd_table[fd].file_size = buf_word(off + 20);
-    g_fd_table[fd].flags = 3; // Read/Write
-    return fd;
+    g_fd_table[fd] = OpenFile {
+        type: FD_TYPE_FILE,
+        entry_idx: idx,
+        offset: 0,
+        first_block: buf_word(off + 16),
+        file_size: buf_word(off + 20),
+        flags: 3, // Read/Write
+    };
+    Result<i32, FsError> ok = Ok(fd);
+    return ok;
 }
 
 // Close an open descriptor.
@@ -443,11 +517,19 @@ export void close(i32 fd) {
     }
 }
 
-// Seek offset on fd. Returns new offset, or -1 on error.
+// Seek offset on fd. Returns the new offset.
 // Supported whence modes: SEEK_SET (0), SEEK_CUR (1), SEEK_END (2).
-export i32 seek(i32 fd, i32 offset, i32 whence) {
-    if (fd < 0 || fd >= FD_MAX) { return -1; }
-    if (g_fd_table[fd].type != FD_TYPE_FILE) { return -1; }
+export Result<i32, FsError> seek(i32 fd, i32 offset, i32 whence) {
+    if (fd < 0 || fd >= FD_MAX) {
+        FsError cause = BadFd(fd);
+        Result<i32, FsError> err = Err(cause);
+        return err;
+    }
+    if (g_fd_table[fd].type != FD_TYPE_FILE) {
+        FsError cause = WrongType(fd);
+        Result<i32, FsError> err = Err(cause);
+        return err;
+    }
 
     i32 fsize = g_fd_table[fd].file_size;
 
@@ -459,21 +541,32 @@ export i32 seek(i32 fd, i32 offset, i32 whence) {
     } else if (whence == SEEK_END) {
         target = fsize + offset;
     } else {
-        return -1;
+        FsError cause = BadWhence(whence);
+        Result<i32, FsError> err = Err(cause);
+        return err;
     }
 
     if (target < 0) {
         target = 0;
     }
     g_fd_table[fd].offset = target;
-    return target;
+    Result<i32, FsError> ok = Ok(target);
+    return ok;
 }
 
 // Read up to `size` bytes from fd into RAM buffer `buf`.
 // Returns the count of bytes read.
-export i32 read(i32 fd, i32 buf, i32 size) {
-    if (fd < 0 || fd >= FD_MAX) { return 0; }
-    if (size <= 0) { return 0; }
+export Result<i32, FsError> read(i32 fd, i32 buf, i32 size) {
+    if (fd < 0 || fd >= FD_MAX) {
+        FsError cause = BadFd(fd);
+        Result<i32, FsError> err = Err(cause);
+        return err;
+    }
+    if (size <= 0) {
+        FsError cause = InvalidSize(size);
+        Result<i32, FsError> err = Err(cause);
+        return err;
+    }
 
     // Case 1: Serial Standard Input (non-blocking poll)
     if (g_fd_table[fd].type == FD_TYPE_SERIAL) {
@@ -486,17 +579,26 @@ export i32 read(i32 fd, i32 buf, i32 size) {
             set_ram_byte(buf + count, c);
             count++;
         }
-        return count;
+        Result<i32, FsError> ok = Ok(count);
+        return ok;
     }
 
     // Case 2: MFS Disk File
     if (g_fd_table[fd].type == FD_TYPE_FILE) {
-        if (g_fd_table[fd].entry_idx == -1) { return 0; }
+        if (g_fd_table[fd].entry_idx == -1) {
+            FsError cause = Closed(fd);
+            Result<i32, FsError> err = Err(cause);
+            return err;
+        }
 
         i32 file_size = g_fd_table[fd].file_size;
         i32 offset = g_fd_table[fd].offset;
         i32 remaining = file_size - offset;
-        if (remaining <= 0) { return 0; }
+        if (remaining <= 0) {
+            // Already at EOF -- Ok(0), not an error.
+            Result<i32, FsError> ok = Ok(0);
+            return ok;
+        }
         if (size > remaining) { size = remaining; }
 
         i32 read_total = 0;
@@ -515,7 +617,8 @@ export i32 read(i32 fd, i32 buf, i32 size) {
             while (in_block < PAYLOAD) {
                 if (read_total >= size) {
                     g_fd_table[fd].offset = offset + read_total;
-                    return read_total;
+                    Result<i32, FsError> ok = Ok(read_total);
+                    return ok;
                 }
                 i32 c = buf_byte(4 + in_block);
                 set_ram_byte(buf + read_total, c);
@@ -526,14 +629,18 @@ export i32 read(i32 fd, i32 buf, i32 size) {
             block = next;
             if (block == 0) {
                 g_fd_table[fd].offset = offset + read_total;
-                return read_total;
+                Result<i32, FsError> ok = Ok(read_total);
+                return ok;
             }
         }
         g_fd_table[fd].offset = offset + read_total;
-        return read_total;
+        Result<i32, FsError> ok = Ok(read_total);
+        return ok;
     }
 
-    return 0;
+    FsError cause = WrongType(fd);
+    Result<i32, FsError> err = Err(cause);
+    return err;
 }
 
 // Internal helper: updates file size directly to SSD Block 1 and syncs all open handles
@@ -555,11 +662,21 @@ i32 finish_write(i32 fd, i32 new_size) {
     return written;
 }
 
-// Write `size` bytes from RAM buffer `buf` to fd.
-// Returns the count of bytes written.
-export i32 write(i32 fd, i32 buf, i32 size) {
-    if (fd < 0 || fd >= FD_MAX) { return 0; }
-    if (size <= 0) { return 0; }
+// Write `size` bytes from RAM buffer `buf` to fd. On success, the payload is
+// the count of bytes actually written -- this can be less than `size` if the
+// disk fills up mid-write, which is not itself an error (a short write, same
+// as any real filesystem under the same condition).
+export Result<i32, FsError> write(i32 fd, i32 buf, i32 size) {
+    if (fd < 0 || fd >= FD_MAX) {
+        FsError cause = BadFd(fd);
+        Result<i32, FsError> err = Err(cause);
+        return err;
+    }
+    if (size <= 0) {
+        FsError cause = InvalidSize(size);
+        Result<i32, FsError> err = Err(cause);
+        return err;
+    }
 
     // Case 1: Serial Standard Output / Error
     if (g_fd_table[fd].type == FD_TYPE_SERIAL) {
@@ -569,12 +686,17 @@ export i32 write(i32 fd, i32 buf, i32 size) {
             serial.putc(c);
             i++;
         }
-        return size;
+        Result<i32, FsError> ok = Ok(size);
+        return ok;
     }
 
     // Case 2: MFS Disk File (appends and extends block chain as needed)
     if (g_fd_table[fd].type == FD_TYPE_FILE) {
-        if (g_fd_table[fd].entry_idx == -1) { return 0; }
+        if (g_fd_table[fd].entry_idx == -1) {
+            FsError cause = Closed(fd);
+            Result<i32, FsError> err = Err(cause);
+            return err;
+        }
 
         i32 file_size = g_fd_table[fd].file_size;
 
@@ -588,8 +710,13 @@ export i32 write(i32 fd, i32 buf, i32 size) {
         i32 in_block = file_size % PAYLOAD;
         if (file_size > 0) {
             if (in_block == 0) {
-                i32 nb = alloc_block();
-                if (nb == 0) { return 0; }
+                Option<i32> next_block = alloc_block();
+                i32 nb = case next_block of { Some(v) -> v; None -> 0; };
+                if (nb == 0) {
+                    // Disk full before a single byte could be written.
+                    Result<i32, FsError> ok = Ok(0);
+                    return ok;
+                }
                 set_buf_word(0, nb);
                 ssd.write_block(block, g_buf);
                 block = nb;
@@ -604,7 +731,8 @@ export i32 write(i32 fd, i32 buf, i32 size) {
             while (in_block < PAYLOAD) {
                 if (written >= size) {
                     ssd.write_block(block, g_buf);
-                    return finish_write(fd, file_size + written);
+                    Result<i32, FsError> ok = Ok(finish_write(fd, file_size + written));
+                    return ok;
                 }
                 i32 c = ram_byte(buf + written);
                 set_buf_byte(4 + in_block, c);
@@ -612,11 +740,13 @@ export i32 write(i32 fd, i32 buf, i32 size) {
                 in_block++;
             }
             if (written < size) {
-                i32 nb = alloc_block();
+                Option<i32> next_block = alloc_block();
+                i32 nb = case next_block of { Some(v) -> v; None -> 0; };
                 if (nb == 0) {
                     set_buf_word(0, 0);
                     ssd.write_block(block, g_buf);
-                    return finish_write(fd, file_size + written);
+                    Result<i32, FsError> ok = Ok(finish_write(fd, file_size + written));
+                    return ok;
                 }
                 set_buf_word(0, nb);
                 ssd.write_block(block, g_buf);
@@ -628,22 +758,33 @@ export i32 write(i32 fd, i32 buf, i32 size) {
                 ssd.write_block(block, g_buf);
             }
         }
-        return finish_write(fd, file_size + written);
+        Result<i32, FsError> ok = Ok(finish_write(fd, file_size + written));
+        return ok;
     }
 
-    return 0;
+    FsError cause = WrongType(fd);
+    Result<i32, FsError> err = Err(cause);
+    return err;
 }
 
-// Remove a file by path. Returns 0 on success, -1 if not found.
-// Frees the SSD block chain and clears entry from Block 1.
-export i32 remove(char* path) {
+// Remove a file by path. Frees the SSD block chain and clears its entry from
+// Block 1. The payload has no meaning on success (0); the caller only cares
+// whether it's Ok or Err.
+export Result<i32, FsError> remove(char* path) {
     char clean_name[16];
     path_clean_name(path, &clean_name[0]);
-    if (clean_name[0] == 0) { return -1; }
+    if (clean_name[0] == 0) {
+        FsError cause = InvalidName;
+        Result<i32, FsError> err = Err(cause);
+        return err;
+    }
 
-    i32 idx = find_entry_by_name(&clean_name[0]);
+    Option<i32> entry = find_entry_by_name(&clean_name[0]);
+    i32 idx = case entry of { Some(v) -> v; None -> -1; };
     if (idx == -1) {
-        return -1;
+        FsError cause = NotFound;
+        Result<i32, FsError> err = Err(cause);
+        return err;
     }
     i32 off = load_entry(idx);
     i32 block = buf_word(off + 16);
@@ -673,7 +814,8 @@ export i32 remove(char* path) {
         i++;
     }
 
-    return 0;
+    Result<i32, FsError> ok = Ok(0);
+    return ok;
 }
 
 // List all files and sizes to the serial console.
