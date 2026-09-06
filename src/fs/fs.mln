@@ -3,7 +3,7 @@ package fs;
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import mem from "../../../MyKernel/src/mm/mem.mln";
-import bitset from "../../../MyKernel/src/lib/bitset.mln";
+import bitset from "../../../../toolchain/MyStdLib/bitset.mln";
 import serial from "../../../MyKernel/src/io/serial.mln";
 import ssd from "ssd.mln";
 
