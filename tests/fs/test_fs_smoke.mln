@@ -3,6 +3,8 @@ import heap from "../../../MyKernel/src/mm/heap.mln";
 import fs from "../../src/fs/fs.mln";
 import serial from "../../../MyKernel/src/io/serial.mln";
 import { halt_cpu } from "../../../MyKernel/src/arch/halt.masm";
+import { FsError } from "../../src/fs/fs.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 
 // Write one byte to a plain byte buffer (caller buffers are byte arrays).
 void set_byte(i32 addr, i32 value) {
@@ -25,19 +27,23 @@ void test_fs_smoke() {
     set_byte(buf + 3, 102); // f
     set_byte(buf + 4, 115); // s
 
-    i32 fd = fs.create("hello");
+    Result<i32, FsError> create_res = fs.create("hello");
+    i32 fd = case create_res of { Ok(v) -> v; Err(e) -> -1; };
     if (fd < 0) {
         // Already exists from a previous run (persistent disk): just open it.
-        fd = fs.open("hello");
+        Result<i32, FsError> open_res = fs.open("hello");
+        fd = case open_res of { Ok(v) -> v; Err(e) -> -1; };
     } else {
-        fs.write(fd, buf, 5);
+        Result<i32, FsError> write_res = fs.write(fd, buf, 5);
     }
     fs.close(fd);
 
-    i32 rfd = fs.open("hello");
+    Result<i32, FsError> reopen_res = fs.open("hello");
+    i32 rfd = case reopen_res of { Ok(v) -> v; Err(e) -> -1; };
     if (rfd >= 0) {
         i32 rbuf = heap.alloc(64);
-        i32 n = fs.read(rfd, rbuf, 64);
+        Result<i32, FsError> read_res = fs.read(rfd, rbuf, 64);
+        i32 n = case read_res of { Ok(v) -> v; Err(e) -> 0; };
         debug.print("fs: read back '");
         i32 i = 0;
         while (i < n) {
