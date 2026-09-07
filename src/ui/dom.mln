@@ -82,6 +82,7 @@ i32 g_root_node_id = 0;
 i32 g_desktop_node_id = 0; // set in init(); UI attaches under this
 
 // Up to 256 nodes for now to keep memory small
+// TODO: grow this table and Node.id to u32 when we need more than 256 nodes.
 Node *g_node_table[256];
 
 export Node* get_node(i32 id) {

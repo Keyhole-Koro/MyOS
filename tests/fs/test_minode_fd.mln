@@ -105,19 +105,24 @@ void test_minode_and_fd() {
     fs.close(h2);
 
     // 4. Test remove
-    Result<i32, FsError> remove_res = fs.remove("/alphabet.txt");
-    i32 rem_ok = case remove_res of { Ok(v) -> 1; Err(e) -> 0; };
+    Result<_, FsError> remove_res = fs.remove("/alphabet.txt");
+    i32 rem_ok = case remove_res of { Ok(_) -> 1; Err(e) -> 0; };
     debug.printf("Removed /alphabet.txt result: %i\n", rem_ok);
 
     Result<i32, FsError> h3_res = fs.open("/alphabet.txt");
     i32 h3_ok = case h3_res of {
         Ok(v) -> 1;
-        Err(e) -> case e of {
-            NotFound -> 0;
-            InvalidName -> 2; Disabled -> 2; AlreadyExists -> 2; NoFreeSlot -> 2;
-            AllocFailed -> 2; BadFd(fd) -> 2; WrongType(fd) -> 2;
-            BadWhence(w) -> 2; Closed(fd) -> 2; InvalidSize(s) -> 2;
-        };
+        Err(NotFound) -> 0;
+        Err(InvalidName) -> 2;
+        Err(Disabled) -> 2;
+        Err(AlreadyExists) -> 2;
+        Err(NoFreeSlot) -> 2;
+        Err(AllocFailed) -> 2;
+        Err(BadFd(fd)) -> 2;
+        Err(WrongType(fd)) -> 2;
+        Err(BadWhence(w)) -> 2;
+        Err(Closed(fd)) -> 2;
+        Err(InvalidSize(s)) -> 2;
     };
     if (h3_ok != 0) {
         debug.println("[FAIL] /alphabet.txt should not exist after remove (or wrong FsError variant)");
@@ -132,12 +137,17 @@ void test_minode_and_fd() {
     Result<i32, FsError> after_close_res = fs.read(h1, rbuf1, 1);
     i32 closed_fd = case after_close_res of {
         Ok(v) -> -1;
-        Err(e) -> case e of {
-            WrongType(fd) -> fd;
-            Disabled -> -2; NotFound -> -2; InvalidName -> -2; AlreadyExists -> -2; NoFreeSlot -> -2;
-            AllocFailed -> -2; BadFd(fd) -> -2; Closed(fd) -> -2; BadWhence(w) -> -2;
-            InvalidSize(s) -> -2;
-        };
+        Err(WrongType(fd)) -> fd;
+        Err(Disabled) -> -2;
+        Err(NotFound) -> -2;
+        Err(InvalidName) -> -2;
+        Err(AlreadyExists) -> -2;
+        Err(NoFreeSlot) -> -2;
+        Err(AllocFailed) -> -2;
+        Err(BadFd(fd)) -> -2;
+        Err(Closed(fd)) -> -2;
+        Err(BadWhence(w)) -> -2;
+        Err(InvalidSize(s)) -> -2;
     };
     if (closed_fd != h1) {
         debug.printf("[FAIL] expected Err(WrongType(%i)), got closed_fd=%i\n", h1, closed_fd);
