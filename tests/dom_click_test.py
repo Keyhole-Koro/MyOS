@@ -19,6 +19,17 @@ from tools.project_paths import REPO_ROOT
 from mydomtester import launch, expect
 
 
+def display_dimension(function: str) -> int:
+    config = REPO_ROOT / "system/MyOS/src/ui/display_config.mln"
+    source = config.read_text(encoding="utf-8")
+    marker = f"export i32 {function}()"
+    body = source[source.index(marker):]
+    return int(body.split("return", 1)[1].lstrip().split(";", 1)[0])
+
+
+UI_SCALE = max(1, min(display_dimension("width") // 1024, display_dimension("height") // 768))
+
+
 def main() -> int:
     build_dir = REPO_ROOT / "build"
     firmware = build_dir / "firmware_linked.mbin"
@@ -43,12 +54,12 @@ def main() -> int:
 
         assert box is not None and (
             box["x"], box["y"], box["w"], box["h"], box["visible"], box["hitTestable"]
-        ) == (110, 120, 580, 360, True, False), box
+        ) == (110 * UI_SCALE, 120 * UI_SCALE, 580 * UI_SCALE, 360 * UI_SCALE, True, False), box
         assert column is not None and (
             column["x"], column["y"], column["w"], column["h"], column["visible"], column["hitTestable"]
-        ) == (120, 130, 540, 320, True, False), column
-        assert button_node is not None and (button_node["x"], button_node["y"]) == (120, 130), button_node
-        assert label is not None and (label["x"], label["y"]) == (120, 206), label
+        ) == (120 * UI_SCALE, 130 * UI_SCALE, 540 * UI_SCALE, 320 * UI_SCALE, True, False), column
+        assert button_node is not None and (button_node["x"], button_node["y"]) == (120 * UI_SCALE, 130 * UI_SCALE), button_node
+        assert label is not None and (label["x"], label["y"]) == (120 * UI_SCALE, 206 * UI_SCALE), label
 
         button.click()
         expect(page.get_by_text("clicks: 1")).to_be_visible()

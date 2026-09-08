@@ -2,6 +2,7 @@ import debug from "../../../MyKernel/src/debug/debug.mln";
 import test from "../../../MyKernel/tests/libs/test.mln";
 import dom from "../../src/ui/dom.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 
 // Pins the interaction contract the compositor relies on: it holds no node ids
 // and starts every interaction from a hit test, so what must hold is that
@@ -45,11 +46,17 @@ i32 click_at(i32 x, i32 y) {
 }
 
 test("dom_hit_dispatch", {
-    expect: "TRACE:a(9);b(10);miss=0;box=1;c(13);d(15);a(9);a=2;b=1;c=1;d=1";
+    expect: "TRACE:option=111;a(9);b(10);miss=0;box=1;c(13);d(15);a(9);a=2;b=1;c=1;d=1";
     step: 10000000;
 }, () => {
     heap.init();
     dom.init();
+
+    // Node lookup is an Option boundary: sentinel, negative, and out-of-range
+    // ids are None; a live DOM id is Some(Node*).
+    i32 none_sentinel = case dom.get_node(0) of { Some(n) -> 0; None -> 1; };
+    i32 none_negative = case dom.get_node(-1) of { Some(n) -> 0; None -> 1; };
+    i32 some_desktop = case dom.get_node(dom.desktop_id()) of { Some(n) -> 1; None -> 0; };
 
     i32 win = dom.create_window("W", 0, 0, 400, 300);
     dom.append_child(dom.desktop_id(), win);
@@ -85,6 +92,7 @@ test("dom_hit_dispatch", {
     dom.append_child(column, d);       // -> (30, 228)
 
     debug.print("TRACE:");
+    debug.printf("option=%d%d%d;", none_sentinel, none_negative, some_desktop);
 
     click_at(50, 30);   // inside A
     click_at(240, 30);  // inside B

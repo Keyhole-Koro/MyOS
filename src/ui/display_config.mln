@@ -1,0 +1,14 @@
+// Single source of truth for the emulated display geometry.
+//
+// Change these two values to change MyOS's framebuffer resolution. The
+// emulator reads this file at build time, so `make run system` rebuilds both
+// sides with the same dimensions.
+package display_config;
+
+export i32 width() {
+    return 2048;
+}
+
+export i32 height() {
+    return 1536;
+}
