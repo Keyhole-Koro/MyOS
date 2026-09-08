@@ -310,7 +310,7 @@ export i32 create_button(char *label, i32 x, i32 y, i32 w, i32 h) {
 ```c
 export void set_bounds(i32 id, i32 x, i32 y, i32 w, i32 h) {
     Node *n = get_node(id);
-    if ((i32)n != 0) {
+    if (n != 0) {
         n->x = (u16)x; n->y = (u16)y;
         n->w = (u16)w; n->h = (u16)h;
     }
@@ -318,9 +318,9 @@ export void set_bounds(i32 id, i32 x, i32 y, i32 w, i32 h) {
 
 export void set_state_flag(i32 id, i32 flag, i32 on) {
     Node *n = get_node(id);
-    if ((i32)n != 0) {
-        if (on != 0) { n->state = (u16)((i32)n->state | flag); }
-        else         { n->state = (u16)((i32)n->state & (~flag)); }
+    if (n != 0) {
+        if (on != 0) { n->state = (u16)(n->state | flag); }
+        else         { n->state = (u16)(n->state & (~flag)); }
     }
 }
 ```
@@ -334,26 +334,26 @@ export void set_state_flag(i32 id, i32 flag, i32 on) {
 // ui/desktop 配下を DFS で描画。呼ぶ側は render(dom.desktop_id()) だけ。
 export void render(i32 node_id) {
     Node *n = get_node(node_id);
-    if ((i32)n == 0) { return; }
+    if (n == 0) { return; }
 
     // visible でなければ自身も子孫も描かない。
-    if (((i32)n->state & STATE_VISIBLE) == 0) { return; }
+    if ((n->state & STATE_VISIBLE) == 0) { return; }
 
     draw_node(n);   // kind ごとに graphics.* を呼ぶ
 
     // 兄弟順 = z-order（後の子が上）。子を順に描く。
-    i32 child_id = (i32)n->first_child;
+    i32 child_id = n->first_child;
     while (child_id != 0) {
         render(child_id);
         Node *c = get_node(child_id);
-        child_id = (i32)c->next_sibling;
+        child_id = c->next_sibling;
     }
 }
 
 void draw_node(Node *n) {
-    i32 kind = (i32)n->kind;
-    i32 x = (i32)n->x; i32 y = (i32)n->y;
-    i32 w = (i32)n->w; i32 h = (i32)n->h;
+    i32 kind = n->kind;
+    i32 x = n->x; i32 y = n->y;
+    i32 w = n->w; i32 h = n->h;
 
     if (kind == NODE_WINDOW) {
         i32 white = graphics.rgb(255, 255, 255);
@@ -362,7 +362,7 @@ void draw_node(Node *n) {
         graphics.draw_text(x + 20, y + 8, (char*)n->text, graphics.rgb(0,0,0), white);
     } else if (kind == NODE_BUTTON) {
         // state を見て見た目を変える（旧 render_scene の hover 分岐を DOM 駆動に）。
-        i32 hovered = (i32)n->state & STATE_HOVERED;
+        i32 hovered = n->state & STATE_HOVERED;
         i32 face = graphics.rgb(204, 204, 204);
         if (hovered != 0) { face = graphics.rgb(180, 210, 255); }
         graphics.fill_rect(x, y, w, h, face);
@@ -394,7 +394,7 @@ export i32 find_at(i32 x, i32 y) {
 i32 hit = dom.find_at(mx, my);
 if (hit != 0) {
     Node *n = dom.get_node(hit);
-    if ((i32)n->role == ROLE_BUTTON) {
+    if (n->role == ROLE_BUTTON) {
         // hover を立てる / click 時にカウンタ更新
         dom.set_state_flag(hit, STATE_HOVERED, 1);
     }
