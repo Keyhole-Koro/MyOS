@@ -33,19 +33,28 @@ void on_click(i32 id) {
 }
 
 i32 build_ui() {
+    // Column owns its children's x/y. The zero coordinates below are
+    // intentional: the resulting button stays at (120, 130).
     return <Window title="MyKernel Window" x={100} y={100} w={600} h={400}>
-        <Button text="CLICK ME" x={120} y={130} w={150} h={60} onClick={on_click} />
-        <Text text="clicks: 0" x={320} y={150} />
+        <Box x={110} y={120} w={580} h={360}
+             background={14737632} border={8947848} />
+        <Column x={120} y={130} w={540} h={320} padding={0} gap={16}>
+            <Button text="CLICK ME" x={0} y={0} w={150} h={60} onClick={on_click} />
+            <Text text="clicks: 0" x={0} y={0} />
+        </Column>
     </Window>;
 }
 
 // Build the window, mount it on the desktop and remember the label. Returns the
-// window node id. The button is the window's first child; the label follows it.
+// window node id. The Box is a decorative first child; the Column contains the
+// button followed by the label.
 export i32 mount() {
     i32 win = build_ui();
     dom.append_child(dom.desktop_id(), win);
 
-    i32 btn = dom.first_child(win);
+    i32 panel = dom.first_child(win);
+    i32 column = dom.next_sibling(panel);
+    i32 btn = dom.first_child(column);
     g_label_id = dom.next_sibling(btn);
 
     return win;

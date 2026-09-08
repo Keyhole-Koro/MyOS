@@ -19,6 +19,7 @@ export u16 NODE_BOX       = 9;
 export u16 NODE_TEXT      = 10;
 export u16 NODE_BUTTON    = 11;
 export u16 NODE_TIMER     = 12;
+export u16 NODE_COLUMN    = 13;
 
 // Accessibility roles (ISSUE-024). Separate from `kind`: automation locators
 // query by `role` (get_by_role("button")), while `kind` is the OS-structural
@@ -42,12 +43,17 @@ export u16 STATE_ENABLED = 0b00010;
 export u16 STATE_HOVERED = 0b00100;
 export u16 STATE_PRESSED = 0b01000;
 export u16 STATE_FOCUSED = 0b10000;
+// A visible node is not necessarily interactive: layout/decorative containers
+// must let a hit pass through to their interactive descendants. Buttons opt in
+// by default; other nodes may opt in with set_hit_testable().
+export u16 STATE_HIT_TESTABLE = 0b100000;
 
 // Measured layout: u16=2B, char*/i32=4B, pointers 4B-aligned, no trailing
 // padding. Offsets: id=0 kind=2 name=4 parent=8 first_child=10 next_sibling=12
-// role=14 text=16 x=20 y=22 w=24 h=26 state=28 _pad=30 on_click=32 -> sizeof=36.
+// role=14 text=16 x=20 y=22 w=24 h=26 state=28 _pad=30 on_click=32,
+// background_color=36 border_color=40 padding=44 gap=46 -> sizeof=48.
 // The _pad keeps on_click (i32, a function pointer) on a 4B boundary; each char*
-// (name at 4, text at 16) is likewise 4B-aligned. Allocated as 36.
+// (name at 4, text at 16) is likewise 4B-aligned. Allocated as 48.
 typedef struct {
     u16 id;
     u16 kind;
@@ -64,6 +70,10 @@ typedef struct {
     u16 state;       // STATE_* bitmask
     u16 _pad;        // alignment padding so on_click sits on a 4B boundary
     i32 on_click;    // click handler function pointer (i32) ; 0 = none
+    i32 background_color; // NODE_BOX fill colour (0 is valid black)
+    i32 border_color;     // NODE_BOX border colour (0 is valid black)
+    u16 padding;          // NODE_COLUMN inset, in pixels
+    u16 gap;              // NODE_COLUMN gap between children, in pixels
 } Node;
 
 // Damage rectangle: the union of every node area that changed since the last
@@ -97,7 +107,7 @@ export i32 create_node(i32 kind, char *name) {
         halt_cpu();
     }
 
-    Node *n = (Node *)heap.alloc(36); // sizeof(Node)=36
+    Node *n = (Node *)heap.alloc(48); // sizeof(Node)=48
     i32 id = g_next_node_id;
     g_next_node_id = g_next_node_id + 1;
 
@@ -118,6 +128,10 @@ export i32 create_node(i32 kind, char *name) {
     n->state = 0;
     n->_pad = 0;
     n->on_click = 0;
+    n->background_color = 0;
+    n->border_color = 0;
+    n->padding = 0;
+    n->gap = 0;
 
     g_node_table[(i32)id] = n;
     return id;
@@ -125,17 +139,73 @@ export i32 create_node(i32 kind, char *name) {
 
 // --- prop accessors ---
 
+// Update bounds without triggering layout. Column layout calls this for each
+// child; keeping that operation separate avoids a child update recursively
+// relaying out its parent.
+void (Node* n) set_bounds_raw(i32 id, i32 x, i32 y, i32 w, i32 h) {
+    // Damage the old area as well as the new one, so vacating a region repaints
+    // the background that was underneath.
+    damage_node(id);
+    damage_rect(x, y, w, h);
+    n->x = (u16)x;
+    n->y = (u16)y;
+    n->w = (u16)w;
+    n->h = (u16)h;
+}
+
+// Text has no explicit height, but a Column still needs to reserve one font
+// line for it. Other zero-height children intentionally consume no vertical
+// space, which keeps structural nodes inert in a layout.
+i32 (Node* n) layout_height() {
+    i32 h = (i32)n->h;
+    if (h != 0) { return h; }
+    i32 text = NODE_TEXT;
+    if ((i32)n->kind == text) { return 8; }
+    return 0;
+}
+
+// Lay out direct children top-to-bottom. Child widths and heights remain their
+// own props; Column owns only their x/y positions. Nested Columns are relaid
+// after their origin moves so their descendants follow along as well.
+void (Node* column) relayout_column() {
+    if ((i32)column == 0) { return; }
+
+    i32 column_kind = NODE_COLUMN;
+    if ((i32)column->kind != column_kind) { return; }
+
+    i32 child_x = (i32)column->x + (i32)column->padding;
+    i32 cursor_y = (i32)column->y + (i32)column->padding;
+    i32 gap = (i32)column->gap;
+    i32 child_id = (i32)column->first_child;
+
+    while (child_id != 0) {
+        Node *child = get_node(child_id);
+        i32 child_h = child.layout_height();
+        child.set_bounds_raw(child_id, child_x, cursor_y,
+                       (i32)child->w, (i32)child->h);
+
+        i32 child_kind = (i32)child->kind;
+        if (child_kind == column_kind) {
+            child.relayout_column();
+        }
+
+        cursor_y = cursor_y + child_h + gap;
+        child_id = (i32)child->next_sibling;
+    }
+}
+
 export void set_bounds(i32 id, i32 x, i32 y, i32 w, i32 h) {
     Node *n = get_node(id);
     if ((i32)n != 0) {
-        // Damage the old area as well as the new one, so vacating a region
-        // repaints the background that was underneath.
-        damage_node(id);
-        damage_rect(x, y, w, h);
-        n->x = (u16)x;
-        n->y = (u16)y;
-        n->w = (u16)w;
-        n->h = (u16)h;
+        n.set_bounds_raw(id, x, y, w, h);
+
+        // Moving/resizing a Column moves its direct children. Changing a
+        // child size inside a Column reflows the following siblings.
+        n.relayout_column();
+        Node *parent = get_node((i32)n->parent);
+        if ((i32)parent != 0) {
+            parent.relayout_column();
+        }
     }
 }
 
@@ -155,15 +225,38 @@ export void set_role(i32 id, i32 role) {
     }
 }
 
+// Colours are fixed per Box for now. They are raw graphics.rgb() values, so
+// callers can use the same colour construction API as the renderer.
+export void set_colors(i32 id, i32 background, i32 border) {
+    Node *n = get_node(id);
+    if ((i32)n != 0) {
+        damage_node(id);
+        n->background_color = background;
+        n->border_color = border;
+    }
+}
+
+// Set the inset and inter-child gap of a Column, then immediately recompute
+// its children so changing these props is observable without rebuilding it.
+export void set_column_layout(i32 id, i32 padding, i32 gap) {
+    Node *n = get_node(id);
+    if ((i32)n != 0) {
+        n->padding = (u16)padding;
+        n->gap = (u16)gap;
+        n.relayout_column();
+    }
+}
+
 // True if changing `flag` on this node changes how it looks. Only buttons draw
 // differently when hovered or pressed (see draw_node), so flagging a window or
 // a label as hovered must not damage its area -- the pointer crossing a window
 // would otherwise repaint the whole window for no visible difference.
-i32 state_is_visible(Node *n, i32 flag) {
+i32 (Node* n) state_is_visible(i32 flag) {
     i32 kind = (i32)n->kind;
     i32 kb = NODE_BUTTON;
     i32 hovered = STATE_HOVERED;
     i32 pressed = STATE_PRESSED;
+    i32 hit_testable = STATE_HIT_TESTABLE;
     if (flag == hovered) {
         if (kind == kb) { return 1; }
         return 0;
@@ -172,6 +265,7 @@ i32 state_is_visible(Node *n, i32 flag) {
         if (kind == kb) { return 1; }
         return 0;
     }
+    if (flag == hit_testable) { return 0; }
     return 1; // visibility and everything else always matter
 }
 
@@ -187,7 +281,7 @@ export void set_state_flag(i32 id, i32 flag, i32 on) {
         // defeat the whole point.
         if (next != state) {
             n->state = (u16)next;
-            if (state_is_visible(n, flag) != 0) {
+            if (n.state_is_visible(flag) != 0) {
                 damage_node(id);
             }
         }
@@ -220,12 +314,17 @@ export void set_visible(i32 id, i32 on) {
     set_state_flag(id, STATE_VISIBLE, on);
 }
 
+export void set_hit_testable(i32 id, i32 on) {
+    set_state_flag(id, STATE_HIT_TESTABLE, on);
+}
+
 // Store a click handler (a function pointer, passed as i32) on a node. The
 // handler is invoked by dispatch_click via an indirect call. 0 clears it.
 export void set_on_click(i32 id, i32 handler) {
     Node *n = get_node(id);
     if ((i32)n != 0) {
         n->on_click = handler;
+        set_hit_testable(id, handler != 0);
     }
 }
 
@@ -268,6 +367,10 @@ export void append_child(i32 parent_id, i32 child_id) {
                 }
                 curr->next_sibling = (u16)child_id;
             }
+
+            // A Column controls the positions of its direct children. This
+            // runs after linking so the new child participates immediately.
+            parent.relayout_column();
         }
     }
 }
@@ -319,6 +422,7 @@ export i32 create_button(char *label, i32 x, i32 y, i32 w, i32 h) {
     set_text(id, label);
     set_state_flag(id, STATE_VISIBLE, 1);
     set_state_flag(id, STATE_ENABLED, 1);
+    set_state_flag(id, STATE_HIT_TESTABLE, 1);
     return id;
 }
 
@@ -327,6 +431,29 @@ export i32 create_text(char *text, i32 x, i32 y) {
     set_role(id, ROLE_TEXT);
     set_bounds(id, x, y, 0, 0);
     set_text(id, text);
+    set_state_flag(id, STATE_VISIBLE, 1);
+    return id;
+}
+
+// A Box is a visual grouping primitive. It has no accessibility role and is
+// not hit-testable by default, so decoration never obscures a Button within it.
+export i32 create_box(i32 x, i32 y, i32 w, i32 h,
+                      i32 background, i32 border) {
+    i32 id = create_node(NODE_BOX, "box");
+    set_bounds(id, x, y, w, h);
+    set_colors(id, background, border);
+    set_state_flag(id, STATE_VISIBLE, 1);
+    return id;
+}
+
+// A Column is a visible-to-the-renderer layout container: it draws nothing of
+// its own, but visibility gates all descendants. When a child is appended its
+// x/y are recomputed from this origin, padding, and the preceding child sizes.
+export i32 create_column(i32 x, i32 y, i32 w, i32 h,
+                         i32 padding, i32 gap) {
+    i32 id = create_node(NODE_COLUMN, "column");
+    set_bounds(id, x, y, w, h);
+    set_column_layout(id, padding, gap);
     set_state_flag(id, STATE_VISIBLE, 1);
     return id;
 }
@@ -355,6 +482,16 @@ export i32 Text(char *text, i32 x, i32 y) {
     return create_text(text, x, y);
 }
 
+export i32 Box(i32 x, i32 y, i32 w, i32 h,
+               i32 background, i32 border) {
+    return create_box(x, y, w, h, background, border);
+}
+
+export i32 Column(i32 x, i32 y, i32 w, i32 h,
+                  i32 padding, i32 gap) {
+    return create_column(x, y, w, h, padding, gap);
+}
+
 void print_indent(i32 depth) {
     i32 i = 0;
     while (i < depth) {
@@ -363,9 +500,9 @@ void print_indent(i32 depth) {
     }
 }
 
-// Print "[role=R x=.. y=.. w=.. h=.. vis en ho pr fo]" for nodes that carry
+// Print "[role=R x=.. y=.. w=.. h=.. vis en ht ho pr fo]" for nodes that carry
 // UI props. Structural nodes (role=0, no bounds) print nothing extra.
-void dump_props(Node *n) {
+void (Node* n) dump_props() {
     i32 role = (i32)n->role;
     i32 w = (i32)n->w;
     i32 h = (i32)n->h;
@@ -385,6 +522,7 @@ void dump_props(Node *n) {
     if ((state & STATE_HOVERED) != 0) { debug.print(" ho"); }
     if ((state & STATE_PRESSED) != 0) { debug.print(" pr"); }
     if ((state & STATE_FOCUSED) != 0) { debug.print(" fo"); }
+    if ((state & STATE_HIT_TESTABLE) != 0) { debug.print(" ht"); }
     debug.print("]");
 }
 
@@ -398,7 +536,7 @@ void dump_node(i32 node_id, i32 depth) {
         } else {
             debug.print("?");
         }
-        dump_props(n);
+        n.dump_props();
         debug.println("");
 
         i32 child_id = (i32)n->first_child;
@@ -483,11 +621,15 @@ void dump_node_json(i32 node_id) {
     if ((state & STATE_PRESSED) != 0) { pressed = 1; }
     i32 focused = 0;
     if ((state & STATE_FOCUSED) != 0) { focused = 1; }
+    i32 hit_testable = 0;
+    if ((state & STATE_HIT_TESTABLE) != 0) { hit_testable = 1; }
 
     debug.print("{\"id\":");
     debug.printf("%i", (i32)n->id);
     debug.print(",\"parent\":");
     debug.printf("%i", (i32)n->parent);
+    debug.print(",\"kind\":");
+    debug.printf("%i", (i32)n->kind);
     debug.print(",\"role\":");
     print_json_string(role_name((i32)n->role));
     debug.print(",\"name\":");
@@ -512,6 +654,8 @@ void dump_node_json(i32 node_id) {
     print_json_bool(pressed);
     debug.print(",\"focused\":");
     print_json_bool(focused);
+    debug.print(",\"hitTestable\":");
+    print_json_bool(hit_testable);
     debug.println("}");
 
     i32 child_id = (i32)n->first_child;
@@ -536,7 +680,7 @@ export void dump_json() {
 // top), and hover/pressed looks come from the node's state bitmask. graphics.mln
 // is untouched; this only reads node props and calls its draw primitives.
 
-void draw_node(Node *n) {
+void (Node* n) draw_node() {
     i32 kind = (i32)n->kind;
     i32 x = (i32)n->x;
     i32 y = (i32)n->y;
@@ -551,12 +695,16 @@ void draw_node(Node *n) {
     // i32 against a `u16` global directly (kind == NODE_WINDOW) miscompiles and is
     // always false, even when both hold the same value; the local coerces cleanly.
     i32 kw = NODE_WINDOW;
+    i32 kbox = NODE_BOX;
     i32 kb = NODE_BUTTON;
     i32 kt = NODE_TEXT;
     i32 pressed = STATE_PRESSED;
     i32 hovered = STATE_HOVERED;
 
-    if (kind == kw) {
+    if (kind == kbox) {
+        graphics.fill_rect(x, y, w, h, (i32)n->background_color);
+        graphics.draw_rect(x, y, w, h, (i32)n->border_color);
+    } else if (kind == kw) {
         graphics.fill_rect(x, y, w, h, white);
         graphics.draw_rect(x, y, w, h, graphics.rgb(136, 136, 136));
         if ((i32)n->text != 0) {
@@ -588,7 +736,7 @@ void draw_node(Node *n) {
 // skipped without drawing: the clip rectangle would discard their pixels
 // anyway, but only after paying for the glyph and fill work that produced
 // them, which is the cost partial repaint exists to avoid.
-i32 node_in_damage(Node *n) {
+i32 (Node* n) node_in_damage() {
     if (g_damage_x1 <= g_damage_x0) { return 1; } // no region: draw everything
 
     i32 w = (i32)n->w;
@@ -618,8 +766,8 @@ export void render(i32 node_id) {
 
     // Children are visited regardless: a child can overlap the damage region
     // even when its parent does not.
-    if (node_in_damage(n) != 0) {
-        draw_node(n);
+    if (n.node_in_damage() != 0) {
+        n.draw_node();
     }
 
     i32 child_id = (i32)n->first_child;
@@ -749,7 +897,7 @@ export void render_desktop() {
 
 // --- hit-test ---
 // True if (px, py) is inside a node's bounds. Nodes with zero size never hit.
-i32 node_contains(Node *n, i32 px, i32 py) {
+i32 (Node* n) node_contains(i32 px, i32 py) {
     i32 x = (i32)n->x;
     i32 y = (i32)n->y;
     i32 w = (i32)n->w;
@@ -772,8 +920,10 @@ i32 hit_test(i32 node_id, i32 px, i32 py) {
     if (((i32)n->state & STATE_VISIBLE) == 0) { return 0; }
 
     i32 found = 0;
-    if (node_contains(n, px, py) != 0) {
-        found = node_id;
+    if (n.node_contains(px, py) != 0) {
+        if (((i32)n->state & STATE_HIT_TESTABLE) != 0) {
+            found = node_id;
+        }
     }
 
     // A child that also contains the point wins over the parent, and a later

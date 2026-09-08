@@ -187,6 +187,7 @@ u16 STATE_ENABLED = 2;   // 1 << 1
 u16 STATE_HOVERED = 4;   // 1 << 2
 u16 STATE_PRESSED = 8;   // 1 << 3
 u16 STATE_FOCUSED = 16;  // 1 << 4
+u16 STATE_HIT_TESTABLE = 32; // 1 << 5
 ```
 
 `bool` がないため bitmask を `i32` 演算で読み書きする（`state & STATE_HOVERED`）。
@@ -205,6 +206,10 @@ export i32  get_state_flag(i32 id, i32 flag);          // 立っていれば 1
 export i32 create_window(char *title, i32 x, i32 y, i32 w, i32 h);
 export i32 create_button(char *label, i32 x, i32 y, i32 w, i32 h);
 export i32 create_text(char *text, i32 x, i32 y);
+export i32 create_box(i32 x, i32 y, i32 w, i32 h,
+                      i32 background, i32 border);
+export i32 create_column(i32 x, i32 y, i32 w, i32 h,
+                         i32 padding, i32 gap);
 
 // hit-test（automation の click / mouse 配送で使う）
 export i32 find_at(i32 x, i32 y);  // 最前面の当たりノード id。なければ 0
@@ -222,6 +227,29 @@ snapshot の 1 行フォーマットは ISSUE-024 の例に合わせる:
 ```json
 {"id":4,"role":"button","name":"CLICK ME","text":"CLICK ME","x":120,"y":130,"w":150,"h":60,"visible":true,"enabled":true}
 ```
+
+## Box と Column（2026-09-08）
+
+`Box` は背景色と枠線を描画する装飾コンテナ、`Column` は直下の子を縦に並べる
+レイアウトコンテナである。どちらも accessibility role は持たず、既定では
+hit-test 対象にもならない。これにより、背景用の Box や領域用の Column が内部の
+Button を覆い隠さない。
+
+```mylang
+<Box x={100} y={100} w={280} h={160} background={0xEEEEEE} border={0x888888}>
+    <Column x={116} y={116} w={248} h={128} padding={0} gap={8}>
+        <Button text="Save" x={0} y={0} w={96} h={28} onClick={save} />
+        <Text text="Changes are saved" x={0} y={0} />
+    </Column>
+</Box>
+```
+
+- `Box` は `background` と `border` に `graphics.rgb()` と同じ packed RGB 値を取る。
+- `Column` は子の `x/y` を `column.x + padding` と、前の子の高さ＋`gap`から決める。
+  子自身の `w/h` は保持する。`Text` は `h=0`でも8pxの行高を消費する。
+- Column を動かす、padding/gapを変更する、子の高さを変更する場合は直ちに再配置する。
+- `Button` は既定で `STATE_HIT_TESTABLE`。汎用ノードを操作対象にしたい場合は
+  `set_hit_testable(id, 1)` または `set_on_click(id, handler)` を使う。
 
 ## 実装フェーズ（この仕様に基づく）
 

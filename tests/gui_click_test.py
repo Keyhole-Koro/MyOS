@@ -30,8 +30,8 @@ OUT.mkdir(parents=True, exist_ok=True)
 FB_W, FB_H = 1024, 768
 # Button rect in framebuffer coords: x=120..270, y=130..190 (see build_ui).
 BTN_X, BTN_Y = 195, 160
-# Label "clicks: N" is drawn at (320, 150); crop in framebuffer coords.
-LABEL_CROP = (300, 135, 520, 175)
+# Label "clicks: N" is Column-laid out at (120, 206); crop in framebuffer coords.
+LABEL_CROP = (100, 191, 320, 231)
 
 
 def find_window(root, needle):
