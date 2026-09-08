@@ -11,6 +11,8 @@ import heap from "../../../MyKernel/src/mm/heap.mln";
 
 i32 g_hits_a = 0;
 i32 g_hits_b = 0;
+i32 g_hits_c = 0;
+i32 g_hits_d = 0;
 
 void on_a(i32 id) {
     g_hits_a = g_hits_a + 1;
@@ -20,6 +22,16 @@ void on_a(i32 id) {
 void on_b(i32 id) {
     g_hits_b = g_hits_b + 1;
     debug.printf("b(%d);", id);
+}
+
+void on_c(i32 id) {
+    g_hits_c = g_hits_c + 1;
+    debug.printf("c(%d);", id);
+}
+
+void on_d(i32 id) {
+    g_hits_d = g_hits_d + 1;
+    debug.printf("d(%d);", id);
 }
 
 // Click wherever the pointer is, the way the compositor does: hit-test first,
@@ -33,7 +45,7 @@ i32 click_at(i32 x, i32 y) {
 }
 
 test("dom_hit_dispatch", {
-    expect: "TRACE:a(9);b(10);miss=0;a(9);a=2;b=1";
+    expect: "TRACE:a(9);b(10);miss=0;box=1;c(13);d(15);a(9);a=2;b=1;c=1;d=1";
     step: 10000000;
 }, () => {
     heap.init();
@@ -50,6 +62,28 @@ test("dom_hit_dispatch", {
     dom.set_on_click(b, on_b);
     dom.append_child(win, b);
 
+    // A decorative Box is visible but is not a hit target. It must therefore
+    // not obscure its interactive descendants or turn empty decoration into a
+    // click.
+    i32 box = dom.create_box(20, 170, 200, 120, 14737632, 8947848);
+    dom.append_child(win, box);
+
+    // Column owns direct-child x/y positions. Text reserves its 8px font
+    // height even though it has no explicit bounds, so D lands below it.
+    i32 column = dom.create_column(20, 180, 200, 100, 10, 5);
+    dom.append_child(box, column);
+
+    i32 c = dom.create_button("C", 0, 0, 80, 20);
+    dom.set_on_click(c, on_c);
+    dom.append_child(column, c);       // -> (30, 190)
+
+    i32 label = dom.create_text("note", 0, 0);
+    dom.append_child(column, label);   // -> (30, 215), consumes 8px
+
+    i32 d = dom.create_button("D", 0, 0, 80, 20);
+    dom.set_on_click(d, on_d);
+    dom.append_child(column, d);       // -> (30, 228)
+
     debug.print("TRACE:");
 
     click_at(50, 30);   // inside A
@@ -63,8 +97,22 @@ test("dom_hit_dispatch", {
     if (outside == b) { missed = 1; }
     debug.printf("miss=%d;", missed);
 
+    i32 box_hit = click_at(50, 175);
+    i32 box_missed = 0;
+    if (box_hit == 0) { box_missed = 1; }
+    debug.printf("box=%d;", box_missed);
+
+    // These points prove Column's padding, gap, and 8px Text line reservation
+    // without reaching into the private Node representation.
+    click_at(35, 195);  // C at (30, 190)
+    click_at(35, 233);  // D at (30, 228)
+
     click_at(50, 30);   // A again
 
-    debug.printf("a=%d;b=%d", g_hits_a, g_hits_b);
+    debug.printf("a=%d;b=%d;c=%d;d=%d", g_hits_a, g_hits_b, g_hits_c, g_hits_d);
+
+    // Exercise the renderer's Box fill/border branch and recursive Column
+    // traversal in the headless emulator as well as the tree-only assertions.
+    dom.render_all();
     test.pass();
 });
