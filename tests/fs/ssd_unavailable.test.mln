@@ -1,0 +1,33 @@
+import assert from "../../../../toolchain/MyStdLib/assert.mln";
+import mock from "../../../../toolchain/MyLangTestKit/runtime/facade.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import fs from "../../src/fs/fs.mln";
+import ssd from "../../src/fs/ssd.mln";
+import { FsError } from "../../src/fs/fs.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+
+// A failed superblock read means fs.init leaves the filesystem disabled. This
+// exercises the hardware-failure path without a disk image or serial matching.
+/*@Test "fs disabled when SSD init read fails" { step: 1000000; }*/
+void fs_disabled_when_ssd_init_read_fails() {
+    heap.init();
+
+    mock.spy(ssd.read_block)
+        .when(fs.SB_BLOCK, mock.any())
+        .ret(-1);
+
+    fs.init();
+    Result<i32, FsError> result = fs.create("unavailable");
+    i32 disabled = case result of {
+        Ok(value) -> 0;
+        Err(cause) -> case cause of {
+            FsError::Disabled -> 1;
+            _ -> 0;
+        };
+    };
+
+    assert.assert_true(disabled == 1, "SSD init failure disables filesystem");
+    assert.assert_true(mock.calls(ssd.read_block) == 1, "fs init reads superblock once");
+    assert.assert_true(mock.called_with(ssd.read_block, fs.SB_BLOCK, mock.any()),
+                       "fs init reads the superblock");
+}
