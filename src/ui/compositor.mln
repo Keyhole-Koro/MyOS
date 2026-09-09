@@ -21,6 +21,22 @@ void present_frame() {
     graphics.present();
 }
 
+// Paint the whole desktop once, unconditionally. Call this before interrupts
+// are enabled (see main.mln's kernel_init): scheduler.init() documents that
+// the first timer interrupt can preempt task 0 anywhere, and render_all()
+// recursively walks every node doing DMA2D fills and glyph draws, so a tick
+// landing mid-walk left the desktop showing only whatever had been drawn so
+// far (typically just the window, not its box/button/text children) until
+// enough scheduler slices later let it finish -- which looked like an
+// unrelated rectangle appearing on the next click, when really it was the
+// deferred first paint completing. Doing this paint before scheduler.init()/
+// irq.enable() makes it atomic: nothing can preempt it.
+export void paint_first_frame() {
+    graphics.show_cursor(1);
+    dom.render_all();
+    graphics.present();
+}
+
 // Interactive loop, event-driven. The mouse IRQ handler drains the hardware
 // event FIFO into mouse's software queue; each pass consumes every queued
 // event and edge-detects the button per event, so a click whose press and
@@ -33,11 +49,8 @@ export void run() {
     i32 pressed_id = 0; // node currently held down, 0 if none
     i32 hot_id = 0;     // node currently hovered, 0 if none
 
-    graphics.show_cursor(1);
-
-    // The first frame has nothing to compare against, so paint everything once.
-    dom.render_all();
-    graphics.present();
+    // paint_first_frame() already painted the desktop (called from main.mln
+    // before interrupts were enabled, so that paint could not be preempted).
 
     while (1) {
 

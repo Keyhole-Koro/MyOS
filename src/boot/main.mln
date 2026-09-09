@@ -44,6 +44,14 @@ void kernel_init() {
 
     fs.init();
 
+    // Paint the desktop once before interrupts are enabled. render_all()
+    // walks the whole tree (DMA2D fills + glyph draws); once scheduler.init()
+    // below flips task 0 to preemptible, the first timer tick can land mid-walk
+    // and leave box/button/text undrawn until enough later scheduler slices
+    // finish it -- which looks like a UI element appearing out of nowhere on
+    // the next click. See compositor.mln's paint_first_frame() for detail.
+    compositor.paint_first_frame();
+
     debug.println("kernel: enabling interrupts for event queue");
     scheduler.init();
     irq.set_handler();
