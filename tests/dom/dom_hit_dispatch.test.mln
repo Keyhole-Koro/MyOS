@@ -45,10 +45,11 @@ i32 click_at(i32 x, i32 y) {
     return hit;
 }
 
-test("dom_hit_dispatch", {
+/*@Test "dom_hit_dispatch" {
     expect: "TRACE:option=111;a(9);b(10);miss=0;box=1;c(13);d(15);a(9);a=2;b=1;c=1;d=1";
     step: 10000000;
-}, () => {
+}*/
+void dom_hit_dispatch() {
     heap.init();
     dom.init();
 
@@ -123,4 +124,4 @@ test("dom_hit_dispatch", {
     // traversal in the headless emulator as well as the tree-only assertions.
     dom.render_all();
     test.pass();
-});
+}
