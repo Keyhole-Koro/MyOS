@@ -1,0 +1,14 @@
+# MYOS-012 phase 3 example: click the counter UI's button and confirm the
+# label updates. Run with:
+#   make dom-script SCRIPT=system/MyOS/tests/dom/counter.domscript
+
+dump
+
+click role=button name="CLICK ME"
+wait_for text="clicks: 1"
+
+click role=button name="CLICK ME"
+click role=button name="CLICK ME"
+wait_for text="clicks: 3"
+
+dump
