@@ -4,6 +4,7 @@ import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import serial from "../../../MyKernel/src/io/serial.mln";
 import graphics from "graphics.mln";
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import { halt_cpu } from "../../../MyKernel/src/arch/halt.masm";
 
 export u16 NODE_ROOT      = 0;
@@ -54,7 +55,10 @@ export u16 STATE_HIT_TESTABLE = 0b100000;
 // background_color=36 border_color=40 padding=44 gap=46 -> sizeof=48.
 // The _pad keeps on_click (i32, a function pointer) on a 4B boundary; each char*
 // (name at 4, text at 16) is likewise 4B-aligned. Allocated as 48.
-typedef struct {
+// Public because it is the payload type of get_node(). Mutation still goes
+// through the DOM setters by convention; callers use it primarily to inspect
+// a successful Option result.
+export typedef struct {
     u16 id;
     u16 kind;
     char *name;
@@ -95,10 +99,35 @@ i32 g_desktop_node_id = 0; // set in init(); UI attaches under this
 // TODO: grow this table and Node.id to u32 when we need more than 256 nodes.
 Node *g_node_table[256];
 
-export Node* get_node(i32 id) {
-    if (id == 0) { return (Node*)0; }
-    if (id >= g_next_node_id) { return (Node*)0; }
-    return g_node_table[id];
+// DOM markup uses logical 1024x768 coordinates. Scale it uniformly to the
+// physical display so its proportions remain intact on larger resolutions.
+// A display smaller than the base size keeps scale 1, avoiding zero-size
+// controls; responsive downscaling can be added when sub-pixel layout exists.
+i32 BASE_DISPLAY_WIDTH = 1024;
+i32 BASE_DISPLAY_HEIGHT = 768;
+
+export i32 ui_scale() {
+    i32 sx = graphics.display_width() / BASE_DISPLAY_WIDTH;
+    i32 sy = graphics.display_height() / BASE_DISPLAY_HEIGHT;
+    i32 scale = sx;
+    if (sy < scale) { scale = sy; }
+    if (scale < 1) { scale = 1; }
+    return scale;
+}
+
+i32 scale_ui(i32 value) {
+    return value * ui_scale();
+}
+
+// The sole NodeId -> Node* boundary. A pointer appears only inside Some, so
+// callers cannot accidentally dereference the old null-pointer sentinel.
+export Option<Node*> get_node(i32 id) {
+    if (id <= 0) { return None; }
+    if (id >= g_next_node_id) { return None; }
+
+    Node *node = g_node_table[id];
+    if (node == 0) { return None; } // deleted slot (when remove_node lands)
+    return Some(node);
 }
 
 export i32 create_node(i32 kind, char *name) {
@@ -160,7 +189,7 @@ i32 (Node* n) layout_height() {
     i32 h = n->h;
     if (h != 0) { return h; }
     i32 text = NODE_TEXT;
-    if (n->kind == text) { return 8; }
+    if (n->kind == text) { return 8 * ui_scale(); }
     return 0;
 }
 
@@ -168,8 +197,6 @@ i32 (Node* n) layout_height() {
 // own props; Column owns only their x/y positions. Nested Columns are relaid
 // after their origin moves so their descendants follow along as well.
 void (Node* column) relayout_column() {
-    if (column == 0) { return; }
-
     i32 column_kind = NODE_COLUMN;
     if (column->kind != column_kind) { return; }
 
@@ -179,72 +206,111 @@ void (Node* column) relayout_column() {
     i32 child_id = column->first_child;
 
     while (child_id != 0) {
-        Node *child = get_node(child_id);
-        i32 child_h = child.layout_height();
-        child.set_bounds_raw(child_id, child_x, cursor_y,
-                       child->w, child->h);
+        case get_node(child_id) of {
+            Some(raw_child) -> ({
+                Node *child = (Node*)raw_child;
+                i32 child_h = child.layout_height();
+                child.set_bounds_raw(child_id, child_x, cursor_y,
+                               child->w, child->h);
 
-        i32 child_kind = child->kind;
-        if (child_kind == column_kind) {
-            child.relayout_column();
-        }
+                i32 child_kind = child->kind;
+                if (child_kind == column_kind) {
+                    child.relayout_column();
+                }
 
-        cursor_y = cursor_y + child_h + gap;
-        child_id = child->next_sibling;
+                cursor_y = cursor_y + child_h + gap;
+                child_id = child->next_sibling;
+            });
+            // A broken sibling link must terminate traversal, not become a
+            // null dereference. Normal trees never take this arm.
+            None -> ({ child_id = 0; });
+        };
     }
 }
 
 export void set_bounds(i32 id, i32 x, i32 y, i32 w, i32 h) {
-    Node *n = get_node(id);
-    if (n != 0) {
-        n.set_bounds_raw(id, x, y, w, h);
+    case get_node(id) of {
+        Some(raw_node) -> ({
+            Node *n = (Node*)raw_node;
+            n.set_bounds_raw(id, x, y, w, h);
 
-        // Moving/resizing a Column moves its direct children. Changing a
-        // child size inside a Column reflows the following siblings.
-        n.relayout_column();
-        Node *parent = get_node(n->parent);
-        if (parent != 0) {
-            parent.relayout_column();
-        }
+            // Moving/resizing a Column moves its direct children. Changing a
+            // child size inside a Column reflows the following siblings.
+            n.relayout_column();
+            case get_node(n->parent) of {
+                Some(raw_parent) -> ({
+                    Node *parent = (Node*)raw_parent;
+                    parent.relayout_column();
+                });
+                None -> 0;
+            };
+        });
+        None -> 0;
+    };
+}
+
+i32 text_width(char *text) {
+    i32 len = 0;
+    if (text != 0) {
+        while (text[len] != 0) { len = len + 1; }
     }
+    return len * 8 * ui_scale();
 }
 
 export void set_text(i32 id, char *text) {
-    Node *n = get_node(id);
-    if (n != 0) {
-        damage_node(id);   // old string's extent
-        n->text = text;
-        damage_node(id);   // new string may be longer
-    }
+    case get_node(id) of {
+        Some(raw_node) -> ({
+            Node *n = (Node*)raw_node;
+            damage_node(id);   // old string's extent
+            n->text = text;
+            // Text used to retain a 0x0 node box and infer its extent only
+            // while invalidating. Keep its physical bounds instead: damage,
+            // clipping, layout, and hit testing then all agree after UI scale
+            // has been applied.
+            n->w = (u16)text_width(text);
+            n->h = (u16)(8 * ui_scale());
+            damage_node(id);   // new string may be longer
+        });
+        None -> 0;
+    };
 }
 
 export void set_role(i32 id, i32 role) {
-    Node *n = get_node(id);
-    if (n != 0) {
-        n->role = (u16)role;
-    }
+    case get_node(id) of {
+        Some(raw_node) -> ({
+            Node *n = (Node*)raw_node;
+            n->role = (u16)role;
+        });
+        None -> 0;
+    };
 }
 
 // Colours are fixed per Box for now. They are raw graphics.rgb() values, so
 // callers can use the same colour construction API as the renderer.
 export void set_colors(i32 id, i32 background, i32 border) {
-    Node *n = get_node(id);
-    if (n != 0) {
-        damage_node(id);
-        n->background_color = background;
-        n->border_color = border;
-    }
+    case get_node(id) of {
+        Some(raw_node) -> ({
+            Node *n = (Node*)raw_node;
+            damage_node(id);
+            n->background_color = background;
+            n->border_color = border;
+        });
+        None -> 0;
+    };
 }
 
 // Set the inset and inter-child gap of a Column, then immediately recompute
 // its children so changing these props is observable without rebuilding it.
 export void set_column_layout(i32 id, i32 padding, i32 gap) {
-    Node *n = get_node(id);
-    if (n != 0) {
-        n->padding = (u16)padding;
-        n->gap = (u16)gap;
-        n.relayout_column();
-    }
+    case get_node(id) of {
+        Some(raw_node) -> ({
+            Node *n = (Node*)raw_node;
+            n->padding = (u16)padding;
+            n->gap = (u16)gap;
+            n.relayout_column();
+        });
+        None -> 0;
+    };
 }
 
 // True if changing `flag` on this node changes how it looks. Only buttons draw
@@ -271,32 +337,35 @@ i32 (Node* n) state_is_visible(i32 flag) {
 
 // Set (on != 0) or clear (on == 0) one STATE_* bit.
 export void set_state_flag(i32 id, i32 flag, i32 on) {
-    Node *n = get_node(id);
-    if (n != 0) {
-        i32 state = n->state;
-        i32 next = state & (~flag);
-        if (on != 0) { next = state | flag; }
-        // Only damage when the bit actually changes: the compositor sets
-        // hovered/pressed every pass, and repainting on a no-op change would
-        // defeat the whole point.
-        if (next != state) {
-            n->state = (u16)next;
-            if (n.state_is_visible(flag) != 0) {
-                damage_node(id);
+    case get_node(id) of {
+        Some(raw_node) -> ({
+            Node *n = (Node*)raw_node;
+            i32 state = n->state;
+            i32 next = state & (~flag);
+            if (on != 0) { next = state | flag; }
+            // Only damage when the bit actually changes: the compositor sets
+            // hovered/pressed every pass, and repainting on a no-op change would
+            // defeat the whole point.
+            if (next != state) {
+                n->state = (u16)next;
+                if (n.state_is_visible(flag) != 0) {
+                    damage_node(id);
+                }
             }
-        }
-    }
+        });
+        None -> 0;
+    };
 }
 
 // Return 1 if the given STATE_* bit is set, else 0.
 export i32 get_state_flag(i32 id, i32 flag) {
-    Node *n = get_node(id);
-    if (n != 0) {
-        if ((n->state & flag) != 0) {
-            return 1;
-        }
-    }
-    return 0;
+    return case get_node(id) of {
+        Some(raw_node) -> ({
+            Node *n = (Node*)raw_node;
+            case (n->state & flag) of { 0 -> 0; _ -> 1; };
+        });
+        None -> 0;
+    };
 }
 
 // Named state setters. Other packages can't pass dom.STATE_* as an argument (an
@@ -321,20 +390,25 @@ export void set_hit_testable(i32 id, i32 on) {
 // Store a click handler (a function pointer, passed as i32) on a node. The
 // handler is invoked by dispatch_click via an indirect call. 0 clears it.
 export void set_on_click(i32 id, i32 handler) {
-    Node *n = get_node(id);
-    if (n != 0) {
-        n->on_click = handler;
-        set_hit_testable(id, handler != 0);
-    }
+    case get_node(id) of {
+        Some(raw_node) -> ({
+            Node *n = (Node*)raw_node;
+            n->on_click = handler;
+            set_hit_testable(id, handler != 0);
+        });
+        None -> 0;
+    };
 }
 
 // Return the click handler stored on a node, or 0 if none.
 export i32 get_on_click(i32 id) {
-    Node *n = get_node(id);
-    if (n != 0) {
-        return n->on_click;
-    }
-    return 0;
+    return case get_node(id) of {
+        Some(raw_node) -> ({
+            Node *n = (Node*)raw_node;
+            n->on_click;
+        });
+        None -> 0;
+    };
 }
 
 // Invoke a node's click handler, if any. The handler is called as handler(id)
@@ -350,29 +424,44 @@ export i32 dispatch_click(i32 id) {
 
 export void append_child(i32 parent_id, i32 child_id) {
     damage_node(child_id);
-    Node *parent = get_node(parent_id);
-    Node *child = get_node(child_id);
+    case get_node(parent_id) of {
+        Some(raw_parent) -> ({
+            Node *parent = (Node*)raw_parent;
+            case get_node(child_id) of {
+            Some(raw_child) -> ({
+                Node *child = (Node*)raw_child;
+                child->parent = (u16)parent_id;
+                child->next_sibling = 0;
 
-    if (parent != 0) {
-        if (child != 0) {
-            child->parent = (u16)parent_id;
-            child->next_sibling = 0;
-
-            if (parent->first_child == 0) {
-                parent->first_child = (u16)child_id;
-            } else {
-                Node *curr = get_node(parent->first_child);
-                while (curr->next_sibling != 0) {
-                    curr = get_node(curr->next_sibling);
+                if (parent->first_child == 0) {
+                    parent->first_child = (u16)child_id;
+                } else {
+                    i32 current_id = parent->first_child;
+                    while (current_id != 0) {
+                        case get_node(current_id) of {
+                            Some(raw_current) -> ({
+                                Node *curr = (Node*)raw_current;
+                                if (curr->next_sibling == 0) {
+                                    curr->next_sibling = (u16)child_id;
+                                    current_id = 0;
+                                } else {
+                                    current_id = curr->next_sibling;
+                                }
+                            });
+                            None -> ({ current_id = 0; });
+                        };
+                    }
                 }
-                curr->next_sibling = (u16)child_id;
-            }
 
-            // A Column controls the positions of its direct children. This
-            // runs after linking so the new child participates immediately.
-            parent.relayout_column();
-        }
-    }
+                // A Column controls the positions of its direct children. This
+                // runs after linking so the new child participates immediately.
+                parent.relayout_column();
+            });
+            None -> 0;
+        };
+        });
+        None -> 0;
+    };
 }
 
 // --- UI node create helpers ---
@@ -387,19 +476,23 @@ export i32 desktop_id() {
 // Tree navigation. Return 0 when there is no such node. Used by the renderer,
 // hit-test, and callers that need to reach a built subtree's children.
 export i32 first_child(i32 id) {
-    Node *n = get_node(id);
-    if (n != 0) {
-        return n->first_child;
-    }
-    return 0;
+    return case get_node(id) of {
+        Some(raw_node) -> ({
+            Node *n = (Node*)raw_node;
+            n->first_child;
+        });
+        None -> 0;
+    };
 }
 
 export i32 next_sibling(i32 id) {
-    Node *n = get_node(id);
-    if (n != 0) {
-        return n->next_sibling;
-    }
-    return 0;
+    return case get_node(id) of {
+        Some(raw_node) -> ({
+            Node *n = (Node*)raw_node;
+            n->next_sibling;
+        });
+        None -> 0;
+    };
 }
 
 // Note: NODE_*/ROLE_*/STATE_* are `export u16` globals; pass them bare as
@@ -408,7 +501,7 @@ export i32 next_sibling(i32 id) {
 export i32 create_window(char *title, i32 x, i32 y, i32 w, i32 h) {
     i32 id = create_node(NODE_WINDOW, title);
     set_role(id, ROLE_WINDOW);
-    set_bounds(id, x, y, w, h);
+    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
     set_text(id, title);
     set_state_flag(id, STATE_VISIBLE, 1);
     set_state_flag(id, STATE_ENABLED, 1);
@@ -418,7 +511,7 @@ export i32 create_window(char *title, i32 x, i32 y, i32 w, i32 h) {
 export i32 create_button(char *label, i32 x, i32 y, i32 w, i32 h) {
     i32 id = create_node(NODE_BUTTON, label);
     set_role(id, ROLE_BUTTON);
-    set_bounds(id, x, y, w, h);
+    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
     set_text(id, label);
     set_state_flag(id, STATE_VISIBLE, 1);
     set_state_flag(id, STATE_ENABLED, 1);
@@ -429,7 +522,7 @@ export i32 create_button(char *label, i32 x, i32 y, i32 w, i32 h) {
 export i32 create_text(char *text, i32 x, i32 y) {
     i32 id = create_node(NODE_TEXT, text);
     set_role(id, ROLE_TEXT);
-    set_bounds(id, x, y, 0, 0);
+    set_bounds(id, scale_ui(x), scale_ui(y), 0, 0);
     set_text(id, text);
     set_state_flag(id, STATE_VISIBLE, 1);
     return id;
@@ -440,7 +533,7 @@ export i32 create_text(char *text, i32 x, i32 y) {
 export i32 create_box(i32 x, i32 y, i32 w, i32 h,
                       i32 background, i32 border) {
     i32 id = create_node(NODE_BOX, "box");
-    set_bounds(id, x, y, w, h);
+    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
     set_colors(id, background, border);
     set_state_flag(id, STATE_VISIBLE, 1);
     return id;
@@ -452,8 +545,8 @@ export i32 create_box(i32 x, i32 y, i32 w, i32 h,
 export i32 create_column(i32 x, i32 y, i32 w, i32 h,
                          i32 padding, i32 gap) {
     i32 id = create_node(NODE_COLUMN, "column");
-    set_bounds(id, x, y, w, h);
-    set_column_layout(id, padding, gap);
+    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
+    set_column_layout(id, scale_ui(padding), scale_ui(gap));
     set_state_flag(id, STATE_VISIBLE, 1);
     return id;
 }
@@ -527,25 +620,27 @@ void (Node* n) dump_props() {
 }
 
 void dump_node(i32 node_id, i32 depth) {
-    Node *n = get_node(node_id);
-    if (n != 0) {
-        print_indent(depth);
-        debug.printf("Node(id=%i, kind=%i) ", n->id, n->kind);
-        if (n->name != 0) {
-            debug.print((char*)n->name);
-        } else {
-            debug.print("?");
-        }
-        n.dump_props();
-        debug.println("");
+    case get_node(node_id) of {
+        Some(raw_node) -> ({
+            Node *n = (Node*)raw_node;
+            print_indent(depth);
+            debug.printf("Node(id=%i, kind=%i) ", n->id, n->kind);
+            if (n->name != 0) {
+                debug.print((char*)n->name);
+            } else {
+                debug.print("?");
+            }
+            n.dump_props();
+            debug.println("");
 
-        i32 child_id = n->first_child;
-        while (child_id != 0) {
-            dump_node(child_id, depth + 1);
-            Node *child = get_node(child_id);
-            child_id = child->next_sibling;
-        }
-    }
+            i32 child_id = n->first_child;
+            while (child_id != 0) {
+                dump_node(child_id, depth + 1);
+                child_id = next_sibling(child_id);
+            }
+        });
+        None -> 0;
+    };
 }
 
 export void dump() {
@@ -607,63 +702,65 @@ void print_json_bool(i32 v) {
 }
 
 void dump_node_json(i32 node_id) {
-    Node *n = get_node(node_id);
-    if (n == 0) { return; }
+    case get_node(node_id) of {
+        Some(raw_node) -> ({
+            Node *n = (Node*)raw_node;
+            i32 state = n->state;
+            i32 visible = 0;
+            if ((state & STATE_VISIBLE) != 0) { visible = 1; }
+            i32 enabled = 0;
+            if ((state & STATE_ENABLED) != 0) { enabled = 1; }
+            i32 hovered = 0;
+            if ((state & STATE_HOVERED) != 0) { hovered = 1; }
+            i32 pressed = 0;
+            if ((state & STATE_PRESSED) != 0) { pressed = 1; }
+            i32 focused = 0;
+            if ((state & STATE_FOCUSED) != 0) { focused = 1; }
+            i32 hit_testable = 0;
+            if ((state & STATE_HIT_TESTABLE) != 0) { hit_testable = 1; }
 
-    i32 state = n->state;
-    i32 visible = 0;
-    if ((state & STATE_VISIBLE) != 0) { visible = 1; }
-    i32 enabled = 0;
-    if ((state & STATE_ENABLED) != 0) { enabled = 1; }
-    i32 hovered = 0;
-    if ((state & STATE_HOVERED) != 0) { hovered = 1; }
-    i32 pressed = 0;
-    if ((state & STATE_PRESSED) != 0) { pressed = 1; }
-    i32 focused = 0;
-    if ((state & STATE_FOCUSED) != 0) { focused = 1; }
-    i32 hit_testable = 0;
-    if ((state & STATE_HIT_TESTABLE) != 0) { hit_testable = 1; }
+            debug.print("{\"id\":");
+            debug.printf("%i", n->id);
+            debug.print(",\"parent\":");
+            debug.printf("%i", n->parent);
+            debug.print(",\"kind\":");
+            debug.printf("%i", n->kind);
+            debug.print(",\"role\":");
+            print_json_string(role_name(n->role));
+            debug.print(",\"name\":");
+            print_json_string((char*)n->name);
+            debug.print(",\"text\":");
+            print_json_string((char*)n->text);
+            debug.print(",\"x\":");
+            debug.printf("%i", n->x);
+            debug.print(",\"y\":");
+            debug.printf("%i", n->y);
+            debug.print(",\"w\":");
+            debug.printf("%i", n->w);
+            debug.print(",\"h\":");
+            debug.printf("%i", n->h);
+            debug.print(",\"visible\":");
+            print_json_bool(visible);
+            debug.print(",\"enabled\":");
+            print_json_bool(enabled);
+            debug.print(",\"hovered\":");
+            print_json_bool(hovered);
+            debug.print(",\"pressed\":");
+            print_json_bool(pressed);
+            debug.print(",\"focused\":");
+            print_json_bool(focused);
+            debug.print(",\"hitTestable\":");
+            print_json_bool(hit_testable);
+            debug.println("}");
 
-    debug.print("{\"id\":");
-    debug.printf("%i", n->id);
-    debug.print(",\"parent\":");
-    debug.printf("%i", n->parent);
-    debug.print(",\"kind\":");
-    debug.printf("%i", n->kind);
-    debug.print(",\"role\":");
-    print_json_string(role_name(n->role));
-    debug.print(",\"name\":");
-    print_json_string((char*)n->name);
-    debug.print(",\"text\":");
-    print_json_string((char*)n->text);
-    debug.print(",\"x\":");
-    debug.printf("%i", n->x);
-    debug.print(",\"y\":");
-    debug.printf("%i", n->y);
-    debug.print(",\"w\":");
-    debug.printf("%i", n->w);
-    debug.print(",\"h\":");
-    debug.printf("%i", n->h);
-    debug.print(",\"visible\":");
-    print_json_bool(visible);
-    debug.print(",\"enabled\":");
-    print_json_bool(enabled);
-    debug.print(",\"hovered\":");
-    print_json_bool(hovered);
-    debug.print(",\"pressed\":");
-    print_json_bool(pressed);
-    debug.print(",\"focused\":");
-    print_json_bool(focused);
-    debug.print(",\"hitTestable\":");
-    print_json_bool(hit_testable);
-    debug.println("}");
-
-    i32 child_id = n->first_child;
-    while (child_id != 0) {
-        dump_node_json(child_id);
-        Node *child = get_node(child_id);
-        child_id = child->next_sibling;
-    }
+            i32 child_id = n->first_child;
+            while (child_id != 0) {
+                dump_node_json(child_id);
+                child_id = next_sibling(child_id);
+            }
+        });
+        None -> 0;
+    };
 }
 
 // Print the whole tree as JSON Lines, bracketed by markers a host-side reader
@@ -687,6 +784,7 @@ void (Node* n) draw_node() {
     i32 w = n->w;
     i32 h = n->h;
     i32 state = n->state;
+    i32 scale = ui_scale();
 
     i32 black = graphics.rgb(0, 0, 0);
     i32 white = graphics.rgb(255, 255, 255);
@@ -703,12 +801,12 @@ void (Node* n) draw_node() {
 
     if (kind == kbox) {
         graphics.fill_rect(x, y, w, h, n->background_color);
-        graphics.draw_rect(x, y, w, h, n->border_color);
+        graphics.draw_rect_scaled(x, y, w, h, n->border_color, scale);
     } else if (kind == kw) {
         graphics.fill_rect(x, y, w, h, white);
-        graphics.draw_rect(x, y, w, h, graphics.rgb(136, 136, 136));
+        graphics.draw_rect_scaled(x, y, w, h, graphics.rgb(136, 136, 136), scale);
         if (n->text != 0) {
-            graphics.draw_text(x + 20, y + 8, (char*)n->text, black, white);
+            graphics.draw_text_scaled(x + 20 * scale, y + 8 * scale, (char*)n->text, black, white, scale);
         }
     } else if (kind == kb) {
         i32 face = graphics.rgb(204, 204, 204);
@@ -718,13 +816,13 @@ void (Node* n) draw_node() {
             face = graphics.rgb(180, 210, 255);
         }
         graphics.fill_rect(x, y, w, h, face);
-        graphics.draw_rect(x, y, w, h, black);
+        graphics.draw_rect_scaled(x, y, w, h, black, scale);
         if (n->text != 0) {
-            graphics.draw_text(x + 12, y + 8, (char*)n->text, black, face);
+            graphics.draw_text_scaled(x + 12 * scale, y + 8 * scale, (char*)n->text, black, face, scale);
         }
     } else if (kind == kt) {
         if (n->text != 0) {
-            graphics.draw_text(x, y, (char*)n->text, black, white);
+            graphics.draw_text_scaled(x, y, (char*)n->text, black, white, scale);
         }
     }
     // Structural nodes (root/system/process/...) draw nothing.
@@ -747,8 +845,8 @@ i32 (Node* n) node_in_damage() {
             char *t = (char*)n->text;
             while (t[len] != 0) { len = len + 1; }
         }
-        w = len * 8;
-        h = 8;
+        w = len * 8 * ui_scale();
+        h = 8 * ui_scale();
     }
     i32 x0 = n->x;
     i32 y0 = n->y;
@@ -760,36 +858,40 @@ i32 (Node* n) node_in_damage() {
 }
 
 export void render(i32 node_id) {
-    Node *n = get_node(node_id);
-    if (n == 0) { return; }
-    if ((n->state & STATE_VISIBLE) == 0) { return; }
+    case get_node(node_id) of {
+        Some(raw_node) -> ({
+            Node *n = (Node*)raw_node;
+            if ((n->state & STATE_VISIBLE) == 0) { return; }
 
-    // Children are visited regardless: a child can overlap the damage region
-    // even when its parent does not.
-    if (n.node_in_damage() != 0) {
-        n.draw_node();
-    }
+            // Children are visited regardless: a child can overlap the damage region
+            // even when its parent does not.
+            if (n.node_in_damage() != 0) {
+                n.draw_node();
+            }
 
-    i32 child_id = n->first_child;
-    while (child_id != 0) {
-        render(child_id);
-        Node *child = get_node(child_id);
-        child_id = child->next_sibling;
-    }
+            i32 child_id = n->first_child;
+            while (child_id != 0) {
+                render(child_id);
+                child_id = next_sibling(child_id);
+            }
+        });
+        None -> 0;
+    };
 }
 
 // Repaint the whole UI: clear the desktop, render each top-level window under it,
 // then flip the frame to the display. The desktop node is a structural container
 // with no STATE_VISIBLE, so we render its children directly rather than gating on
-// the desktop's own visibility. Display size is inlined (1024x768) because reading
-// graphics.DISPLAY_WIDTH cross-package needs an explicit symbol import the
-// compiler doesn't emit; passing it as a call arg is fine, globals are not.
+// the desktop's own visibility. Geometry comes from graphics' functions, which
+// use the shared display configuration read by the emulator at build time.
 // Draw the scene into the back buffer WITHOUT flipping it to the display. Use
 // this when the caller wants to overlay something (e.g. the mouse cursor) before
 // presenting. Call present() yourself afterwards.
 // Add a rectangle to the damage region. Clipped to the display, so callers can
 // pass node bounds without worrying about off-screen nodes.
 export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
+    i32 display_width = graphics.display_width();
+    i32 display_height = graphics.display_height();
     i32 x0 = x;
     i32 y0 = y;
     i32 x1 = x + w;
@@ -797,8 +899,8 @@ export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
 
     if (x0 < 0) { x0 = 0; }
     if (y0 < 0) { y0 = 0; }
-    if (x1 > 1024) { x1 = 1024; }
-    if (y1 > 768) { y1 = 768; }
+    if (x1 > display_width) { x1 = display_width; }
+    if (y1 > display_height) { y1 = display_height; }
     if (x1 <= x0) { return; }
     if (y1 <= y0) { return; }
 
@@ -819,22 +921,25 @@ export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
 // Mark a node's own area as needing repaint. Text nodes carry no width/height
 // of their own, so they damage a line-height band wide enough for their string.
 export void damage_node(i32 id) {
-    Node *n = get_node(id);
-    if (n == 0) { return; }
-
-    i32 w = n->w;
-    i32 h = n->h;
-    if (w == 0) {
-        // Text: 8x8 glyphs, so the band is 8 tall and 8 per character wide.
-        i32 len = 0;
-        if (n->text != 0) {
-            char *t = (char*)n->text;
-            while (t[len] != 0) { len = len + 1; }
-        }
-        w = len * 8;
-        h = 8;
-    }
-    damage_rect(n->x, n->y, w, h);
+    case get_node(id) of {
+        Some(raw_node) -> ({
+            Node *n = (Node*)raw_node;
+            i32 w = n->w;
+            i32 h = n->h;
+            if (w == 0) {
+                // Text: 8x8 glyphs, so the band is 8 tall and 8 per character wide.
+                i32 len = 0;
+                if (n->text != 0) {
+                    char *t = (char*)n->text;
+                    while (t[len] != 0) { len = len + 1; }
+                }
+                w = len * 8 * ui_scale();
+                h = 8 * ui_scale();
+            }
+            damage_rect(n->x, n->y, w, h);
+        });
+        None -> 0;
+    };
 }
 
 export i32 has_damage() {
@@ -852,7 +957,7 @@ export void clear_damage() {
 // Repaint every node, ignoring the damage region. Used for the first frame and
 // whenever a caller wants an unconditional repaint.
 export void render_all() {
-    graphics.fill_rect(0, 0, 1024, 768, graphics.rgb(30, 30, 40));
+    graphics.fill_rect(0, 0, graphics.display_width(), graphics.display_height(), graphics.rgb(30, 30, 40));
     i32 child_id = first_child(g_desktop_node_id);
     while (child_id != 0) {
         render(child_id);
@@ -915,29 +1020,32 @@ i32 (Node* n) node_contains(i32 px, i32 py) {
 // contain (px, py), or 0 if none. Later siblings are on top (paint order), so we
 // scan children last-to-topmost by taking the deepest/last hit.
 i32 hit_test(i32 node_id, i32 px, i32 py) {
-    Node *n = get_node(node_id);
-    if (n == 0) { return 0; }
-    if ((n->state & STATE_VISIBLE) == 0) { return 0; }
+    return case get_node(node_id) of {
+        Some(raw_node) -> ({
+            Node *n = (Node*)raw_node;
+            if ((n->state & STATE_VISIBLE) == 0) { return 0; }
 
-    i32 found = 0;
-    if (n.node_contains(px, py) != 0) {
-        if ((n->state & STATE_HIT_TESTABLE) != 0) {
-            found = node_id;
-        }
-    }
+            i32 found = 0;
+            if (n.node_contains(px, py) != 0) {
+                if ((n->state & STATE_HIT_TESTABLE) != 0) {
+                    found = node_id;
+                }
+            }
 
-    // A child that also contains the point wins over the parent, and a later
-    // child wins over an earlier one (it paints on top).
-    i32 child_id = n->first_child;
-    while (child_id != 0) {
-        i32 child_hit = hit_test(child_id, px, py);
-        if (child_hit != 0) {
-            found = child_hit;
-        }
-        Node *child = get_node(child_id);
-        child_id = child->next_sibling;
-    }
-    return found;
+            // A child that also contains the point wins over the parent, and a later
+            // child wins over an earlier one (it paints on top).
+            i32 child_id = n->first_child;
+            while (child_id != 0) {
+                i32 child_hit = hit_test(child_id, px, py);
+                if (child_hit != 0) {
+                    found = child_hit;
+                }
+                child_id = next_sibling(child_id);
+            }
+            found;
+        });
+        None -> 0;
+    };
 }
 
 // Return the topmost UI node under (x, y), searching the whole desktop. 0 if none.
@@ -955,6 +1063,7 @@ export i32 find_at(i32 x, i32 y) {
 }
 
 export void init() {
+    graphics.init();
     i32 root = create_node(NODE_ROOT, "root");
     g_root_node_id = root;
 

@@ -27,11 +27,23 @@ REPO = Path(__file__).resolve().parents[3]
 OUT = Path(__file__).resolve().parents[3] / "build" / "gui-test"
 OUT.mkdir(parents=True, exist_ok=True)
 
-FB_W, FB_H = 1024, 768
-# Button rect in framebuffer coords: x=120..270, y=130..190 (see build_ui).
-BTN_X, BTN_Y = 195, 160
-# Label "clicks: N" is Column-laid out at (120, 206); crop in framebuffer coords.
-LABEL_CROP = (100, 191, 320, 231)
+DISPLAY_CONFIG = REPO / "system/MyOS/src/ui/display_config.mln"
+
+
+def display_dimension(function):
+    source = DISPLAY_CONFIG.read_text(encoding="utf-8")
+    marker = f"export i32 {function}()"
+    body = source[source.index(marker):]
+    value = body.split("return", 1)[1].lstrip().split(";", 1)[0]
+    return int(value)
+
+
+FB_W, FB_H = display_dimension("width"), display_dimension("height")
+UI_SCALE = max(1, min(FB_W // 1024, FB_H // 768))
+# Button rect in logical coords: x=120..270, y=130..190 (see build_ui).
+BTN_X, BTN_Y = 195 * UI_SCALE, 160 * UI_SCALE
+# Label "clicks: N" is Column-laid out at (120, 206), in logical coords.
+LABEL_CROP = tuple(value * UI_SCALE for value in (100, 191, 320, 231))
 
 
 def find_window(root, needle):
