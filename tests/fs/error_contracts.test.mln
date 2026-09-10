@@ -1,6 +1,8 @@
 import assert from "../../../../toolchain/MyStdLib/assert.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
+import mem from "../../../MyKernel/src/mm/mem.mln";
 import fs from "../../src/fs/fs.mln";
+import ssd from "../../src/fs/ssd.mln";
 import { FsError } from "../../src/fs/fs.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 
@@ -29,6 +31,13 @@ i32 is_no_free_slot(Result<i32, FsError>* result) {
     return case *result of {
         Ok(_) -> 0;
         Err(cause) -> case cause of { FsError::NoFreeSlot -> 1; _ -> 0; };
+    };
+}
+
+i32 is_alloc_failed(Result<i32, FsError>* result) {
+    return case *result of {
+        Ok(_) -> 0;
+        Err(cause) -> case cause of { FsError::AllocFailed -> 1; _ -> 0; };
     };
 }
 
@@ -103,4 +112,18 @@ void filesystem_error_contracts() {
     Result<i32, FsError> open7 = fs.open("same");
     Result<i32, FsError> full = fs.open("same");
     assert.assert_true(is_no_free_slot(&full) == 1, "full descriptor table is NoFreeSlot");
+
+    // A bitmap block is only 64 KiB. Mark every bit used in a scratch buffer
+    // and install it through the real SSD driver; create() must then surface
+    // AllocFailed without allocating a multi-gigabyte disk image.
+    i32 bitmap = heap.alloc(fs.BLOCK_SIZE);
+    i32 offset = 0;
+    while (offset < fs.BLOCK_SIZE) {
+        mem.write_word(bitmap + offset, -1);
+        offset = offset + 4;
+    }
+    assert.assert_true(ssd.write_block(fs.BITMAP_BLOCK, bitmap) == 0,
+                       "install full allocation bitmap");
+    Result<i32, FsError> disk_full = fs.create("disk-full");
+    assert.assert_true(is_alloc_failed(&disk_full) == 1, "full bitmap is AllocFailed");
 }
