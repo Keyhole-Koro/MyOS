@@ -1,0 +1,28 @@
+import assert from "../../../../toolchain/MyStdLib/assert.mln";
+import mock from "../../../../toolchain/MyLangTestKit/runtime/facade.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import fs from "../../src/fs/fs.mln";
+import ssd from "../../src/fs/ssd.mln";
+import { FsError } from "../../src/fs/fs.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+
+// The fixture begins with the MFS1 superblock magic. The rest of its sparse
+// first block is zero, which is a valid empty entry table/bitmap layout.
+/*@Test "disk fixture is copied before execution" {
+    disk: "fixtures/seeded_superblock.img";
+    step: 50000000;
+}*/
+void disk_fixture_is_copied_before_execution() {
+    heap.init();
+
+    // A spy preserves the real SSD calls while proving fs.init did not format
+    // the fixture (format would write the superblock, entries and bitmap).
+    mock.spy(ssd.write_block);
+    fs.init();
+    assert.assert_true(mock.calls(ssd.write_block) == 0,
+                       "seeded superblock avoids auto-format writes");
+
+    Result<i32, FsError> created = fs.create("fixture-file");
+    i32 create_ok = case created of { Ok(_) -> 1; Err(_) -> 0; };
+    assert.assert_true(create_ok == 1, "fixture disk remains writable");
+}
