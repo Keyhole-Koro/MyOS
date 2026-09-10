@@ -119,15 +119,23 @@ i32 scale_ui(i32 value) {
     return value * ui_scale();
 }
 
-// The sole NodeId -> Node* boundary. A pointer appears only inside Some, so
-// callers cannot accidentally dereference the old null-pointer sentinel.
-export Option<Node*> get_node(i32 id) {
+// The sole NodeId -> Node* boundary. It remains internal because MyLang's
+// cross-module signature ABI cannot expose an Option of a package-private
+// struct. External callers use node_exists() or the scalar DOM operations.
+Option<Node*> get_node(i32 id) {
     if (id <= 0) { return None; }
     if (id >= g_next_node_id) { return None; }
 
     Node *node = g_node_table[id];
     if (node == 0) { return None; } // deleted slot (when remove_node lands)
     return Some(node);
+}
+
+export i32 node_exists(i32 id) {
+    return case get_node(id) of {
+        Some(_) -> 1;
+        None -> 0;
+    };
 }
 
 export i32 create_node(i32 kind, char *name) {

@@ -1,8 +1,6 @@
-import debug from "../../../MyKernel/src/debug/debug.mln";
-import test from "../../../MyKernel/tests/libs/test.mln";
+import assert from "../../../../toolchain/MyStdLib/assert.mln";
 import dom from "../../src/ui/dom.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
-import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 
 // Pins the interaction contract the compositor relies on: it holds no node ids
 // and starts every interaction from a hit test, so what must hold is that
@@ -17,22 +15,18 @@ i32 g_hits_d = 0;
 
 void on_a(i32 id) {
     g_hits_a = g_hits_a + 1;
-    debug.printf("a(%d);", id);
 }
 
 void on_b(i32 id) {
     g_hits_b = g_hits_b + 1;
-    debug.printf("b(%d);", id);
 }
 
 void on_c(i32 id) {
     g_hits_c = g_hits_c + 1;
-    debug.printf("c(%d);", id);
 }
 
 void on_d(i32 id) {
     g_hits_d = g_hits_d + 1;
-    debug.printf("d(%d);", id);
 }
 
 // Click wherever the pointer is, the way the compositor does: hit-test first,
@@ -45,19 +39,17 @@ i32 click_at(i32 x, i32 y) {
     return hit;
 }
 
-/*@Test "dom_hit_dispatch" {
-    expect: "TRACE:option=111;a(9);b(10);miss=0;box=1;c(13);d(15);a(9);a=2;b=1;c=1;d=1";
+/*@Test "dom hit dispatch" {
     step: 10000000;
 }*/
 void dom_hit_dispatch() {
     heap.init();
     dom.init();
 
-    // Node lookup is an Option boundary: sentinel, negative, and out-of-range
-    // ids are None; a live DOM id is Some(Node*).
-    i32 none_sentinel = case dom.get_node(0) of { Some(n) -> 0; None -> 1; };
-    i32 none_negative = case dom.get_node(-1) of { Some(n) -> 0; None -> 1; };
-    i32 some_desktop = case dom.get_node(dom.desktop_id()) of { Some(n) -> 1; None -> 0; };
+    // The public scalar boundary keeps DOM's Node representation private.
+    i32 none_sentinel = dom.node_exists(0) == 0;
+    i32 none_negative = dom.node_exists(-1) == 0;
+    i32 some_desktop = dom.node_exists(dom.desktop_id());
 
     i32 win = dom.create_window("W", 0, 0, 400, 300);
     dom.append_child(dom.desktop_id(), win);
@@ -92,36 +84,42 @@ void dom_hit_dispatch() {
     dom.set_on_click(d, on_d);
     dom.append_child(column, d);       // -> (30, 228)
 
-    debug.print("TRACE:");
-    debug.printf("option=%d%d%d;", none_sentinel, none_negative, some_desktop);
+    assert.assert_true(none_sentinel == 1, "sentinel node id is None");
+    assert.assert_true(none_negative == 1, "negative node id is None");
+    assert.assert_true(some_desktop == 1, "desktop id resolves to a node");
 
-    click_at(50, 30);   // inside A
-    click_at(240, 30);  // inside B
+    // DOM coordinates are logical; controls are scaled to the configured
+    // display size. Keep input points in the same logical coordinate space.
+    i32 scale = dom.ui_scale();
+
+    i32 hit_a = click_at(50 * scale, 30 * scale);   // inside A
+    i32 hit_b = click_at(240 * scale, 30 * scale);  // inside B
+    assert.assert_true(hit_a == a, "A hit test returns A");
+    assert.assert_true(hit_b == b, "B hit test returns B");
 
     // Outside both buttons: the hit is the window, which carries no handler, so
     // nothing runs and neither counter moves.
-    i32 outside = click_at(350, 250);
-    i32 missed = 0;
-    if (outside == a) { missed = 1; }
-    if (outside == b) { missed = 1; }
-    debug.printf("miss=%d;", missed);
+    i32 outside = click_at(350 * scale, 250 * scale);
+    assert.assert_true(outside == 0, "empty window area is not interactive");
 
-    i32 box_hit = click_at(50, 175);
-    i32 box_missed = 0;
-    if (box_hit == 0) { box_missed = 1; }
-    debug.printf("box=%d;", box_missed);
+    i32 box_hit = click_at(50 * scale, 175 * scale);
+    assert.assert_true(box_hit == 0, "decorative box does not become a hit target");
 
     // These points prove Column's padding, gap, and 8px Text line reservation
     // without reaching into the private Node representation.
-    click_at(35, 195);  // C at (30, 190)
-    click_at(35, 233);  // D at (30, 228)
+    i32 hit_c = click_at(35 * scale, 195 * scale);  // C at (30, 190)
+    i32 hit_d = click_at(35 * scale, 233 * scale);  // D at (30, 228)
+    assert.assert_true(hit_c == c, "column padding places C at its hit point");
+    assert.assert_true(hit_d == d, "text line height and gap place D at its hit point");
 
-    click_at(50, 30);   // A again
-
-    debug.printf("a=%d;b=%d;c=%d;d=%d", g_hits_a, g_hits_b, g_hits_c, g_hits_d);
+    i32 hit_a_again = click_at(50 * scale, 30 * scale);   // A again
+    assert.assert_true(hit_a_again == a, "second A hit test returns A");
+    assert.assert_true(g_hits_a == 2, "A receives both clicks");
+    assert.assert_true(g_hits_b == 1, "B receives one click");
+    assert.assert_true(g_hits_c == 1, "C receives one click");
+    assert.assert_true(g_hits_d == 1, "D receives one click");
 
     // Exercise the renderer's Box fill/border branch and recursive Column
     // traversal in the headless emulator as well as the tree-only assertions.
     dom.render_all();
-    test.pass();
 }
