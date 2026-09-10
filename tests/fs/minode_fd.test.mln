@@ -1,10 +1,8 @@
-import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import fs from "../../src/fs/fs.mln";
-import serial from "../../../MyKernel/src/io/serial.mln";
-import { halt_cpu } from "../../../MyKernel/src/arch/halt.masm";
 import { FsError } from "../../src/fs/fs.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { assert_eq } from "../../../../toolchain/MyStdLib/assert.mln";
 
 i32 SEEK_SET = 0;
 i32 SEEK_CUR = 1;
@@ -20,16 +18,13 @@ i32 get_byte(i32 addr) {
     return (i32)(*p) & 0xFF;
 }
 
-void print_buf(i32 buf, i32 len) {
-    i32 i = 0;
-    while (i < len) {
-        serial.putc(get_byte(buf + i));
-        i = i + 1;
-    }
-}
-
-void test_minode_and_fd() {
-    debug.println("--- Starting minode & mfd tests ---");
+/*@Test "minode and file descriptors" {
+    disk: true;
+    step: 50000000;
+}*/
+void minode_and_file_descriptors() {
+    heap.init();
+    fs.init();
 
     // 1. Test standard descriptor (fd = 1 stdout)
     i32 sbuf = heap.alloc(16);
@@ -44,6 +39,11 @@ void test_minode_and_fd() {
     set_byte(sbuf + 8, 49);  // 1
     set_byte(sbuf + 9, 10);  // \n
     Result<i32, FsError> stdout_res = fs.write(1, sbuf, 10);   // Writes to stdout/serial via unified mfd 1
+    i32 stdout_written = case stdout_res of {
+        Ok(n) -> n;
+        Err(e) -> ({ assert_eq<i32>(1, 0, "write stdout"); 0; });
+    };
+    assert_eq<i32>(stdout_written, 10, "stdout write byte count");
 
     // 2. Test file creation with leading slash path resolution
     i32 wbuf = heap.alloc(32);
@@ -55,51 +55,59 @@ void test_minode_and_fd() {
     }
 
     Result<i32, FsError> create_res = fs.create("/alphabet.txt");
-    i32 fd1 = case create_res of { Ok(v) -> v; Err(e) -> -1; };
-    if (fd1 < 0) {
-        debug.println("[FAIL] failed to create /alphabet.txt");
-        halt_cpu();
-    }
-    debug.printf("Created /alphabet.txt on mfd %i\n", fd1);
+    i32 fd1 = case create_res of {
+        Ok(v) -> v;
+        Err(e) -> ({ assert_eq<i32>(1, 0, "create alphabet file"); 0; });
+    };
     Result<i32, FsError> write_res = fs.write(fd1, wbuf, 10);
+    i32 written = case write_res of {
+        Ok(n) -> n;
+        Err(e) -> ({ assert_eq<i32>(1, 0, "write alphabet file"); 0; });
+    };
+    assert_eq<i32>(written, 10, "alphabet write byte count");
     fs.close(fd1);
 
     // 3. Test multi-handle concurrent open on the same file
     Result<i32, FsError> h1_res = fs.open("/alphabet.txt");
-    i32 h1 = case h1_res of { Ok(v) -> v; Err(e) -> -1; };
+    i32 h1 = case h1_res of {
+        Ok(v) -> v;
+        Err(e) -> ({ assert_eq<i32>(1, 0, "open alphabet with slash"); 0; });
+    };
     Result<i32, FsError> h2_res = fs.open("alphabet.txt"); // without leading slash
-    i32 h2 = case h2_res of { Ok(v) -> v; Err(e) -> -1; };
-    debug.printf("Opened h1=%i, h2=%i (concurrent FDs for same minode)\n", h1, h2);
-
-    if (h1 < 0 || h2 < 0 || h1 == h2) {
-        debug.println("[FAIL] expected distinct positive FDs");
-        halt_cpu();
-    }
+    i32 h2 = case h2_res of {
+        Ok(v) -> v;
+        Err(e) -> ({ assert_eq<i32>(1, 0, "open alphabet without slash"); 0; });
+    };
+    assert_eq<i32>(h1 >= 0, 1, "first file descriptor is non-negative");
+    assert_eq<i32>(h2 >= 0, 1, "second file descriptor is non-negative");
+    assert_eq<i32>(h1 != h2, 1, "concurrent opens receive distinct descriptors");
 
     // Read first 4 bytes from h1 -> "ABCD"
     i32 rbuf1 = heap.alloc(16);
     Result<i32, FsError> n1_res = fs.read(h1, rbuf1, 4);
-    i32 n1 = case n1_res of { Ok(v) -> v; Err(e) -> 0; };
-    debug.print("h1 read 4 bytes: ");
-    print_buf(rbuf1, n1);
-    debug.println("");
+    i32 n1 = case n1_res of { Ok(v) -> v; Err(e) -> ({ assert_eq<i32>(1, 0, "read h1 first bytes"); 0; }); };
+    assert_eq<i32>(n1, 4, "h1 first read byte count");
+    assert_eq<i32>(get_byte(rbuf1 + 0), 'A', "h1 byte 0");
+    assert_eq<i32>(get_byte(rbuf1 + 3), 'D', "h1 byte 3");
 
     // Seek h2 to offset 4 (SEEK_SET) and read 4 bytes -> "EFGH"
     Result<i32, FsError> seek_res = fs.seek(h2, 4, SEEK_SET);
+    i32 seeked = case seek_res of { Ok(v) -> 1; Err(e) -> 0; };
+    assert_eq<i32>(seeked, 1, "seek h2");
     i32 rbuf2 = heap.alloc(16);
     Result<i32, FsError> n2_res = fs.read(h2, rbuf2, 4);
-    i32 n2 = case n2_res of { Ok(v) -> v; Err(e) -> 0; };
-    debug.print("h2 read 4 bytes after seek: ");
-    print_buf(rbuf2, n2);
-    debug.println("");
+    i32 n2 = case n2_res of { Ok(v) -> v; Err(e) -> ({ assert_eq<i32>(1, 0, "read h2 after seek"); 0; }); };
+    assert_eq<i32>(n2, 4, "h2 read byte count");
+    assert_eq<i32>(get_byte(rbuf2 + 0), 'E', "h2 byte 0 after seek");
+    assert_eq<i32>(get_byte(rbuf2 + 3), 'H', "h2 byte 3 after seek");
 
     // Verify h1 offset is still 4, read next 2 bytes from h1 -> "EF"
     i32 rbuf3 = heap.alloc(16);
     Result<i32, FsError> n3_res = fs.read(h1, rbuf3, 2);
-    i32 n3 = case n3_res of { Ok(v) -> v; Err(e) -> 0; };
-    debug.print("h1 read next 2 bytes: ");
-    print_buf(rbuf3, n3);
-    debug.println("");
+    i32 n3 = case n3_res of { Ok(v) -> v; Err(e) -> ({ assert_eq<i32>(1, 0, "read h1 after h2 seek"); 0; }); };
+    assert_eq<i32>(n3, 2, "h1 second read byte count");
+    assert_eq<i32>(get_byte(rbuf3 + 0), 'E', "h1 offset remains independent");
+    assert_eq<i32>(get_byte(rbuf3 + 1), 'F', "h1 offset remains independent second byte");
 
     fs.close(h1);
     fs.close(h2);
@@ -107,7 +115,7 @@ void test_minode_and_fd() {
     // 4. Test remove
     Result<_, FsError> remove_res = fs.remove("/alphabet.txt");
     i32 rem_ok = case remove_res of { Ok(_) -> 1; Err(e) -> 0; };
-    debug.printf("Removed /alphabet.txt result: %i\n", rem_ok);
+    assert_eq<i32>(rem_ok, 1, "remove alphabet file");
 
     Result<i32, FsError> h3_res = fs.open("/alphabet.txt");
     i32 h3_ok = case h3_res of {
@@ -124,10 +132,7 @@ void test_minode_and_fd() {
         Err(Closed(fd)) -> 2;
         Err(InvalidSize(s)) -> 2;
     };
-    if (h3_ok != 0) {
-        debug.println("[FAIL] /alphabet.txt should not exist after remove (or wrong FsError variant)");
-        halt_cpu();
-    }
+    assert_eq<i32>(h3_ok, 0, "removed file returns NotFound");
 
     // 5. Test that an error instance actually carries the data it says it
     // does: close() marks the descriptor slot unused (not just its backing
@@ -149,23 +154,5 @@ void test_minode_and_fd() {
         Err(BadWhence(w)) -> -2;
         Err(InvalidSize(s)) -> -2;
     };
-    if (closed_fd != h1) {
-        debug.printf("[FAIL] expected Err(WrongType(%i)), got closed_fd=%i\n", h1, closed_fd);
-        halt_cpu();
-    }
-    debug.printf("Confirmed Err(WrongType(%i)) after closing h1\n", closed_fd);
-
-    debug.println("Minode and FD tests PASSED!");
-    halt_cpu();
-}
-
-void kernel_init() {
-    heap.init();
-    fs.init();
-    test_minode_and_fd();
-}
-
-i32 kernel_main() {
-    kernel_init();
-    return 0;
+    assert_eq<i32>(closed_fd, h1, "closed descriptor reports its original fd");
 }
