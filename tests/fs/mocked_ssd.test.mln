@@ -46,6 +46,10 @@ i32 is_ok(Result<i32, FsError>* result) {
     return case *result of { Ok(_) -> 1; Err(_) -> 0; };
 }
 
+i32 result_value(Result<i32, FsError>* result) {
+    return case *result of { Ok(value) -> value; Err(_) -> -1; };
+}
+
 /*@Test "filesystem runs against a fake RAM SSD" { step: 50000000; }*/
 void filesystem_runs_against_a_fake_ram_ssd() {
     heap.init();
@@ -78,8 +82,33 @@ void filesystem_runs_against_a_fake_ram_ssd() {
 
     Result<i32, FsError> created = fs.create("ram-file");
     assert.assert_true(is_ok(&created) == 1, "create succeeds against fake SSD");
+    i32 fd = result_value(&created);
     assert.assert_true(mock.calls(ssd.read_block) >= 4, "metadata reads are intercepted");
     assert.assert_true(mock.calls(ssd.write_block) >= 4, "metadata writes are intercepted");
     assert.assert_true(mock.called_with(ssd.read_block, fs.BITMAP_BLOCK, mock.any()),
                        "create reads the allocation bitmap through the fake");
+
+    i32 source = heap.alloc(4);
+    char* source_bytes = (char*)source;
+    source_bytes[0] = 'T';
+    source_bytes[1] = 'E';
+    source_bytes[2] = 'S';
+    source_bytes[3] = 'T';
+    Result<i32, FsError> wrote = fs.write(fd, source, 4);
+    assert.assert_true(result_value(&wrote) == 4, "fake SSD persists file data");
+    fs.close(fd);
+
+    Result<i32, FsError> reopened = fs.open("ram-file");
+    i32 read_fd = result_value(&reopened);
+    assert.assert_true(read_fd >= 3, "fake SSD reopens persisted entry");
+    i32 destination = heap.alloc(4);
+    Result<i32, FsError> read = fs.read(read_fd, destination, 4);
+    assert.assert_true(result_value(&read) == 4, "fake SSD restores file data");
+    char* destination_bytes = (char*)destination;
+    assert.assert_true(destination_bytes[0] == 'T' && destination_bytes[3] == 'T',
+                       "read out-buffer receives persisted bytes");
+    assert.assert_true(mock.called_with(ssd.write_block, fs.DATA_START, mock.any()),
+                       "write reaches the fake data block");
+    assert.assert_true(mock.called_with(ssd.read_block, fs.DATA_START, mock.any()),
+                       "read reaches the fake data block");
 }
