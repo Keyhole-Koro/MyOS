@@ -1,0 +1,106 @@
+import assert from "../../../../toolchain/MyStdLib/assert.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import fs from "../../src/fs/fs.mln";
+import { FsError } from "../../src/fs/fs.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+
+i32 is_invalid_name(Result<i32, FsError>* result) {
+    return case *result of {
+        Ok(_) -> 0;
+        Err(cause) -> case cause of { FsError::InvalidName -> 1; _ -> 0; };
+    };
+}
+
+i32 is_not_found(Result<i32, FsError>* result) {
+    return case *result of {
+        Ok(_) -> 0;
+        Err(cause) -> case cause of { FsError::NotFound -> 1; _ -> 0; };
+    };
+}
+
+i32 is_already_exists(Result<i32, FsError>* result) {
+    return case *result of {
+        Ok(_) -> 0;
+        Err(cause) -> case cause of { FsError::AlreadyExists -> 1; _ -> 0; };
+    };
+}
+
+i32 is_no_free_slot(Result<i32, FsError>* result) {
+    return case *result of {
+        Ok(_) -> 0;
+        Err(cause) -> case cause of { FsError::NoFreeSlot -> 1; _ -> 0; };
+    };
+}
+
+i32 is_bad_fd(Result<i32, FsError>* result, i32 expected) {
+    return case *result of {
+        Ok(_) -> 0;
+        Err(cause) -> case cause of { FsError::BadFd(fd) -> fd == expected; _ -> 0; };
+    };
+}
+
+i32 is_wrong_type(Result<i32, FsError>* result, i32 expected) {
+    return case *result of {
+        Ok(_) -> 0;
+        Err(cause) -> case cause of { FsError::WrongType(fd) -> fd == expected; _ -> 0; };
+    };
+}
+
+i32 is_bad_whence(Result<i32, FsError>* result, i32 expected) {
+    return case *result of {
+        Ok(_) -> 0;
+        Err(cause) -> case cause of { FsError::BadWhence(value) -> value == expected; _ -> 0; };
+    };
+}
+
+i32 is_invalid_size(Result<i32, FsError>* result, i32 expected) {
+    return case *result of {
+        Ok(_) -> 0;
+        Err(cause) -> case cause of { FsError::InvalidSize(value) -> value == expected; _ -> 0; };
+    };
+}
+
+/*@Test "filesystem error contracts" {
+    disk: true;
+    step: 50000000;
+}*/
+void filesystem_error_contracts() {
+    heap.init();
+    fs.init();
+
+    Result<i32, FsError> invalid_name = fs.create("");
+    assert.assert_true(is_invalid_name(&invalid_name) == 1, "empty path is InvalidName");
+
+    Result<i32, FsError> missing = fs.open("missing");
+    assert.assert_true(is_not_found(&missing) == 1, "unknown file is NotFound");
+
+    Result<i32, FsError> first_create = fs.create("same");
+    i32 fd = case first_create of {
+        Ok(value) -> value;
+        Err(cause) -> ({ assert.assert_true(0, "initial create succeeds"); 0; });
+    };
+    Result<i32, FsError> duplicate = fs.create("same");
+    assert.assert_true(is_already_exists(&duplicate) == 1, "duplicate create is AlreadyExists");
+
+    Result<i32, FsError> bad_fd = fs.seek(-1, 0, fs.SEEK_SET);
+    assert.assert_true(is_bad_fd(&bad_fd, -1) == 1, "negative descriptor preserves BadFd payload");
+
+    Result<i32, FsError> serial_seek = fs.seek(1, 0, fs.SEEK_SET);
+    assert.assert_true(is_wrong_type(&serial_seek, 1) == 1, "serial descriptor is WrongType for seek");
+
+    Result<i32, FsError> bad_whence = fs.seek(fd, 0, 99);
+    assert.assert_true(is_bad_whence(&bad_whence, 99) == 1, "invalid whence preserves payload");
+
+    i32 buffer = heap.alloc(4);
+    Result<i32, FsError> bad_size = fs.read(fd, buffer, 0);
+    assert.assert_true(is_invalid_size(&bad_size, 0) == 1, "zero read length is InvalidSize");
+
+    // fd is 3; four more opens fill descriptors 4..7. The next open must
+    // fail without requiring a 2,048-entry on-disk fixture.
+    Result<i32, FsError> open4 = fs.open("same");
+    Result<i32, FsError> open5 = fs.open("same");
+    Result<i32, FsError> open6 = fs.open("same");
+    Result<i32, FsError> open7 = fs.open("same");
+    Result<i32, FsError> full = fs.open("same");
+    assert.assert_true(is_no_free_slot(&full) == 1, "full descriptor table is NoFreeSlot");
+}
