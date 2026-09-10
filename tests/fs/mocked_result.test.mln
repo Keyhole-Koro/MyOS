@@ -1,0 +1,33 @@
+import assert from "../../../../toolchain/MyStdLib/assert.mln";
+import mock from "../../../../toolchain/MyLangTestKit/runtime/facade.mln";
+import fs from "../../src/fs/fs.mln";
+import { FsError } from "../../src/fs/fs.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+
+// This has the same aggregate return type as fs.create. It proves that the
+// TestKit callback path handles MyOS's real Result<i32, FsError> ABI rather
+// than only a test-local struct.
+Result<i32, FsError> fake_create_disabled(char* path) {
+    return Err(FsError::Disabled);
+}
+
+i32 is_disabled(Result<i32, FsError>* result) {
+    return case *result of {
+        Ok(_) -> 0;
+        Err(cause) -> case cause of { FsError::Disabled -> 1; _ -> 0; };
+    };
+}
+
+/*@Test "aggregate Result fake is returned through fs boundary"*/
+void aggregate_result_fake_is_returned_through_fs_boundary() {
+    mock.of(fs.create)
+        .when(mock.any())
+        .call(fake_create_disabled);
+
+    Result<i32, FsError> result = fs.create("unavailable");
+    assert.assert_true(is_disabled(&result) == 1,
+                       "fake Result payload reaches caller through hidden buffer");
+    assert.assert_true(mock.once(fs.create), "aggregate fs target is intercepted once");
+    assert.assert_true(mock.called_with(fs.create, mock.any()),
+                       "aggregate fs target history records its argument");
+}
