@@ -1,0 +1,85 @@
+import assert from "../../../../toolchain/MyStdLib/assert.mln";
+import mock from "../../../../toolchain/MyLangTestKit/runtime/facade.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import mem from "../../../MyKernel/src/mm/mem.mln";
+import fs from "../../src/fs/fs.mln";
+import ssd from "../../src/fs/ssd.mln";
+import { FsError } from "../../src/fs/fs.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+
+// Four blocks are enough for MFS metadata plus the first allocated data block.
+i32 g_ram_disk = 0;
+i32 g_fake_reads = 0;
+i32 g_fake_writes = 0;
+
+i32 ram_disk_address(i32 block) {
+    return g_ram_disk + block * fs.BLOCK_SIZE;
+}
+
+// These have exactly the SSD driver's signature. They are deliberately simple
+// word copies: the test exercises the same out-buffer contract as real DMA.
+i32 ram_disk_read(i32 block, i32 buffer) {
+    i32* source = (i32*)ram_disk_address(block);
+    i32* destination = (i32*)buffer;
+    i32 word = 0;
+    g_fake_reads = g_fake_reads + 1;
+    while (word < 16384) {
+        destination[word] = source[word];
+        word = word + 1;
+    }
+    return 0;
+}
+
+i32 ram_disk_write(i32 block, i32 buffer) {
+    i32* source = (i32*)buffer;
+    i32* destination = (i32*)ram_disk_address(block);
+    i32 word = 0;
+    g_fake_writes = g_fake_writes + 1;
+    while (word < 16384) {
+        destination[word] = source[word];
+        word = word + 1;
+    }
+    return 0;
+}
+
+i32 is_ok(Result<i32, FsError>* result) {
+    return case *result of { Ok(_) -> 1; Err(_) -> 0; };
+}
+
+/*@Test "filesystem runs against a fake RAM SSD" { step: 50000000; }*/
+void filesystem_runs_against_a_fake_ram_ssd() {
+    heap.init();
+    g_ram_disk = heap.alloc(fs.BLOCK_SIZE * 4);
+    assert.assert_true(g_ram_disk != 0, "RAM SSD backing allocation succeeds");
+
+    // heap memory is not part of the test contract; start with an explicitly
+    // blank disk so the fake's first out-buffer copy triggers MFS formatting.
+    i32* disk_words = (i32*)g_ram_disk;
+    i32 word = 0;
+    while (word < 65536) {
+        disk_words[word] = 0;
+        word = word + 1;
+    }
+
+    mock.of(ssd.read_block)
+        .when(mock.any(), mock.any())
+        .call(ram_disk_read);
+    mock.of(ssd.write_block)
+        .when(mock.any(), mock.any())
+        .call(ram_disk_write);
+
+    fs.init();
+    assert.assert_true(mem.read_word(ram_disk_address(fs.SB_BLOCK)) == fs.MAGIC,
+                       "fake write persists the formatted superblock");
+    assert.assert_true(g_fake_reads > 0, "fake read fills fs out-buffers");
+    assert.assert_true(g_fake_writes > 0, "fake write observes formatting");
+    assert.assert_true(mock.called_with(ssd.write_block, fs.SB_BLOCK, mock.any()),
+                       "format writes the superblock through the fake");
+
+    Result<i32, FsError> created = fs.create("ram-file");
+    assert.assert_true(is_ok(&created) == 1, "create succeeds against fake SSD");
+    assert.assert_true(mock.calls(ssd.read_block) >= 4, "metadata reads are intercepted");
+    assert.assert_true(mock.calls(ssd.write_block) >= 4, "metadata writes are intercepted");
+    assert.assert_true(mock.called_with(ssd.read_block, fs.BITMAP_BLOCK, mock.any()),
+                       "create reads the allocation bitmap through the fake");
+}
