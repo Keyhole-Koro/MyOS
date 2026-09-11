@@ -90,24 +90,29 @@ i32 g_enabled = 0;
 // 4. Descriptor Metadata: Each open file handle holds its own cursor (offset)
 //    and loaded metadata (entry_idx, first_block, file_size).
 
-export i32 FD_TYPE_UNUSED = 0;
-export i32 FD_TYPE_SERIAL = 1; // stdin / stdout / stderr
-export i32 FD_TYPE_FILE   = 2; // MFS file on SSD
-
 export i32 FD_MAX = 8;
 
 export i32 SEEK_SET = 0;
 export i32 SEEK_CUR = 1;
 export i32 SEEK_END = 2;
 
-typedef struct {
-    i32 type;        // FD_TYPE_UNUSED, FD_TYPE_SERIAL, FD_TYPE_FILE
-    i32 entry_idx;   // Disk entry index (-1 if unused/serial)
-    i32 offset;      // Read/write byte cursor position
-    i32 first_block; // First block of the file on SSD
-    i32 file_size;   // Size of the file in bytes
-    i32 flags;       // Access flags (1 = Read, 2 = Write, 3 = Read/Write)
-} OpenFile;
+export struct FileState {
+    i32 entry_idx;
+    i32 offset;
+    i32 first_block;
+    i32 file_size;
+    i32 flags;
+};
+
+export struct SerialState {
+    i32 flags;
+};
+
+export enum OpenFile {
+    Unused,
+    Serial(SerialState),
+    File(FileState),
+}
 
 OpenFile g_fd_table[8];
 
@@ -271,39 +276,13 @@ Option<i32> find_free_entry() {
 // =========================================================================
 
 void fd_table_init() {
-    // 0: stdin (Serial input)
-    g_fd_table[0].type = FD_TYPE_SERIAL;
-    g_fd_table[0].entry_idx = -1;
-    g_fd_table[0].offset = 0;
-    g_fd_table[0].first_block = 0;
-    g_fd_table[0].file_size = 0;
-    g_fd_table[0].flags = 1; // Read
+    g_fd_table[0] = OpenFile::Serial(SerialState { flags: 1 }); // stdin
+    g_fd_table[1] = OpenFile::Serial(SerialState { flags: 2 }); // stdout
+    g_fd_table[2] = OpenFile::Serial(SerialState { flags: 2 }); // stderr
 
-    // 1: stdout (Serial output)
-    g_fd_table[1].type = FD_TYPE_SERIAL;
-    g_fd_table[1].entry_idx = -1;
-    g_fd_table[1].offset = 0;
-    g_fd_table[1].first_block = 0;
-    g_fd_table[1].file_size = 0;
-    g_fd_table[1].flags = 2; // Write
-
-    // 2: stderr (Serial output)
-    g_fd_table[2].type = FD_TYPE_SERIAL;
-    g_fd_table[2].entry_idx = -1;
-    g_fd_table[2].offset = 0;
-    g_fd_table[2].first_block = 0;
-    g_fd_table[2].file_size = 0;
-    g_fd_table[2].flags = 2; // Write
-
-    // 3..7: unused
     i32 i = 3;
     while (i < FD_MAX) {
-        g_fd_table[i].type = FD_TYPE_UNUSED;
-        g_fd_table[i].entry_idx = -1;
-        g_fd_table[i].offset = 0;
-        g_fd_table[i].first_block = 0;
-        g_fd_table[i].file_size = 0;
-        g_fd_table[i].flags = 0;
+        g_fd_table[i] = OpenFile::Unused;
         i++;
     }
 }
@@ -311,7 +290,12 @@ void fd_table_init() {
 Option<i32> find_free_fd() {
     i32 i = 3; // Descriptors 0, 1, 2 are reserved for standard streams
     while (i < FD_MAX) {
-        if (g_fd_table[i].type == FD_TYPE_UNUSED) {
+        i32 is_unused = case g_fd_table[i] of {
+            Unused -> 1;
+            Serial(s) -> 0;
+            File(f) -> 0;
+        };
+        if (is_unused != 0) {
             Option<i32> found = Some(i);
             return found;
         }
@@ -467,14 +451,13 @@ export Result<i32, FsError> open(char* path) {
     }
 
     i32 off = load_entry(idx);
-    g_fd_table[fd] = OpenFile {
-        type: FD_TYPE_FILE,
+    g_fd_table[fd] = OpenFile::File(FileState {
         entry_idx: idx,
         offset: 0,
         first_block: buf_word(off + 16),
         file_size: buf_word(off + 20),
-        flags: 3, // Read/Write
-    };
+        flags: 3,
+    });
     return Ok(fd);
 }
 
@@ -482,12 +465,13 @@ export Result<i32, FsError> open(char* path) {
 // Constraint: Descriptors 0..2 (stdin/stdout/stderr) are preserved and never closed.
 export void close(i32 fd) {
     if (fd >= 3 && fd < FD_MAX) {
-        if (g_fd_table[fd].type == FD_TYPE_FILE) {
-            g_fd_table[fd].type = FD_TYPE_UNUSED;
-            g_fd_table[fd].entry_idx = -1;
-            g_fd_table[fd].offset = 0;
-            g_fd_table[fd].first_block = 0;
-            g_fd_table[fd].file_size = 0;
+        i32 is_file = case g_fd_table[fd] of {
+            Unused -> 0;
+            Serial(s) -> 0;
+            File(f) -> 1;
+        };
+        if (is_file != 0) {
+            g_fd_table[fd] = OpenFile::Unused;
         }
     }
 }
@@ -499,30 +483,36 @@ export Result<i32, FsError> seek(i32 fd, i32 offset, i32 whence) {
         FsError cause = BadFd(fd);
         return Err(cause);
     }
-    if (g_fd_table[fd].type != FD_TYPE_FILE) {
-        FsError cause = WrongType(fd);
-        return Err(cause);
-    }
-
-    i32 fsize = g_fd_table[fd].file_size;
-
-    i32 target = g_fd_table[fd].offset;
-    if (whence == SEEK_SET) {
-        target = offset;
-    } else if (whence == SEEK_CUR) {
-        target = target + offset;
-    } else if (whence == SEEK_END) {
-        target = fsize + offset;
-    } else {
-        FsError cause = BadWhence(whence);
-        return Err(cause);
-    }
-
-    if (target < 0) {
-        target = 0;
-    }
-    g_fd_table[fd].offset = target;
-    return Ok(target);
+    
+    case g_fd_table[fd] of {
+        Unused -> ({
+            FsError cause = WrongType(fd);
+            return Err(cause);
+        });
+        Serial(s) -> ({
+            FsError cause = WrongType(fd);
+            return Err(cause);
+        });
+        File(f) -> ({
+            i32 target = f.offset;
+            if (whence == SEEK_SET) {
+                target = offset;
+            } else if (whence == SEEK_CUR) {
+                target = target + offset;
+            } else if (whence == SEEK_END) {
+                target = f.file_size + offset;
+            } else {
+                FsError cause = BadWhence(whence);
+                return Err(cause);
+            }
+            if (target < 0) { target = 0; }
+            f.offset = target;
+            g_fd_table[fd] = OpenFile::File(f);
+            return Ok(target);
+        });
+    };
+    FsError fallback = WrongType(fd);
+    return Err(fallback);
 }
 
 // Read up to `size` bytes from fd into RAM buffer `buf`.
@@ -537,91 +527,101 @@ export Result<i32, FsError> read(i32 fd, i32 buf, i32 size) {
         return Err(cause);
     }
 
-    // Case 1: Serial Standard Input (non-blocking poll)
-    if (g_fd_table[fd].type == FD_TYPE_SERIAL) {
-        i32 count = 0;
-        while (count < size) {
-            if (serial.has_input() == 0) {
-                break;
-            }
-            i32 c = serial.read_input();
-            set_ram_byte(buf + count, c);
-            count++;
-        }
-        return Ok(count);
-    }
-
-    // Case 2: MFS Disk File
-    if (g_fd_table[fd].type == FD_TYPE_FILE) {
-        if (g_fd_table[fd].entry_idx == -1) {
-            FsError cause = Closed(fd);
+    case g_fd_table[fd] of {
+        Unused -> ({
+            FsError cause = WrongType(fd);
             return Err(cause);
-        }
+        });
+        Serial(s) -> ({
+            i32 count = 0;
+            while (count < size) {
+                if (serial.has_input() == 0) { break; }
+                i32 c = serial.read_input();
+                set_ram_byte(buf + count, c);
+                count++;
+            }
+            return Ok(count);
+        });
+        File(f) -> ({
+            i32 remaining = f.file_size - f.offset;
+            if (remaining <= 0) {
+                return Ok(0);
+            }
+            if (size > remaining) { size = remaining; }
 
-        i32 file_size = g_fd_table[fd].file_size;
-        i32 offset = g_fd_table[fd].offset;
-        i32 remaining = file_size - offset;
-        if (remaining <= 0) {
-            // Already at EOF -- Ok(0), not an error.
-            return Ok(0);
-        }
-        if (size > remaining) { size = remaining; }
+            i32 read_total = 0;
+            i32 block = f.first_block;
+            i32 skip = f.offset / PAYLOAD;
+            while (skip > 0) {
+                ssd.read_block(block, g_buf);
+                block = buf_word(0);
+                skip = skip - 1;
+            }
+            i32 in_block = f.offset % PAYLOAD;
 
-        i32 read_total = 0;
-        i32 block = g_fd_table[fd].first_block;
-        i32 skip = offset / PAYLOAD;
-        while (skip > 0) {
-            ssd.read_block(block, g_buf);
-            block = buf_word(0);
-            skip = skip - 1;
-        }
-        i32 in_block = offset % PAYLOAD;
-
-        while (read_total < size) {
-            ssd.read_block(block, g_buf);
-            i32 next = buf_word(0);
-            while (in_block < PAYLOAD) {
-                if (read_total >= size) {
-                    g_fd_table[fd].offset = offset + read_total;
+            while (read_total < size) {
+                ssd.read_block(block, g_buf);
+                i32 next = buf_word(0);
+                while (in_block < PAYLOAD) {
+                    if (read_total >= size) {
+                        f.offset = f.offset + read_total;
+                        g_fd_table[fd] = OpenFile::File(f);
+                        return Ok(read_total);
+                    }
+                    i32 c = buf_byte(4 + in_block);
+                    set_ram_byte(buf + read_total, c);
+                    read_total++;
+                    in_block++;
+                }
+                in_block = 0;
+                block = next;
+                if (block == 0) {
+                    f.offset = f.offset + read_total;
+                    g_fd_table[fd] = OpenFile::File(f);
                     return Ok(read_total);
                 }
-                i32 c = buf_byte(4 + in_block);
-                set_ram_byte(buf + read_total, c);
-                read_total++;
-                in_block++;
             }
-            in_block = 0;
-            block = next;
-            if (block == 0) {
-                g_fd_table[fd].offset = offset + read_total;
-                return Ok(read_total);
-            }
-        }
-        g_fd_table[fd].offset = offset + read_total;
-        return Ok(read_total);
-    }
-
-    FsError cause = WrongType(fd);
-    return Err(cause);
+            f.offset = f.offset + read_total;
+            g_fd_table[fd] = OpenFile::File(f);
+            return Ok(read_total);
+        });
+    };
+    FsError fallback = WrongType(fd);
+    return Err(fallback);
 }
 
 // Internal helper: updates file size directly to SSD Block 1 and syncs all open handles
+// Internal helper: updates file size directly to SSD Block 1 and syncs all open handles
 i32 finish_write(i32 fd, i32 new_size) {
-    i32 written = new_size - g_fd_table[fd].file_size;
-    i32 idx = g_fd_table[fd].entry_idx;
-    i32 off = load_entry(idx);
-    set_buf_word(off + 20, new_size);
-    ssd.write_block(entry_block(idx), g_buf);
-    
-    // Update size across all descriptors sharing this entry_idx
-    i32 i = 3;
-    while (i < FD_MAX) {
-        if (g_fd_table[i].type == FD_TYPE_FILE && g_fd_table[i].entry_idx == idx) {
-            g_fd_table[i].file_size = new_size;
-        }
-        i++;
-    }
-    return written;
+    case g_fd_table[fd] of {
+        Unused -> ({ return 0; });
+        Serial(s) -> ({ return 0; });
+        File(f) -> ({
+            i32 written = new_size - f.file_size;
+            i32 idx = f.entry_idx;
+            i32 off = load_entry(idx);
+            set_buf_word(off + 20, new_size);
+            ssd.write_block(entry_block(idx), g_buf);
+            
+            i32 i = 3;
+            while (i < FD_MAX) {
+                case g_fd_table[i] of {
+                    Unused -> ({ 0; });
+                    Serial(s) -> ({ 0; });
+                    File(other_f) -> ({
+                        if (other_f.entry_idx == idx) {
+                            other_f.file_size = new_size;
+                            g_fd_table[i] = OpenFile::File(other_f);
+                        }
+                        0;
+                    });
+                };
+                i++;
+            }
+            return written;
+        });
+    };
+    return 0;
 }
 
 // Write `size` bytes from RAM buffer `buf` to fd. On success, the payload is
@@ -638,86 +638,79 @@ export Result<i32, FsError> write(i32 fd, i32 buf, i32 size) {
         return Err(cause);
     }
 
-    // Case 1: Serial Standard Output / Error
-    if (g_fd_table[fd].type == FD_TYPE_SERIAL) {
-        i32 i = 0;
-        while (i < size) {
-            i32 c = ram_byte(buf + i);
-            serial.putc(c);
-            i++;
-        }
-        return Ok(size);
-    }
-
-    // Case 2: MFS Disk File (appends and extends block chain as needed)
-    if (g_fd_table[fd].type == FD_TYPE_FILE) {
-        if (g_fd_table[fd].entry_idx == -1) {
-            FsError cause = Closed(fd);
+    case g_fd_table[fd] of {
+        Unused -> ({
+            FsError cause = WrongType(fd);
             return Err(cause);
-        }
+        });
+        Serial(s) -> ({
+            i32 i = 0;
+            while (i < size) {
+                i32 c = ram_byte(buf + i);
+                serial.putc(c);
+                i++;
+            }
+            return Ok(size);
+        });
+        File(f) -> ({
+            i32 file_size = f.file_size;
 
-        i32 file_size = g_fd_table[fd].file_size;
-
-        // Walk to the last block of the chain
-        i32 block = g_fd_table[fd].first_block;
-        ssd.read_block(block, g_buf);
-        while (buf_word(0) != 0) {
-            block = buf_word(0);
+            i32 block = f.first_block;
             ssd.read_block(block, g_buf);
-        }
-        i32 in_block = file_size % PAYLOAD;
-        if (file_size > 0) {
-            if (in_block == 0) {
-                Option<i32> next_block = alloc_block();
-                i32 nb = case next_block of { Some(v) -> v; None -> 0; };
-                if (nb == 0) {
-                    // Disk full before a single byte could be written.
-                    return Ok(0);
-                }
-                set_buf_word(0, nb);
-                ssd.write_block(block, g_buf);
-                block = nb;
-                zero_buf();
-                ssd.write_block(block, g_buf);
+            while (buf_word(0) != 0) {
+                block = buf_word(0);
+                ssd.read_block(block, g_buf);
             }
-        }
-
-        i32 written = 0;
-        while (written < size) {
-            ssd.read_block(block, g_buf);
-            while (in_block < PAYLOAD) {
-                if (written >= size) {
+            i32 in_block = file_size % PAYLOAD;
+            if (file_size > 0) {
+                if (in_block == 0) {
+                    Option<i32> next_block = alloc_block();
+                    i32 nb = case next_block of { Some(v) -> v; None -> 0; };
+                    if (nb == 0) { return Ok(0); }
+                    set_buf_word(0, nb);
                     ssd.write_block(block, g_buf);
-                    return Ok(finish_write(fd, file_size + written));
-                }
-                i32 c = ram_byte(buf + written);
-                set_buf_byte(4 + in_block, c);
-                written++;
-                in_block++;
-            }
-            if (written < size) {
-                Option<i32> next_block = alloc_block();
-                i32 nb = case next_block of { Some(v) -> v; None -> 0; };
-                if (nb == 0) {
-                    set_buf_word(0, 0);
+                    block = nb;
+                    zero_buf();
                     ssd.write_block(block, g_buf);
-                    return Ok(finish_write(fd, file_size + written));
                 }
-                set_buf_word(0, nb);
-                ssd.write_block(block, g_buf);
-                block = nb;
-                zero_buf();
-                ssd.write_block(block, g_buf);
-                in_block = 0;
-            } else {
-                ssd.write_block(block, g_buf);
             }
-        }
-        return Ok(finish_write(fd, file_size + written));
-    }
 
-    FsError cause = WrongType(fd);
-    return Err(cause);
+            i32 written = 0;
+            while (written < size) {
+                ssd.read_block(block, g_buf);
+                while (in_block < PAYLOAD) {
+                    if (written >= size) {
+                        ssd.write_block(block, g_buf);
+                        return Ok(finish_write(fd, file_size + written));
+                    }
+                    i32 c = ram_byte(buf + written);
+                    set_buf_byte(4 + in_block, c);
+                    written++;
+                    in_block++;
+                }
+                if (written < size) {
+                    Option<i32> next_block = alloc_block();
+                    i32 nb = case next_block of { Some(v) -> v; None -> 0; };
+                    if (nb == 0) {
+                        set_buf_word(0, 0);
+                        ssd.write_block(block, g_buf);
+                        return Ok(finish_write(fd, file_size + written));
+                    }
+                    set_buf_word(0, nb);
+                    ssd.write_block(block, g_buf);
+                    block = nb;
+                    zero_buf();
+                    ssd.write_block(block, g_buf);
+                    in_block = 0;
+                } else {
+                    ssd.write_block(block, g_buf);
+                }
+            }
+            return Ok(finish_write(fd, file_size + written));
+        });
+    };
+    FsError fallback = WrongType(fd);
+    return Err(fallback);
 }
 
 // Remove a file by path. Frees the SSD block chain and clears its entry from
@@ -755,10 +748,16 @@ export Result<_, FsError> remove(char* path) {
     // Invalidate any open descriptors targeting this entry
     i32 i = 3;
     while (i < FD_MAX) {
-        if (g_fd_table[i].type == FD_TYPE_FILE && g_fd_table[i].entry_idx == idx) {
-            g_fd_table[i].type = FD_TYPE_UNUSED;
-            g_fd_table[i].entry_idx = -1;
-        }
+        case g_fd_table[i] of {
+            Unused -> ({ 0; });
+            Serial(s) -> ({ 0; });
+            File(f) -> ({
+                if (f.entry_idx == idx) {
+                    g_fd_table[i] = OpenFile::Unused;
+                }
+                0;
+            });
+        };
         i++;
     }
 
