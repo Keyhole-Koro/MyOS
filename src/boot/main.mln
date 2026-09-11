@@ -8,6 +8,7 @@ import irq from "../../../MyKernel/src/arch/irq.mln";
 import shell from "../apps/shell.mln";
 import compositor from "../ui/compositor.mln";
 import counter from "../apps/counter.dom.mln";
+import notes from "../apps/notes.dom.mln";
 
 // System bring-up.
 //
@@ -30,16 +31,33 @@ void kernel_arch_init() {
     debug.println("kernel: heap ready");
 }
 
+// Taskbar launcher: every click opens another Notes window.
+void launch_notes() {
+    i32 win = notes.mount();
+    if (win != 0) { dom.focus_window(win); }
+}
+
+// Once a second: redraw the taskbar so its uptime clock advances.
+void on_clock(i32 id) {
+    dom.refresh_taskbar();
+}
+
 void kernel_init() {
     kernel_boot_banner();
     kernel_arch_init();
 
     dom.init();
+    dom.create_taskbar();
+    dom.set_launcher(launch_notes);
+    dom.create_timer(1000, on_clock);
     debug.println("kernel: dom ready");
 
-    // Apps own their windows; the kernel only starts them. counter.mount()
-    // builds its tree and attaches it to the desktop.
+    // Apps own their windows; the kernel only starts them. Each mount()
+    // builds a tree and attaches it to the desktop; the last one mounted is
+    // made the active window.
     counter.mount();
+    i32 notes_win = notes.mount();
+    dom.focus_window(notes_win);
     dom.dump();
 
     fs.init();

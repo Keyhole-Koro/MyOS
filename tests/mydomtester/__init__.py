@@ -159,10 +159,33 @@ class Page:
     def mouse_up(self, button: str = "left") -> None:
         self._command({"cmd": "mouse.up", "button": button})
 
+    def mouse_wheel(self, steps: int) -> None:
+        self._command({"cmd": "mouse.wheel", "steps": int(steps)})
+
+    def type_text(self, text: str) -> None:
+        """Feed characters to the focused node (KBD CHAR events)."""
+        self._command({"cmd": "key.type", "text": text})
+
+    def key_press(self, key: str, mods: int = 0) -> None:
+        """Press and release a key: a name ("enter", "backspace", "left", ...)
+        or a single character."""
+        self._command({"cmd": "key.press", "key": key, "mods": mods})
+        self._command({"cmd": "key.release", "key": key, "mods": mods})
+
+    def drag(self, x0: int, y0: int, x1: int, y1: int, steps: int = 4) -> None:
+        """Press at (x0, y0), move to (x1, y1) in a few motion events, release."""
+        self.mouse_move(x0, y0)
+        self.mouse_down()
+        for i in range(1, steps + 1):
+            self.mouse_move(x0 + (x1 - x0) * i // steps, y0 + (y1 - y0) * i // steps)
+        self.mouse_up()
+        self.frame_wait()
+
     def frame_wait(self) -> None:
         self._command({"cmd": "frame.wait"})
 
     def screenshot(self, path: str) -> None:
+        """Save the displayed frame; .png or .ppm by extension."""
         self._command({"cmd": "screenshot", "path": str(path)})
 
     # --- lifecycle --------------------------------------------------------
@@ -189,11 +212,13 @@ class Locator:
     """
 
     def __init__(self, page: Page, role: Optional[str] = None,
-                 name: Optional[str] = None, text: Optional[str] = None):
+                 name: Optional[str] = None, text: Optional[str] = None,
+                 nth: int = 0):
         self._page = page
         self._role = role
         self._name = name
         self._text = text
+        self._nth = nth  # which match to use in tree order; -1 = last
 
     def __repr__(self) -> str:
         parts = []
@@ -214,12 +239,17 @@ class Locator:
             return False
         return True
 
+    def resolve_all(self) -> list:
+        """Every matching node from a fresh snapshot, in tree order."""
+        return [n for n in self._page.dom_snapshot() if self._matches(n)]
+
     def resolve(self) -> Optional[dict]:
-        """Return the first matching node from a fresh snapshot, or None."""
-        for node in self._page.dom_snapshot():
-            if self._matches(node):
-                return node
-        return None
+        """Return the nth matching node from a fresh snapshot, or None."""
+        matches = self.resolve_all()
+        try:
+            return matches[self._nth]
+        except IndexError:
+            return None
 
     def is_visible(self) -> bool:
         node = self.resolve()
@@ -235,6 +265,29 @@ class Locator:
         self._page.mouse_down()
         self._page.mouse_up()
         self._page.frame_wait()
+
+    def click_at(self, dx: int, dy: int) -> None:
+        """Click at an offset from the node's top-left (e.g. a window's
+        close button or title bar)."""
+        node = self.resolve()
+        if node is None:
+            raise MyDOMTesterError(f"{self!r}: no matching node in the current DOM")
+        self._page.mouse_move(node["x"] + dx, node["y"] + dy)
+        self._page.mouse_down()
+        self._page.mouse_up()
+        self._page.frame_wait()
+
+    def drag_by(self, dx: int, dy: int, grab_x: Optional[int] = None, grab_y: Optional[int] = None) -> None:
+        """Drag the node by (dx, dy), grabbing it at (grab_x, grab_y) from
+        its top-left (default: a point on a window's title bar)."""
+        node = self.resolve()
+        if node is None:
+            raise MyDOMTesterError(f"{self!r}: no matching node in the current DOM")
+        gx = node["w"] // 2 if grab_x is None else grab_x
+        gy = 12 if grab_y is None else grab_y
+        x0 = node["x"] + gx
+        y0 = node["y"] + gy
+        self._page.drag(x0, y0, x0 + dx, y0 + dy)
 
 
 class _Expect:
@@ -252,6 +305,27 @@ class _Expect:
         if last_node is None:
             raise AssertionError(f"{self._locator!r}: expected visible, found no matching node")
         raise AssertionError(f"{self._locator!r}: expected visible, node was {last_node}")
+
+    def to_be_gone(self, timeout: float = 2.0) -> None:
+        """Assert no node matches (e.g. after a window was closed)."""
+        deadline = time.monotonic() + timeout
+        last_node = None
+        while time.monotonic() < deadline:
+            last_node = self._locator.resolve()
+            if last_node is None:
+                return
+            time.sleep(0.05)
+        raise AssertionError(f"{self._locator!r}: expected no match, found {last_node}")
+
+    def to_have_count(self, count: int, timeout: float = 2.0) -> None:
+        deadline = time.monotonic() + timeout
+        found = []
+        while time.monotonic() < deadline:
+            found = self._locator.resolve_all()
+            if len(found) == count:
+                return
+            time.sleep(0.05)
+        raise AssertionError(f"{self._locator!r}: expected {count} matches, found {len(found)}")
 
 
 def expect(locator: Locator) -> _Expect:

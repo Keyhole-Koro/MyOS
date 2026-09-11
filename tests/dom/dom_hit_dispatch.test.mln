@@ -1,5 +1,7 @@
 import assert from "../../../../toolchain/MyStdLib/assert.mln";
 import dom from "../../src/ui/dom.mln";
+import graphics from "../../src/ui/graphics.mln";
+import theme from "../../src/ui/theme.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 
 // Pins the interaction contract the compositor relies on: it holds no node ids
@@ -7,11 +9,16 @@ import heap from "../../../MyKernel/src/mm/heap.mln";
 // find_at returns the node under a point and dispatch_click runs that node's
 // own handler. Two buttons are mounted so a hit can be wrong rather than
 // merely absent.
+//
+// Coordinates handed to create_* are logical (1024x768) and relative to the
+// parent; a window's children start below its title bar (MYOS-014). Input
+// points below are computed in the same logical space, then scaled.
 
 i32 g_hits_a = 0;
 i32 g_hits_b = 0;
 i32 g_hits_c = 0;
 i32 g_hits_d = 0;
+i32 g_changes = 0;
 
 void on_a(i32 id) {
     g_hits_a = g_hits_a + 1;
@@ -29,6 +36,10 @@ void on_d(i32 id) {
     g_hits_d = g_hits_d + 1;
 }
 
+void on_change(i32 id) {
+    g_changes = g_changes + 1;
+}
+
 // Click wherever the pointer is, the way the compositor does: hit-test first,
 // then dispatch to whatever came back.
 i32 click_at(i32 x, i32 y) {
@@ -40,7 +51,7 @@ i32 click_at(i32 x, i32 y) {
 }
 
 /*@Test "dom hit dispatch" {
-    step: 10000000;
+    step: 20000000;
 }*/
 void dom_hit_dispatch() {
     heap.init();
@@ -51,38 +62,40 @@ void dom_hit_dispatch() {
     i32 none_negative = dom.node_exists(-1) == 0;
     i32 some_desktop = dom.node_exists(dom.desktop_id());
 
+    i32 tb = theme.titlebar_h(); // logical px; children sit below it
+
     i32 win = dom.create_window("W", 0, 0, 400, 300);
     dom.append_child(dom.desktop_id(), win);
 
     i32 a = dom.create_button("A", 10, 10, 100, 50);
     dom.set_on_click(a, on_a);
-    dom.append_child(win, a);
+    dom.append_child(win, a);          // -> (10, tb + 10)
 
     i32 b = dom.create_button("B", 200, 10, 100, 50);
     dom.set_on_click(b, on_b);
-    dom.append_child(win, b);
+    dom.append_child(win, b);          // -> (200, tb + 10)
 
     // A decorative Box is visible but is not a hit target. It must therefore
     // not obscure its interactive descendants or turn empty decoration into a
     // click.
     i32 box = dom.create_box(20, 170, 200, 120, 14737632, 8947848);
-    dom.append_child(win, box);
+    dom.append_child(win, box);        // -> (20, tb + 170)
 
-    // Column owns direct-child x/y positions. Text reserves its 8px font
-    // height even though it has no explicit bounds, so D lands below it.
-    i32 column = dom.create_column(20, 180, 200, 100, 10, 5);
-    dom.append_child(box, column);
+    // Column owns direct-child x/y positions. Text reserves its measured
+    // line height even though it has no explicit bounds, so D lands below it.
+    i32 column = dom.create_column(0, 10, 200, 100, 10, 5);
+    dom.append_child(box, column);     // -> (20, tb + 180)
 
     i32 c = dom.create_button("C", 0, 0, 80, 20);
     dom.set_on_click(c, on_c);
-    dom.append_child(column, c);       // -> (30, 190)
+    dom.append_child(column, c);       // -> (30, tb + 190)
 
     i32 label = dom.create_text("note", 0, 0);
-    dom.append_child(column, label);   // -> (30, 215), consumes 8px
+    dom.append_child(column, label);   // -> (30, tb + 215)
 
     i32 d = dom.create_button("D", 0, 0, 80, 20);
     dom.set_on_click(d, on_d);
-    dom.append_child(column, d);       // -> (30, 228)
+    dom.append_child(column, d);       // -> below the label + gap
 
     assert.assert_true(none_sentinel == 1, "sentinel node id is None");
     assert.assert_true(none_negative == 1, "negative node id is None");
@@ -92,34 +105,98 @@ void dom_hit_dispatch() {
     // display size. Keep input points in the same logical coordinate space.
     i32 scale = dom.ui_scale();
 
-    i32 hit_a = click_at(50 * scale, 30 * scale);   // inside A
-    i32 hit_b = click_at(240 * scale, 30 * scale);  // inside B
+    // Children were translated by the window's content origin.
+    assert.assert_true(dom.node_x(a) == 10 * scale, "A keeps its authored x");
+    assert.assert_true(dom.node_y(a) == (tb + 10) * scale, "A sits below the title bar");
+    assert.assert_true(dom.node_x(c) == 30 * scale, "column padding places C");
+    assert.assert_true(dom.node_y(c) == (tb + 190) * scale, "column origin places C");
+
+    i32 hit_a = click_at(50 * scale, (tb + 30) * scale);   // inside A
+    i32 hit_b = click_at(240 * scale, (tb + 30) * scale);  // inside B
     assert.assert_true(hit_a == a, "A hit test returns A");
     assert.assert_true(hit_b == b, "B hit test returns B");
 
-    // Outside both buttons: the hit is the window, which carries no handler, so
-    // nothing runs and neither counter moves.
-    i32 outside = click_at(350 * scale, 250 * scale);
-    assert.assert_true(outside == 0, "empty window area is not interactive");
+    // Outside both buttons the hit is the window itself: it is a hit target
+    // (so clicks focus it) but carries no handler, so no counter moves.
+    i32 outside = click_at(350 * scale, (tb + 250) * scale);
+    assert.assert_true(outside == win, "empty window area hits the window");
 
-    i32 box_hit = click_at(50 * scale, 175 * scale);
-    assert.assert_true(box_hit == 0, "decorative box does not become a hit target");
+    i32 box_hit = click_at(50 * scale, (tb + 175) * scale);
+    assert.assert_true(box_hit == win, "decorative box does not become a hit target");
 
-    // These points prove Column's padding, gap, and 8px Text line reservation
-    // without reaching into the private Node representation.
-    i32 hit_c = click_at(35 * scale, 195 * scale);  // C at (30, 190)
-    i32 hit_d = click_at(35 * scale, 233 * scale);  // D at (30, 228)
+    // C at (30, tb+190); D follows the label's measured height plus the gap.
+    i32 hit_c = click_at(35 * scale, (tb + 195) * scale);
+    i32 d_y = dom.node_y(d);
+    i32 hit_d = click_at(35 * scale, d_y + 5 * scale);
     assert.assert_true(hit_c == c, "column padding places C at its hit point");
     assert.assert_true(hit_d == d, "text line height and gap place D at its hit point");
+    assert.assert_true(d_y > dom.node_y(label), "D is laid out below the label");
 
-    i32 hit_a_again = click_at(50 * scale, 30 * scale);   // A again
+    i32 hit_a_again = click_at(50 * scale, (tb + 30) * scale);   // A again
     assert.assert_true(hit_a_again == a, "second A hit test returns A");
     assert.assert_true(g_hits_a == 2, "A receives both clicks");
     assert.assert_true(g_hits_b == 1, "B receives one click");
     assert.assert_true(g_hits_c == 1, "C receives one click");
     assert.assert_true(g_hits_d == 1, "D receives one click");
 
-    // Exercise the renderer's Box fill/border branch and recursive Column
-    // traversal in the headless emulator as well as the tree-only assertions.
+    // Window chrome: the title bar is the drag handle and the disc at its
+    // left is the close button; neither is a child node.
+    assert.assert_true(dom.titlebar_hit(win, 200 * scale, 10 * scale) == 1, "title bar hit");
+    assert.assert_true(dom.close_button_hit(win, 16 * scale, (tb / 2) * scale) == 1, "close button hit");
+    assert.assert_true(dom.titlebar_hit(win, 16 * scale, (tb / 2) * scale) == 0, "close button is not drag handle");
+    assert.assert_true(dom.titlebar_hit(win, 200 * scale, (tb + 5) * scale) == 0, "content is not the title bar");
+
+    // Focus and z-order: a second window appended later paints on top and
+    // wins the hit test where they overlap; focusing the first raises it.
+    i32 win2 = dom.create_window("W2", 300, 200, 300, 200);
+    dom.append_child(dom.desktop_id(), win2);
+    i32 overlap = dom.find_at(350 * scale, (tb + 250) * scale);
+    assert.assert_true(overlap == win2, "later window is on top");
+    dom.focus_window(win);
+    assert.assert_true(dom.active_window() == win, "focus_window activates");
+    assert.assert_true(dom.get_state_flag(win, 16) == 1, "active window has STATE_FOCUSED");
+    overlap = dom.find_at(350 * scale, (tb + 250) * scale);
+    assert.assert_true(overlap == win, "focused window was raised");
+
+    // Moving a window carries its subtree along.
+    dom.move_node(win, 7 * scale, 3 * scale);
+    assert.assert_true(dom.node_x(a) == 17 * scale, "children move with the window (x)");
+    assert.assert_true(dom.node_y(c) == (tb + 193) * scale, "children move with the window (y)");
+    dom.move_node(win, 0 - 7 * scale, 0 - 3 * scale);
+
+    // Checkbox: dispatch_click toggles before the handler observes it.
+    i32 cb = dom.create_checkbox("opt", 10, 100, 0);
+    dom.set_on_change(cb, on_change);
+    dom.append_child(win2, cb);
+    assert.assert_true(dom.is_checked(cb) == 0, "checkbox starts unchecked");
+    dom.dispatch_click(cb);
+    assert.assert_true(dom.is_checked(cb) == 1, "click checks it");
+    assert.assert_true(g_changes == 1, "on_change fired once");
+
+    // TextInput: keyboard events edit the focused field.
+    i32 field = dom.create_text_input("type", 10, 130, 200, 30, 16);
+    dom.set_on_change(field, on_change);
+    dom.append_child(win2, field);
+    dom.set_focus(field);
+    dom.dispatch_key_event(3, 'h', 0);
+    dom.dispatch_key_event(3, 'i', 0);
+    dom.dispatch_key_event(1, 8, 0);   // backspace
+    dom.dispatch_key_event(3, 'o', 0);
+    char *typed = dom.text_of(field);
+    assert.assert_true(typed[0] == 'h', "first typed char");
+    assert.assert_true(typed[1] == 'o', "backspace then insert");
+    assert.assert_true(typed[2] == 0, "terminated");
+    assert.assert_true(g_changes == 5, "each edit fires on_change");
+
+    // Closing a window drops its subtree and hands activation to the top-most
+    // remaining window.
+    dom.focus_window(win2);
+    dom.close_window(win2);
+    assert.assert_true(dom.node_exists(win2) == 0, "closed window is gone");
+    assert.assert_true(dom.node_exists(field) == 0, "its children are gone too");
+    assert.assert_true(dom.active_window() == win, "remaining window becomes active");
+
+    // Exercise the renderer (window chrome, panel, buttons, text) in the
+    // headless emulator as well as the tree-only assertions.
     dom.render_all();
 }

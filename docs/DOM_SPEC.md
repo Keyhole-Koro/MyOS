@@ -455,3 +455,72 @@ id=9 を特定 → bounds 中心 (195,160) に mouse 注入、という流れが
 3. renderer が DOM から window / button / text を描画する（`main.mln` 座標直書きを廃止）。
 4. `find_at(cx, cy)` が button ノードを返し、click で `STATE_PRESSED` と counter が更新される。
 5. `snapshot()` の JSON を外部（automation client）がツリーへ復元できる。
+
+## MYOS-014（2026-09-11）: デスクトップ UI 刷新で追加・変更した契約
+
+上の各節は歴史的な「詰め」であり、以下が現在の仕様。実装は `src/ui/dom.mln`、
+色とメトリクスは `src/ui/theme.mln`、描画プリミティブは `src/ui/graphics.mln`。
+
+### 座標系
+
+- `create_*` / DSL のプロパティは **論理座標（1024x768）で、親からの相対**。
+  `append_child` が親の content origin（Window は `theme.titlebar_h()` 分だけ
+  下）で subtree ごと平行移動し、ノードには **絶対表示座標** が入る。
+- `set_bounds` / `move_node` / `node_x` 等は絶対表示座標。`ui_scale()` は
+  表示解像度 / 1024x768 の整数倍率。
+- `Column` / `Row` は直下の子の x/y を所有する（`padding` と `gap`）。Text は
+  フォントから測った w/h を持つので、行高分を消費する。
+
+### ノード種別（`kind`）と role
+
+| kind | role | DSL 要素 | 描画 |
+|---|---|---|---|
+| WINDOW 8 | window | `Window(title,x,y,w,h)` | 影・角丸・タイトルバー・閉じるボタン・枠 |
+| BOX 9 | – | `Box(x,y,w,h,background,border)` | 矩形（旧来互換） |
+| TEXT 10 | text | `Text(text,x,y)` / `Label(text,x,y,color,bold)` | AA プロポーショナルフォント |
+| BUTTON 11 | button | `Button(...)` / `PrimaryButton(...)` | 角丸・hover/pressed、primary はアクセント色 |
+| TIMER 12 | – | `Timer(interval,onTick)` | 描画なし。`dom.tick()` が発火 |
+| COLUMN 13 / ROW 14 | – | `Column` / `Row(x,y,w,h,padding,gap)` | 描画なし（レイアウト） |
+| TEXT_INPUT 15 | textbox | `TextInput(placeholder,x,y,w,h,capacity,onChange)` | 枠・placeholder・キャレット |
+| CHECKBOX 16 | checkbox | `Checkbox(text,x,y,checked,onClick)` | 角丸ボックス + チェック |
+| SEPARATOR 17 | separator | `Separator(x,y,w)` | 1px 線 |
+| PANEL 18 | – | `Panel(x,y,w,h,radius)` | 角丸カード。子をクリップ |
+| TASKBAR 19 | toolbar | `dom.create_taskbar()` | ランチャー・ウィンドウ一覧・時計 |
+
+`Node` は 80 バイト（`color / on_key / on_change / cap / len / cursor /
+radius / on_tick / interval / next_due` を追加）。`state` に `STATE_CHECKED`
+(64)、`style` に `STYLE_BOLD / STYLE_PRIMARY / STYLE_CENTER`。
+
+### ウィンドウ管理
+
+- `focus_window(id)`: `STATE_FOCUSED` を付け替え、`bring_to_front` で兄弟末尾へ。
+  `active_window()` が現在のアクティブ。
+- `titlebar_hit(win,x,y)` / `close_button_hit(win,x,y)`: クローム判定。
+  compositor はタイトルバー press→move で `move_node`、閉じるボタンで
+  `close_window`（`remove_node` + 残りの最前面をアクティブ化）。
+- Window は hit-testable（空き領域クリックでフォーカス）。Box/Panel/Column/Row は
+  hit-testable ではない。
+- クリックは **release 時** に、press したノードと同じノード上なら
+  `dispatch_click`。Checkbox は先にトグルしてから handler を呼ぶ。
+
+### キーボード
+
+- `set_focus(id)` がキーボードフォーカス。compositor は TextInput クリックで設定。
+- `dispatch_key_event(type, code, mods)`: `keyboard.EVT_DOWN/UP/CHAR`。
+  ノードの `on_key(id, code, mods)` が DOWN を先に受け、非 0 を返すと消費。
+  TextInput の既定動作: CHAR 挿入、Backspace/Delete、←/→/Home/End。
+  変更のたびに `on_change(id)`。`set_input_text(id, s)` / `text_of(id)`。
+
+### 再描画
+
+- ダメージは最大 8 矩形のリスト（`damage_rect` が重なるものへ併合）。
+  `render_scene` は矩形ごとに `set_clip` して `paint_desktop()`（壁紙 → 窓 → タスクバー）。
+- Window の damage 範囲は影（`theme.shadow_size/offset`）を含む。
+- Window / Panel は子を自分の矩形にクリップし、`graphics.push_clip/pop_clip` が
+  DMA2D のシザーへ同期される。
+
+### snapshot / dump
+
+`dump_json()` に `"checked"` が増え、role 名に `textbox / checkbox / toolbar /
+separator` が加わった。`tests/mydomtester` は `nth=` 指定、`click_at`、`drag`、
+`type`、`key`、`wheel`、`wait_gone`、`wait_count` を持つ。

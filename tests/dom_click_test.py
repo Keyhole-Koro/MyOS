@@ -40,26 +40,36 @@ def main() -> int:
 
     page = launch(firmware, disk=disk)
     try:
-        button = page.get_by_role("button", name="CLICK ME")
+        button = page.get_by_role("button", name="Click me")
         expect(button).to_be_visible()
 
-        # The counter is also the end-to-end Box/Column fixture. Snapshot
-        # coordinates prove that Column replaced the children’s authored 0,0
-        # positions and that its decorative containers do not capture input.
+        # The counter is also the end-to-end Panel/Column/Row fixture. Snapshot
+        # coordinates prove that the window's children were placed relative to
+        # its content area (below the 32px title bar), that Column and Row
+        # replaced the children's authored 0,0 positions, and that decorative
+        # containers do not capture input. Window: (96, 72); Panel at (20, 20)
+        # inside it; Column at (20, 16) inside the panel.
         nodes = page.dom_snapshot()
-        box = next((n for n in nodes if n.get("kind") == 9), None)
+        panel = next((n for n in nodes if n.get("kind") == 18), None)
         column = next((n for n in nodes if n.get("kind") == 13), None)
+        row = next((n for n in nodes if n.get("kind") == 14), None)
         button_node = button.resolve()
+        reset = page.get_by_role("button", name="Reset").resolve()
         label = next((n for n in nodes if n.get("text") == "clicks: 0"), None)
 
-        assert box is not None and (
-            box["x"], box["y"], box["w"], box["h"], box["visible"], box["hitTestable"]
-        ) == (110 * UI_SCALE, 120 * UI_SCALE, 580 * UI_SCALE, 360 * UI_SCALE, True, False), box
+        title_bar = 32
+        win_x, win_y = 96, 72 + title_bar
+        assert panel is not None and (
+            panel["x"], panel["y"], panel["w"], panel["h"], panel["visible"], panel["hitTestable"]
+        ) == ((win_x + 20) * UI_SCALE, (win_y + 20) * UI_SCALE, 360 * UI_SCALE, 140 * UI_SCALE, True, False), panel
         assert column is not None and (
-            column["x"], column["y"], column["w"], column["h"], column["visible"], column["hitTestable"]
-        ) == (120 * UI_SCALE, 130 * UI_SCALE, 540 * UI_SCALE, 320 * UI_SCALE, True, False), column
-        assert button_node is not None and (button_node["x"], button_node["y"]) == (120 * UI_SCALE, 130 * UI_SCALE), button_node
-        assert label is not None and (label["x"], label["y"]) == (120 * UI_SCALE, 206 * UI_SCALE), label
+            column["x"], column["y"], column["visible"], column["hitTestable"]
+        ) == ((win_x + 40) * UI_SCALE, (win_y + 36) * UI_SCALE, True, False), column
+        assert label is not None and label["x"] == (win_x + 40) * UI_SCALE, label
+        # Row lays the two buttons out left to right with a 10px gap.
+        assert row is not None and button_node is not None and reset is not None
+        assert (button_node["x"], button_node["y"]) == (row["x"], row["y"]), button_node
+        assert reset["x"] == button_node["x"] + button_node["w"] + 10 * UI_SCALE, reset
 
         button.click()
         expect(page.get_by_text("clicks: 1")).to_be_visible()
@@ -68,7 +78,33 @@ def main() -> int:
         button.click()
         expect(page.get_by_text("clicks: 3")).to_be_visible()
 
-        print("PASS: clicks: 0 -> 1 -> 3 via headless DOM automation")
+        # "Count by two" doubles the step; Reset clears.
+        page.get_by_role("checkbox", name="Count by two").click()
+        button.click()
+        expect(page.get_by_text("clicks: 5")).to_be_visible()
+        page.get_by_role("button", name="Reset").click()
+        expect(page.get_by_text("clicks: 0")).to_be_visible()
+
+        # Keyboard: focus the Notes title field and type into it.
+        page.get_by_role("textbox", name="Title").click()
+        page.type_text("Hello")
+        expect(page.get_by_text("You typed: Hello")).to_be_visible()
+        page.key_press("backspace")
+        expect(page.get_by_text("You typed: Hell")).to_be_visible()
+
+        # Window management: drag the Counter window by its title bar, then
+        # close the Notes window with its close button.
+        counter = page.get_by_role("window", name="Counter")
+        before = counter.resolve()
+        counter.drag_by(60 * UI_SCALE, 40 * UI_SCALE)
+        after = counter.resolve()
+        assert (after["x"], after["y"]) == (before["x"] + 60 * UI_SCALE, before["y"] + 40 * UI_SCALE), after
+        assert after["focused"], "dragging a window activates it"
+        notes = page.get_by_role("window", name="Notes")
+        notes.click_at(16 * UI_SCALE, 16 * UI_SCALE)
+        expect(notes).to_be_gone()
+
+        print("PASS: counter clicks, checkbox, keyboard, drag and close via headless DOM automation")
         return 0
     except AssertionError as e:
         print(f"FAIL: {e}")

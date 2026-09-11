@@ -3,10 +3,23 @@ package dom;
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import serial from "../../../MyKernel/src/io/serial.mln";
+import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import graphics from "graphics.mln";
+import theme from "theme.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import { halt_cpu } from "../../../MyKernel/src/arch/halt.masm";
 
+// Kernel object tree + UI DOM. See docs/DOM_SPEC.md and MYOS-014.
+//
+// One tree holds both the OS object model (root/system/process/device/ui)
+// and the UI: windows and their controls hang under ui/desktop. UI nodes
+// carry bounds in *absolute display pixels*; the create_* helpers take
+// logical 1024x768 coordinates, scale them, and append_child then offsets a
+// child by its parent's content origin, so app code writes positions
+// relative to the window it is building. Sibling order is paint order and
+// z-order (later on top); bring_to_front re-links a window to the end.
+
+// --- node kinds --------------------------------------------------------------
 export u16 NODE_ROOT      = 0;
 export u16 NODE_SYSTEM    = 1;
 export u16 NODE_PROCESS   = 2;
@@ -21,43 +34,48 @@ export u16 NODE_TEXT      = 10;
 export u16 NODE_BUTTON    = 11;
 export u16 NODE_TIMER     = 12;
 export u16 NODE_COLUMN    = 13;
+export u16 NODE_ROW       = 14;
+export u16 NODE_TEXT_INPUT = 15;
+export u16 NODE_CHECKBOX  = 16;
+export u16 NODE_SEPARATOR = 17;
+export u16 NODE_PANEL     = 18;
+export u16 NODE_TASKBAR   = 19;
 
-// Accessibility roles (ISSUE-024). Separate from `kind`: automation locators
-// query by `role` (get_by_role("button")), while `kind` is the OS-structural
-// node type. UI create helpers set both. These are sequential and would suit an
-// enum, but stay `export u16` globals so other packages (main.mln) can read
-// them as dom.ROLE_BUTTON -- enum members do not survive cross-package linking.
-export u16 ROLE_NONE    = 0;
-export u16 ROLE_ROOT    = 1;
-export u16 ROLE_DESKTOP = 2;
-export u16 ROLE_WINDOW  = 3;
-export u16 ROLE_BUTTON  = 4;
-export u16 ROLE_TEXT    = 5;
+// --- accessibility roles (MYOS-004 automation locators) ------------------------
+export u16 ROLE_NONE      = 0;
+export u16 ROLE_ROOT      = 1;
+export u16 ROLE_DESKTOP   = 2;
+export u16 ROLE_WINDOW    = 3;
+export u16 ROLE_BUTTON    = 4;
+export u16 ROLE_TEXT      = 5;
+export u16 ROLE_TEXTBOX   = 6;
+export u16 ROLE_CHECKBOX  = 7;
+export u16 ROLE_TOOLBAR   = 8;
+export u16 ROLE_SEPARATOR = 9;
 
-// State flags, stored as a bitmask in `Node.state`. MyLang has no bool, so
-// these are combined/tested with i32 bit ops (state & STATE_HOVERED). Written
-// as binary literals so the bit position is obvious. Kept as `export u16`
-// globals (not an enum): enum members do not survive cross-package reference
-// (they mangle to p_NAME and fail to link), whereas exported globals do.
-export u16 STATE_VISIBLE = 0b00001;
-export u16 STATE_ENABLED = 0b00010;
-export u16 STATE_HOVERED = 0b00100;
-export u16 STATE_PRESSED = 0b01000;
-export u16 STATE_FOCUSED = 0b10000;
-// A visible node is not necessarily interactive: layout/decorative containers
-// must let a hit pass through to their interactive descendants. Buttons opt in
-// by default; other nodes may opt in with set_hit_testable().
-export u16 STATE_HIT_TESTABLE = 0b100000;
+// --- state bitmask -------------------------------------------------------------
+export u16 STATE_VISIBLE      = 0b0000001;
+export u16 STATE_ENABLED      = 0b0000010;
+export u16 STATE_HOVERED      = 0b0000100;
+export u16 STATE_PRESSED      = 0b0001000;
+export u16 STATE_FOCUSED      = 0b0010000; // keyboard focus, or the active window
+export u16 STATE_HIT_TESTABLE = 0b0100000; // find_at may return this node
+export u16 STATE_CHECKED      = 0b1000000; // Checkbox
 
-// Measured layout: u16=2B, char*/i32=4B, pointers 4B-aligned, no trailing
-// padding. Offsets: id=0 kind=2 name=4 parent=8 first_child=10 next_sibling=12
-// role=14 text=16 x=20 y=22 w=24 h=26 state=28 _pad=30 on_click=32,
-// background_color=36 border_color=40 padding=44 gap=46 -> sizeof=48.
-// The _pad keeps on_click (i32, a function pointer) on a 4B boundary; each char*
-// (name at 4, text at 16) is likewise 4B-aligned. Allocated as 48.
+// --- style bits (Node.style) -----------------------------------------------------
+export u16 STYLE_BOLD    = 1; // Text: heavier face
+export u16 STYLE_PRIMARY = 2; // Button: accent-coloured call to action
+export u16 STYLE_CENTER  = 4; // Text: centre within w when w > 0
+
+// Node layout (offsets, bytes; measured u16=2B, pointers 4B-aligned, no tail
+// padding): id=0 kind=2 name=4 parent=8 first_child=10 next_sibling=12 role=14
+// text=16 x=20 y=22 w=24 h=26 state=28 style=30 on_click=32
+// background_color=36 border_color=40 padding=44 gap=46 color=48 on_key=52
+// on_change=56 cap=60 len=62 cursor=64 radius=66 on_tick=68 interval=72
+// next_due=76 -> sizeof = 80. Allocated as 80.
+//
 // Public because it is the payload type of get_node(). Mutation still goes
-// through the DOM setters by convention; callers use it primarily to inspect
-// a successful Option result.
+// through the DOM setters by convention.
 export typedef struct {
     u16 id;
     u16 kind;
@@ -67,37 +85,79 @@ export typedef struct {
     u16 next_sibling;
     u16 role;        // ROLE_* ; 0 = none
     char *text;      // display text / accessible name ; 0 = none
-    u16 x;           // bounds (non-negative; UI nodes only, else 0)
+    u16 x;           // bounds in display pixels (UI nodes only, else 0)
     u16 y;
     u16 w;
     u16 h;
     u16 state;       // STATE_* bitmask
-    u16 _pad;        // alignment padding so on_click sits on a 4B boundary
-    i32 on_click;    // click handler function pointer (i32) ; 0 = none
+    u16 style;       // STYLE_* bitmask
+    i32 on_click;    // click handler(id) ; 0 = none
     i32 background_color; // NODE_BOX fill colour (0 is valid black)
-    i32 border_color;     // NODE_BOX border colour (0 is valid black)
-    u16 padding;          // NODE_COLUMN inset, in pixels
-    u16 gap;              // NODE_COLUMN gap between children, in pixels
+    i32 border_color;     // NODE_BOX border colour
+    u16 padding;          // NODE_COLUMN/ROW inset, in display pixels
+    u16 gap;              // NODE_COLUMN/ROW gap between children, in display pixels
+    i32 color;            // foreground/text colour ; 0 = theme default
+    i32 on_key;           // key handler(id, code, mods) for DOWN events ; 0 = default
+    i32 on_change;        // change handler(id): TextInput edits, Checkbox toggles
+    u16 cap;              // TextInput: buffer capacity in bytes (incl. NUL)
+    u16 len;              // TextInput: current text length
+    u16 cursor;           // TextInput: caret position (0..len)
+    u16 radius;           // Panel corner radius, display pixels
+    i32 on_tick;          // Timer handler(id)
+    i32 interval;         // Timer period in scheduler ticks
+    i32 next_due;         // Timer: tick at which it next fires
 } Node;
 
-// Damage rectangle: the union of every node area that changed since the last
-// render, in display coordinates. render_scene repaints only this region, so a
-// hover highlight or a label rewrite costs its own rectangle instead of the
-// whole screen (measured: a full repaint is ~735k guest instructions).
-//
-// Empty is encoded as g_damage_x1 <= g_damage_x0, which is what reset leaves.
-i32 g_damage_x0 = 0;
-i32 g_damage_y0 = 0;
-i32 g_damage_x1 = 0;
-i32 g_damage_y1 = 0;
+i32 NODE_SIZE = 80;
+
+// Damage rectangles: the areas that changed since the last render, in
+// display coordinates. render_scene repaints each one under a clip. Keeping
+// several instead of one union matters because the taskbar spans the full
+// width at the bottom: one rect for it plus one for a window near the top
+// would otherwise union into nearly the whole screen. When the list is
+// full, new areas merge into the first entry.
+i32 DAMAGE_MAX = 8;
+i32 g_damage_x0[8];
+i32 g_damage_y0[8];
+i32 g_damage_x1[8];
+i32 g_damage_y1[8];
+i32 g_damage_count = 0;
+
+// The rect render_scene is currently repainting, so node_in_damage can test
+// against just that one; g_painting_all short-circuits it for full paints.
+i32 g_paint_x0 = 0;
+i32 g_paint_y0 = 0;
+i32 g_paint_x1 = 0;
+i32 g_paint_y1 = 0;
+i32 g_painting_all = 1;
 
 i32 g_next_node_id = 1; // 0 is invalid/null
 i32 g_root_node_id = 0;
 i32 g_desktop_node_id = 0; // set in init(); UI attaches under this
+i32 g_taskbar_id = 0;      // the desktop's taskbar node, drawn above windows
+i32 g_timers_node_id = 0;  // structural parent for Timer nodes
+
+i32 g_active_window = 0;   // window with STATE_FOCUSED (front-most, gets keys)
+i32 g_focus_id = 0;        // node with keyboard focus (a TextInput), or 0
+i32 g_launcher = 0;        // handler() for the taskbar's launcher button
 
 // Up to 256 nodes for now to keep memory small
 // TODO: grow this table and Node.id to u32 when we need more than 256 nodes.
 Node *g_node_table[256];
+
+// Registered timers (ids), scanned by tick().
+i32 TIMER_MAX = 16;
+i32 g_timer_ids[16];
+i32 g_timer_count = 0;
+
+// Scratch rectangle for helpers that hand back a rect (no multiple returns).
+i32 g_ext_x = 0;
+i32 g_ext_y = 0;
+i32 g_ext_w = 0;
+i32 g_ext_h = 0;
+
+// Formatted uptime clock for the taskbar.
+char g_clock_buf[16];
 
 // DOM markup uses logical 1024x768 coordinates. Scale it uniformly to the
 // physical display so its proportions remain intact on larger resolutions.
@@ -119,23 +179,24 @@ i32 scale_ui(i32 value) {
     return value * ui_scale();
 }
 
-// The sole NodeId -> Node* boundary. It remains internal because MyLang's
+// Raw NodeId -> Node* boundary; 0 for an invalid or deleted id.
+Node* node_ptr(i32 id) {
+    if (id <= 0) { return (Node*)0; }
+    if (id >= g_next_node_id) { return (Node*)0; }
+    return g_node_table[id];
+}
+
+// The sole Option-returning boundary. It remains internal because MyLang's
 // cross-module signature ABI cannot expose an Option of a package-private
 // struct. External callers use node_exists() or the scalar DOM operations.
 Option<Node*> get_node(i32 id) {
-    if (id <= 0) { return None; }
-    if (id >= g_next_node_id) { return None; }
-
-    Node *node = g_node_table[id];
-    if (node == 0) { return None; } // deleted slot (when remove_node lands)
+    Node *node = node_ptr(id);
+    if (node == 0) { return None; }
     return Some(node);
 }
 
-export i32 node_exists(i32 id) {
-    return case get_node(id) of {
-        Some(_) -> 1;
-        None -> 0;
-    };
+export bool node_exists(i32 id) {
+    return node_ptr(id) != 0;
 }
 
 export i32 create_node(i32 kind, char *name) {
@@ -144,7 +205,7 @@ export i32 create_node(i32 kind, char *name) {
         halt_cpu();
     }
 
-    Node *n = (Node *)heap.alloc(48); // sizeof(Node)=48
+    Node *n = (Node *)heap.alloc(NODE_SIZE);
     i32 id = g_next_node_id;
     g_next_node_id = g_next_node_id + 1;
 
@@ -155,7 +216,6 @@ export i32 create_node(i32 kind, char *name) {
     n->first_child = 0;
     n->next_sibling = 0;
 
-    // UI / automation props default to empty; UI create helpers fill them in.
     n->role = ROLE_NONE;
     n->text = (char*)0;
     n->x = 0;
@@ -163,266 +223,468 @@ export i32 create_node(i32 kind, char *name) {
     n->w = 0;
     n->h = 0;
     n->state = 0;
-    n->_pad = 0;
+    n->style = 0;
     n->on_click = 0;
     n->background_color = 0;
     n->border_color = 0;
     n->padding = 0;
     n->gap = 0;
+    n->color = 0;
+    n->on_key = 0;
+    n->on_change = 0;
+    n->cap = 0;
+    n->len = 0;
+    n->cursor = 0;
+    n->radius = 0;
+    n->on_tick = 0;
+    n->interval = 0;
+    n->next_due = 0;
 
     g_node_table[id] = n;
     return id;
 }
 
-// --- prop accessors ---
+// --- scalar queries -------------------------------------------------------------
 
-// Update bounds without triggering layout. Column layout calls this for each
-// child; keeping that operation separate avoids a child update recursively
-// relaying out its parent.
-void (Node* n) set_bounds_raw(i32 id, i32 x, i32 y, i32 w, i32 h) {
-    // Damage the old area as well as the new one, so vacating a region repaints
-    // the background that was underneath.
-    damage_node(id);
-    damage_rect(x, y, w, h);
-    n->x = (u16)x;
-    n->y = (u16)y;
-    n->w = (u16)w;
-    n->h = (u16)h;
+export i32 kind_of(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return 0 - 1; }
+    return n->kind;
 }
 
-// Text has no explicit height, but a Column still needs to reserve one font
-// line for it. Other zero-height children intentionally consume no vertical
-// space, which keeps structural nodes inert in a layout.
-i32 (Node* n) layout_height() {
+export i32 parent_of(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return 0; }
+    return n->parent;
+}
+
+export i32 node_x(i32 id) { Node *n = node_ptr(id); if (n == 0) { return 0; } return n->x; }
+export i32 node_y(i32 id) { Node *n = node_ptr(id); if (n == 0) { return 0; } return n->y; }
+export i32 node_w(i32 id) { Node *n = node_ptr(id); if (n == 0) { return 0; } return n->w; }
+export i32 node_h(i32 id) { Node *n = node_ptr(id); if (n == 0) { return 0; } return n->h; }
+
+export char* text_of(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return (char*)0; }
+    return (char*)n->text;
+}
+
+// --- damage -------------------------------------------------------------------------
+
+// True if [ax0,ax1)x[ay0,ay1) and [bx0,bx1)x[by0,by1) overlap or touch.
+i32 rects_touch(i32 ax0, i32 ay0, i32 ax1, i32 ay1, i32 bx0, i32 by0, i32 bx1, i32 by1) {
+    if (ax1 < bx0) { return 0; }
+    if (bx1 < ax0) { return 0; }
+    if (ay1 < by0) { return 0; }
+    if (by1 < ay0) { return 0; }
+    return 1;
+}
+
+void damage_union_into(i32 i, i32 x0, i32 y0, i32 x1, i32 y1) {
+    if (x0 < g_damage_x0[i]) { g_damage_x0[i] = x0; }
+    if (y0 < g_damage_y0[i]) { g_damage_y0[i] = y0; }
+    if (x1 > g_damage_x1[i]) { g_damage_x1[i] = x1; }
+    if (y1 > g_damage_y1[i]) { g_damage_y1[i] = y1; }
+}
+
+// Add a rectangle to the damage list. Clipped to the display, so callers can
+// pass node bounds without worrying about off-screen nodes. A rectangle
+// that overlaps an existing entry is merged into it; otherwise it gets its
+// own entry while there is room.
+export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
+    i32 display_width = graphics.display_width();
+    i32 display_height = graphics.display_height();
+    i32 x0 = x;
+    i32 y0 = y;
+    i32 x1 = x + w;
+    i32 y1 = y + h;
+
+    if (x0 < 0) { x0 = 0; }
+    if (y0 < 0) { y0 = 0; }
+    if (x1 > display_width) { x1 = display_width; }
+    if (y1 > display_height) { y1 = display_height; }
+    if (x1 <= x0) { return; }
+    if (y1 <= y0) { return; }
+
+    i32 i = 0;
+    while (i < g_damage_count) {
+        if (rects_touch(x0, y0, x1, y1, g_damage_x0[i], g_damage_y0[i], g_damage_x1[i], g_damage_y1[i]) != 0) {
+            damage_union_into(i, x0, y0, x1, y1);
+            return;
+        }
+        i = i + 1;
+    }
+    if (g_damage_count < DAMAGE_MAX) {
+        g_damage_x0[g_damage_count] = x0;
+        g_damage_y0[g_damage_count] = y0;
+        g_damage_x1[g_damage_count] = x1;
+        g_damage_y1[g_damage_count] = y1;
+        g_damage_count = g_damage_count + 1;
+        return;
+    }
+    damage_union_into(0, x0, y0, x1, y1);
+}
+
+// The area a node paints, which for a window includes its drop shadow. The
+// result lands in g_ext_*.
+void node_extent(Node *n) {
+    i32 x = n->x;
+    i32 y = n->y;
+    i32 w = n->w;
     i32 h = n->h;
-    if (h != 0) { return h; }
-    i32 text = NODE_TEXT;
-    if (n->kind == text) { return 8 * ui_scale(); }
+    i32 kw = NODE_WINDOW;
+    if (n->kind == kw) {
+        i32 s = ui_scale();
+        i32 size = theme.shadow_size() * s;
+        i32 off = theme.shadow_offset() * s;
+        x = x - size;
+        y = y - size;
+        w = w + 2 * size;
+        h = h + 2 * size + off;
+    }
+    g_ext_x = x;
+    g_ext_y = y;
+    g_ext_w = w;
+    g_ext_h = h;
+}
+
+// Mark a node's own area as needing repaint.
+export void damage_node(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    node_extent(n);
+    damage_rect(g_ext_x, g_ext_y, g_ext_w, g_ext_h);
+}
+
+export i32 has_damage() {
+    if (g_damage_count > 0) { return 1; }
     return 0;
 }
 
-// Lay out direct children top-to-bottom. Child widths and heights remain their
-// own props; Column owns only their x/y positions. Nested Columns are relaid
-// after their origin moves so their descendants follow along as well.
-void (Node* column) relayout_column() {
-    i32 column_kind = NODE_COLUMN;
-    if (column->kind != column_kind) { return; }
+export void clear_damage() {
+    g_damage_count = 0;
+}
 
+// --- text metrics ---------------------------------------------------------------------
+
+i32 text_bold(Node *n) {
+    i32 st = n->style;
+    i32 b = STYLE_BOLD;
+    if ((st & b) != 0) { return 1; }
+    return 0;
+}
+
+i32 text_width_of(Node *n) {
+    if (n->text == 0) { return 0; }
+    i32 bold = text_bold(n);
+    i32 s = ui_scale();
+    return graphics.text_width((char*)n->text, bold, s);
+}
+
+i32 text_height_of(Node *n) {
+    i32 bold = text_bold(n);
+    i32 s = ui_scale();
+    return graphics.text_height(bold, s);
+}
+
+// --- layout ---------------------------------------------------------------------------------
+
+// Move a subtree by (dx, dy) without damage bookkeeping (callers damage).
+void offset_subtree(i32 id, i32 dx, i32 dy) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    n->x = (u16)(n->x + dx);
+    n->y = (u16)(n->y + dy);
+    i32 child_id = n->first_child;
+    while (child_id != 0) {
+        offset_subtree(child_id, dx, dy);
+        Node *c = node_ptr(child_id);
+        if (c == 0) { child_id = 0; } else { child_id = c->next_sibling; }
+    }
+}
+
+// Move a child (and its subtree) so its top-left is at (x, y).
+void place_child(i32 child_id, i32 x, i32 y) {
+    Node *child = node_ptr(child_id);
+    if (child == 0) { return; }
+    i32 dx = x - child->x;
+    i32 dy = y - child->y;
+    if (dx == 0) {
+        if (dy == 0) { return; }
+    }
+    damage_node(child_id);
+    offset_subtree(child_id, dx, dy);
+    damage_node(child_id);
+}
+
+// Lay out direct children top-to-bottom. Child widths and heights remain their
+// own props; Column owns only their x/y positions. Nested containers are
+// relaid after their origin moves so their descendants follow along as well.
+// A zero-height child consumes no vertical space, which keeps structural
+// nodes inert in a layout (Text carries its measured height).
+void relayout_container(Node *n);
+
+void relayout_column(Node *column) {
     i32 child_x = column->x + column->padding;
     i32 cursor_y = column->y + column->padding;
     i32 gap = column->gap;
     i32 child_id = column->first_child;
 
     while (child_id != 0) {
-        case get_node(child_id) of {
-            Some(raw_child) -> ({
-                Node *child = (Node*)raw_child;
-                i32 child_h = child.layout_height();
-                child.set_bounds_raw(child_id, child_x, cursor_y,
-                               child->w, child->h);
-
-                i32 child_kind = child->kind;
-                if (child_kind == column_kind) {
-                    child.relayout_column();
-                }
-
-                cursor_y = cursor_y + child_h + gap;
-                child_id = child->next_sibling;
-            });
-            // A broken sibling link must terminate traversal, not become a
-            // null dereference. Normal trees never take this arm.
-            None -> ({ child_id = 0; });
-        };
+        Node *child = node_ptr(child_id);
+        if (child == 0) { child_id = 0; }
+        else {
+            i32 child_h = child->h;
+            place_child(child_id, child_x, cursor_y);
+            relayout_container(child);
+            cursor_y = cursor_y + child_h + gap;
+            child_id = child->next_sibling;
+        }
     }
 }
 
+// Lay out direct children left-to-right, top-aligned.
+void relayout_row(Node *row) {
+    i32 cursor_x = row->x + row->padding;
+    i32 child_y = row->y + row->padding;
+    i32 gap = row->gap;
+    i32 child_id = row->first_child;
+
+    while (child_id != 0) {
+        Node *child = node_ptr(child_id);
+        if (child == 0) { child_id = 0; }
+        else {
+            i32 child_w = child->w;
+            place_child(child_id, cursor_x, child_y);
+            relayout_container(child);
+            cursor_x = cursor_x + child_w + gap;
+            child_id = child->next_sibling;
+        }
+    }
+}
+
+void relayout_container(Node *n) {
+    i32 kc = NODE_COLUMN;
+    i32 kr = NODE_ROW;
+    i32 k = n->kind;
+    if (k == kc) { relayout_column(n); }
+    if (k == kr) { relayout_row(n); }
+}
+
+// --- prop accessors ---------------------------------------------------------------------
+
+// Set absolute bounds. Moving/resizing a container moves its direct
+// children; changing a child's size inside one reflows the following siblings.
 export void set_bounds(i32 id, i32 x, i32 y, i32 w, i32 h) {
-    case get_node(id) of {
-        Some(raw_node) -> ({
-            Node *n = (Node*)raw_node;
-            n.set_bounds_raw(id, x, y, w, h);
-
-            // Moving/resizing a Column moves its direct children. Changing a
-            // child size inside a Column reflows the following siblings.
-            n.relayout_column();
-            case get_node(n->parent) of {
-                Some(raw_parent) -> ({
-                    Node *parent = (Node*)raw_parent;
-                    parent.relayout_column();
-                });
-                None -> 0;
-            };
-        });
-        None -> 0;
-    };
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    // Damage the old area as well as the new one, so vacating a region repaints
+    // the background that was underneath.
+    damage_node(id);
+    n->x = (u16)x;
+    n->y = (u16)y;
+    n->w = (u16)w;
+    n->h = (u16)h;
+    damage_node(id);
+    relayout_container(n);
+    Node *parent = node_ptr(n->parent);
+    if (parent != 0) { relayout_container(parent); }
 }
 
-i32 text_width(char *text) {
-    i32 len = 0;
-    if (text != 0) {
-        while (text[len] != 0) { len = len + 1; }
-    }
-    return len * 8 * ui_scale();
+// Translate a node and everything under it, keeping damage in sync. This is
+// what dragging a window calls.
+export void move_node(i32 id, i32 dx, i32 dy) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    damage_node(id);
+    offset_subtree(id, dx, dy);
+    damage_node(id);
 }
 
 export void set_text(i32 id, char *text) {
-    case get_node(id) of {
-        Some(raw_node) -> ({
-            Node *n = (Node*)raw_node;
-            damage_node(id);   // old string's extent
-            n->text = text;
-            // Text used to retain a 0x0 node box and infer its extent only
-            // while invalidating. Keep its physical bounds instead: damage,
-            // clipping, layout, and hit testing then all agree after UI scale
-            // has been applied.
-            n->w = (u16)text_width(text);
-            n->h = (u16)(8 * ui_scale());
-            damage_node(id);   // new string may be longer
-        });
-        None -> 0;
-    };
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    damage_node(id);   // old string's extent
+    n->text = text;
+    // Text keeps physical bounds equal to its measured size so damage,
+    // clipping, layout, and hit testing all agree. Windows and buttons also
+    // have text, but their authored layout bounds must never be replaced by
+    // caption size.
+    i32 kt = NODE_TEXT;
+    if (n->kind == kt) {
+        n->w = (u16)text_width_of(n);
+        n->h = (u16)text_height_of(n);
+        Node *parent = node_ptr(n->parent);
+        if (parent != 0) { relayout_container(parent); }
+    }
+    damage_node(id);   // new string may be longer
 }
 
 export void set_role(i32 id, i32 role) {
-    case get_node(id) of {
-        Some(raw_node) -> ({
-            Node *n = (Node*)raw_node;
-            n->role = (u16)role;
-        });
-        None -> 0;
-    };
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    n->role = (u16)role;
 }
 
-// Colours are fixed per Box for now. They are raw graphics.rgb() values, so
-// callers can use the same colour construction API as the renderer.
+// Box colours: raw graphics.rgb() values, the same construction API as the
+// renderer's.
 export void set_colors(i32 id, i32 background, i32 border) {
-    case get_node(id) of {
-        Some(raw_node) -> ({
-            Node *n = (Node*)raw_node;
-            damage_node(id);
-            n->background_color = background;
-            n->border_color = border;
-        });
-        None -> 0;
-    };
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    damage_node(id);
+    n->background_color = background;
+    n->border_color = border;
 }
 
-// Set the inset and inter-child gap of a Column, then immediately recompute
-// its children so changing these props is observable without rebuilding it.
+// Foreground/text colour. 0 restores the theme default.
+export void set_color(i32 id, i32 color) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    n->color = color;
+    damage_node(id);
+}
+
+export void set_style(i32 id, i32 style) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    n->style = (u16)style;
+    i32 kt = NODE_TEXT;
+    if (n->kind == kt) {
+        n->w = (u16)text_width_of(n);
+        n->h = (u16)text_height_of(n);
+    }
+    damage_node(id);
+}
+
+// Set the inset and inter-child gap of a Column/Row, then immediately
+// recompute its children so changing these props is observable.
 export void set_column_layout(i32 id, i32 padding, i32 gap) {
-    case get_node(id) of {
-        Some(raw_node) -> ({
-            Node *n = (Node*)raw_node;
-            n->padding = (u16)padding;
-            n->gap = (u16)gap;
-            n.relayout_column();
-        });
-        None -> 0;
-    };
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    n->padding = (u16)padding;
+    n->gap = (u16)gap;
+    relayout_container(n);
 }
 
-// True if changing `flag` on this node changes how it looks. Only buttons draw
-// differently when hovered or pressed (see draw_node), so flagging a window or
-// a label as hovered must not damage its area -- the pointer crossing a window
-// would otherwise repaint the whole window for no visible difference.
-i32 (Node* n) state_is_visible(i32 flag) {
+// True if changing `flag` on this node changes how it looks. Only controls
+// draw differently when hovered or pressed, so flagging a label as hovered
+// must not damage its area; windows repaint when focus changes (title bar).
+i32 state_is_visible(Node *n, i32 flag) {
     i32 kind = n->kind;
     i32 kb = NODE_BUTTON;
+    i32 kc = NODE_CHECKBOX;
+    i32 ki = NODE_TEXT_INPUT;
+    i32 kw = NODE_WINDOW;
     i32 hovered = STATE_HOVERED;
     i32 pressed = STATE_PRESSED;
+    i32 focused = STATE_FOCUSED;
     i32 hit_testable = STATE_HIT_TESTABLE;
     if (flag == hovered) {
         if (kind == kb) { return 1; }
+        if (kind == kc) { return 1; }
+        if (kind == kw) { return 1; } // close button highlight
         return 0;
     }
     if (flag == pressed) {
         if (kind == kb) { return 1; }
+        if (kind == kc) { return 1; }
+        return 0;
+    }
+    if (flag == focused) {
+        if (kind == ki) { return 1; }
+        if (kind == kw) { return 1; }
         return 0;
     }
     if (flag == hit_testable) { return 0; }
-    return 1; // visibility and everything else always matter
+    return 1; // visibility, checked and everything else always matter
 }
 
 // Set (on != 0) or clear (on == 0) one STATE_* bit.
 export void set_state_flag(i32 id, i32 flag, i32 on) {
-    case get_node(id) of {
-        Some(raw_node) -> ({
-            Node *n = (Node*)raw_node;
-            i32 state = n->state;
-            i32 next = state & (~flag);
-            if (on != 0) { next = state | flag; }
-            // Only damage when the bit actually changes: the compositor sets
-            // hovered/pressed every pass, and repainting on a no-op change would
-            // defeat the whole point.
-            if (next != state) {
-                n->state = (u16)next;
-                if (n.state_is_visible(flag) != 0) {
-                    damage_node(id);
-                }
-            }
-        });
-        None -> 0;
-    };
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    i32 state = n->state;
+    i32 next = state & (~flag);
+    if (on != 0) { next = state | flag; }
+    // Only damage when the bit actually changes: the compositor sets
+    // hovered/pressed every pass, and repainting on a no-op change would
+    // defeat the whole point.
+    if (next != state) {
+        n->state = (u16)next;
+        if (state_is_visible(n, flag) != 0) {
+            damage_node(id);
+        }
+    }
 }
 
 // Return 1 if the given STATE_* bit is set, else 0.
 export i32 get_state_flag(i32 id, i32 flag) {
-    return case get_node(id) of {
-        Some(raw_node) -> ({
-            Node *n = (Node*)raw_node;
-            case (n->state & flag) of { 0 -> 0; _ -> 1; };
-        });
-        None -> 0;
-    };
+    Node *n = node_ptr(id);
+    if (n == 0) { return 0; }
+    i32 state = n->state;
+    if ((state & flag) != 0) { return 1; }
+    return 0;
 }
 
 // Named state setters. Other packages can't pass dom.STATE_* as an argument (an
 // `export u16` global doesn't resolve as a cross-package symbol), so these expose
 // the common flags by name. `on` is 0 to clear, non-zero to set.
-export void set_hovered(i32 id, i32 on) {
-    set_state_flag(id, STATE_HOVERED, on);
-}
-
-export void set_pressed(i32 id, i32 on) {
-    set_state_flag(id, STATE_PRESSED, on);
-}
-
-export void set_visible(i32 id, i32 on) {
-    set_state_flag(id, STATE_VISIBLE, on);
-}
-
-export void set_hit_testable(i32 id, i32 on) {
-    set_state_flag(id, STATE_HIT_TESTABLE, on);
-}
+export void set_hovered(i32 id, i32 on) { set_state_flag(id, STATE_HOVERED, on); }
+export void set_pressed(i32 id, i32 on) { set_state_flag(id, STATE_PRESSED, on); }
+export void set_visible(i32 id, i32 on) { set_state_flag(id, STATE_VISIBLE, on); }
+export void set_hit_testable(i32 id, i32 on) { set_state_flag(id, STATE_HIT_TESTABLE, on); }
+export void set_checked(i32 id, i32 on) { set_state_flag(id, STATE_CHECKED, on); }
+export i32 is_checked(i32 id) { return get_state_flag(id, STATE_CHECKED); }
+export i32 is_visible(i32 id) { return get_state_flag(id, STATE_VISIBLE); }
 
 // Store a click handler (a function pointer, passed as i32) on a node. The
 // handler is invoked by dispatch_click via an indirect call. 0 clears it.
 export void set_on_click(i32 id, i32 handler) {
-    case get_node(id) of {
-        Some(raw_node) -> ({
-            Node *n = (Node*)raw_node;
-            n->on_click = handler;
-            set_hit_testable(id, handler != 0);
-        });
-        None -> 0;
-    };
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    n->on_click = handler;
+    set_hit_testable(id, handler != 0);
 }
 
-// Return the click handler stored on a node, or 0 if none.
 export i32 get_on_click(i32 id) {
-    return case get_node(id) of {
-        Some(raw_node) -> ({
-            Node *n = (Node*)raw_node;
-            n->on_click;
-        });
-        None -> 0;
-    };
+    Node *n = node_ptr(id);
+    if (n == 0) { return 0; }
+    return n->on_click;
 }
 
-// Invoke a node's click handler, if any. The handler is called as handler(id)
-// through an indirect call. Returns 1 if a handler ran, else 0.
+export void set_on_key(i32 id, i32 handler) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    n->on_key = handler;
+}
+
+export void set_on_change(i32 id, i32 handler) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    n->on_change = handler;
+}
+
+void fire_change(Node *n) {
+    i32 handler = n->on_change;
+    if (handler != 0) {
+        i32 id = n->id;
+        handler(id);
+    }
+}
+
+// Invoke a node's click handler, if any. Checkboxes toggle first, so the
+// handler observes the new state. Returns 1 if a handler ran, else 0.
 export i32 dispatch_click(i32 id) {
-    i32 handler = get_on_click(id);
+    Node *n = node_ptr(id);
+    if (n == 0) { return 0; }
+    i32 kc = NODE_CHECKBOX;
+    if (n->kind == kc) {
+        i32 checked = STATE_CHECKED;
+        i32 now = n->state & checked;
+        set_state_flag(id, STATE_CHECKED, now == 0);
+        fire_change(n);
+    }
+    i32 handler = n->on_click;
     if (handler != 0) {
         handler(id);
         return 1;
@@ -430,78 +692,444 @@ export i32 dispatch_click(i32 id) {
     return 0;
 }
 
-export void append_child(i32 parent_id, i32 child_id) {
-    damage_node(child_id);
-    case get_node(parent_id) of {
-        Some(raw_parent) -> ({
-            Node *parent = (Node*)raw_parent;
-            case get_node(child_id) of {
-            Some(raw_child) -> ({
-                Node *child = (Node*)raw_child;
-                child->parent = (u16)parent_id;
-                child->next_sibling = 0;
+// --- tree structure -----------------------------------------------------------------------
 
-                if (parent->first_child == 0) {
-                    parent->first_child = (u16)child_id;
-                } else {
-                    i32 current_id = parent->first_child;
-                    while (current_id != 0) {
-                        case get_node(current_id) of {
-                            Some(raw_current) -> ({
-                                Node *curr = (Node*)raw_current;
-                                if (curr->next_sibling == 0) {
-                                    curr->next_sibling = (u16)child_id;
-                                    current_id = 0;
-                                } else {
-                                    current_id = curr->next_sibling;
-                                }
-                            });
-                            None -> ({ current_id = 0; });
-                        };
-                    }
-                }
-
-                // A Column controls the positions of its direct children. This
-                // runs after linking so the new child participates immediately.
-                parent.relayout_column();
-            });
-            None -> 0;
-        };
-        });
-        None -> 0;
-    };
+// Where a parent's children are positioned from: a window's content area
+// starts below its title bar, everything else at its own origin. Result in
+// g_ext_x / g_ext_y.
+void content_origin(Node *parent) {
+    g_ext_x = parent->x;
+    g_ext_y = parent->y;
+    i32 kw = NODE_WINDOW;
+    if (parent->kind == kw) {
+        g_ext_y = g_ext_y + theme.titlebar_h() * ui_scale();
+    }
 }
 
-// --- UI node create helpers ---
-// Each sets kind + role + bounds + text + default state (visible/enabled) in one
-// call, so callers (and the MyDOMTranspiler output) don't repeat the setup.
+export void append_child(i32 parent_id, i32 child_id) {
+    Node *parent = node_ptr(parent_id);
+    Node *child = node_ptr(child_id);
+    if (parent == 0) { return; }
+    if (child == 0) { return; }
+
+    child->parent = (u16)parent_id;
+    child->next_sibling = 0;
+
+    if (parent->first_child == 0) {
+        parent->first_child = (u16)child_id;
+    } else {
+        i32 current_id = parent->first_child;
+        while (current_id != 0) {
+            Node *curr = node_ptr(current_id);
+            if (curr == 0) { current_id = 0; }
+            else if (curr->next_sibling == 0) {
+                curr->next_sibling = (u16)child_id;
+                current_id = 0;
+            } else {
+                current_id = curr->next_sibling;
+            }
+        }
+    }
+
+    // Authored coordinates are relative to the parent's content origin;
+    // stored coordinates are absolute, so shift the whole subtree once.
+    content_origin(parent);
+    offset_subtree(child_id, g_ext_x, g_ext_y);
+    damage_node(child_id);
+
+    // A Column/Row controls the positions of its direct children. This runs
+    // after linking so the new child participates immediately.
+    relayout_container(parent);
+}
+
+// Unlink a node from its parent's child list (no damage, no free).
+void unlink(Node *n) {
+    Node *parent = node_ptr(n->parent);
+    if (parent == 0) { return; }
+    i32 id = n->id;
+    if (parent->first_child == id) {
+        parent->first_child = n->next_sibling;
+    } else {
+        i32 cur = parent->first_child;
+        while (cur != 0) {
+            Node *c = node_ptr(cur);
+            if (c == 0) { cur = 0; }
+            else if (c->next_sibling == id) {
+                c->next_sibling = n->next_sibling;
+                cur = 0;
+            } else {
+                cur = c->next_sibling;
+            }
+        }
+    }
+    n->next_sibling = 0;
+}
+
+// Re-link a node as the last child of its parent: last is painted last, so
+// this raises it above its siblings.
+export void bring_to_front(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    Node *parent = node_ptr(n->parent);
+    if (parent == 0) { return; }
+    if (n->next_sibling == 0) { return; } // already last
+    unlink(n);
+    // Re-append without re-translating: coordinates are already absolute.
+    i32 last_id = parent->first_child;
+    if (last_id == 0) {
+        parent->first_child = (u16)id;
+    } else {
+        Node *last = node_ptr(last_id);
+        while (last->next_sibling != 0) {
+            last = node_ptr(last->next_sibling);
+        }
+        last->next_sibling = (u16)id;
+    }
+    damage_node(id);
+}
+
+void free_subtree(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    i32 child_id = n->first_child;
+    while (child_id != 0) {
+        Node *c = node_ptr(child_id);
+        i32 next = 0;
+        if (c != 0) { next = c->next_sibling; }
+        free_subtree(child_id);
+        child_id = next;
+    }
+    if (g_focus_id == id) { g_focus_id = 0; }
+    if (g_active_window == id) { g_active_window = 0; }
+    // Drop it from the timer list.
+    i32 i = 0;
+    while (i < g_timer_count) {
+        if (g_timer_ids[i] == id) {
+            g_timer_ids[i] = g_timer_ids[g_timer_count - 1];
+            g_timer_count = g_timer_count - 1;
+        } else {
+            i = i + 1;
+        }
+    }
+    i32 ki = NODE_TEXT_INPUT;
+    if (n->kind == ki) {
+        if (n->text != 0) { heap.free((i32)n->text); }
+    }
+    g_node_table[id] = (Node*)0;
+    heap.free((i32)n);
+}
+
+// Delete a node and its subtree: unlink from the parent, invalidate the slot
+// (ids are never reused), free the memory, and drop any focus it held.
+export void remove_node(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    damage_node(id);
+    unlink(n);
+    free_subtree(id);
+}
 
 // Return the id of the fixed desktop node created by init(); UI attaches here.
 export i32 desktop_id() {
     return g_desktop_node_id;
 }
 
-// Tree navigation. Return 0 when there is no such node. Used by the renderer,
-// hit-test, and callers that need to reach a built subtree's children.
+export i32 taskbar_id() {
+    return g_taskbar_id;
+}
+
+// Tree navigation. Return 0 when there is no such node.
 export i32 first_child(i32 id) {
-    return case get_node(id) of {
-        Some(raw_node) -> ({
-            Node *n = (Node*)raw_node;
-            n->first_child;
-        });
-        None -> 0;
-    };
+    Node *n = node_ptr(id);
+    if (n == 0) { return 0; }
+    return n->first_child;
 }
 
 export i32 next_sibling(i32 id) {
-    return case get_node(id) of {
-        Some(raw_node) -> ({
-            Node *n = (Node*)raw_node;
-            n->next_sibling;
-        });
-        None -> 0;
-    };
+    Node *n = node_ptr(id);
+    if (n == 0) { return 0; }
+    return n->next_sibling;
 }
+
+// The window containing a node (or the node itself if it is a window); 0 if
+// it is not inside one.
+export i32 window_of(i32 id) {
+    i32 kw = NODE_WINDOW;
+    i32 cur = id;
+    while (cur != 0) {
+        Node *n = node_ptr(cur);
+        if (n == 0) { return 0; }
+        if (n->kind == kw) { return cur; }
+        cur = n->parent;
+    }
+    return 0;
+}
+
+// --- focus / window management -----------------------------------------------------------
+
+export i32 active_window() {
+    return g_active_window;
+}
+
+export i32 focused_node() {
+    return g_focus_id;
+}
+
+// Keyboard focus. Only one node holds it; 0 clears it.
+export void set_focus(i32 id) {
+    if (id == g_focus_id) { return; }
+    if (g_focus_id != 0) { set_state_flag(g_focus_id, STATE_FOCUSED, 0); }
+    g_focus_id = 0;
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    g_focus_id = id;
+    set_state_flag(id, STATE_FOCUSED, 1);
+}
+
+// Make a window the active one: it comes to the front, gets the focused
+// title bar look, and keyboard focus leaves any control outside it.
+export void focus_window(i32 win) {
+    Node *n = node_ptr(win);
+    if (n == 0) { return; }
+    i32 kw = NODE_WINDOW;
+    if (n->kind != kw) { return; }
+    if (g_active_window != win) {
+        if (g_active_window != 0) { set_state_flag(g_active_window, STATE_FOCUSED, 0); }
+        g_active_window = win;
+        set_state_flag(win, STATE_FOCUSED, 1);
+        if (window_of(g_focus_id) != win) { set_focus(0); }
+        damage_node(g_taskbar_id); // the active entry's highlight moved
+    }
+    bring_to_front(win);
+}
+
+// After a window goes away, activate the top-most remaining one.
+void activate_topmost() {
+    i32 kw = NODE_WINDOW;
+    i32 top = 0;
+    i32 child_id = first_child(g_desktop_node_id);
+    while (child_id != 0) {
+        Node *c = node_ptr(child_id);
+        if (c == 0) { child_id = 0; }
+        else {
+            if (c->kind == kw) { top = child_id; }
+            child_id = c->next_sibling;
+        }
+    }
+    if (top != 0) { focus_window(top); }
+    damage_node(g_taskbar_id);
+}
+
+export void close_window(i32 win) {
+    remove_node(win);
+    activate_topmost();
+}
+
+// Chrome geometry, in display pixels. The close button is a disc at the left
+// of the title bar; the whole bar (minus the button) is the drag handle.
+i32 close_button_cx(Node *w) {
+    i32 s = ui_scale();
+    return w->x + 16 * s;
+}
+
+i32 close_button_cy(Node *w) {
+    i32 s = ui_scale();
+    i32 tb = theme.titlebar_h() * s;
+    return w->y + tb / 2;
+}
+
+i32 close_button_r() {
+    return 7 * ui_scale();
+}
+
+// True if (px, py) is on the window's close button.
+export i32 close_button_hit(i32 win, i32 px, i32 py) {
+    Node *w = node_ptr(win);
+    if (w == 0) { return 0; }
+    i32 dx = px - close_button_cx(w);
+    i32 dy = py - close_button_cy(w);
+    i32 r = close_button_r() + 3 * ui_scale(); // a little slack
+    if (dx * dx + dy * dy <= r * r) { return 1; }
+    return 0;
+}
+
+// True if (px, py) is in the window's title bar (excluding the close button).
+export i32 titlebar_hit(i32 win, i32 px, i32 py) {
+    Node *w = node_ptr(win);
+    if (w == 0) { return 0; }
+    if (close_button_hit(win, px, py) != 0) { return 0; }
+    i32 tb = theme.titlebar_h() * ui_scale();
+    if (px < w->x) { return 0; }
+    if (px >= w->x + w->w) { return 0; }
+    if (py < w->y) { return 0; }
+    if (py >= w->y + tb) { return 0; }
+    return 1;
+}
+
+// --- keyboard --------------------------------------------------------------------------------
+
+i32 KEY_BACKSPACE = 8;
+i32 KEY_ENTER = 13;
+i32 KEY_DELETE = 127;
+i32 KEY_LEFT = 0x101;
+i32 KEY_RIGHT = 0x102;
+i32 KEY_HOME = 0x105;
+i32 KEY_END = 0x106;
+i32 EVT_DOWN = 1;
+i32 EVT_CHAR = 3;
+
+void input_insert(Node *n, i32 c) {
+    i32 len = n->len;
+    i32 cap = n->cap;
+    if (len + 1 >= cap) { return; }
+    char *buf = (char*)n->text;
+    i32 cur = n->cursor;
+    i32 i = len;
+    while (i > cur) {
+        buf[i] = buf[i - 1];
+        i = i - 1;
+    }
+    buf[cur] = (char)c;
+    buf[len + 1] = (char)0;
+    n->len = (u16)(len + 1);
+    n->cursor = (u16)(cur + 1);
+}
+
+void input_delete_at(Node *n, i32 at) {
+    i32 len = n->len;
+    if (at < 0) { return; }
+    if (at >= len) { return; }
+    char *buf = (char*)n->text;
+    i32 i = at;
+    while (i < len - 1) {
+        buf[i] = buf[i + 1];
+        i = i + 1;
+    }
+    buf[len - 1] = (char)0;
+    n->len = (u16)(len - 1);
+}
+
+// Default editing behaviour of a TextInput. Returns 1 if the text changed,
+// 2 if only the caret moved, 0 if nothing happened.
+i32 input_handle(Node *n, i32 type, i32 code) {
+    i32 cur = n->cursor;
+    i32 len = n->len;
+    if (type == EVT_CHAR) {
+        if (code >= 0x20) {
+            if (code <= 0x7E) {
+                input_insert(n, code);
+                return 1;
+            }
+        }
+        return 0;
+    }
+    if (type != EVT_DOWN) { return 0; }
+    if (code == KEY_BACKSPACE) {
+        if (cur > 0) {
+            input_delete_at(n, cur - 1);
+            n->cursor = (u16)(cur - 1);
+            return 1;
+        }
+        return 0;
+    }
+    if (code == KEY_DELETE) {
+        if (cur < len) { input_delete_at(n, cur); return 1; }
+        return 0;
+    }
+    if (code == KEY_LEFT) {
+        if (cur > 0) { n->cursor = (u16)(cur - 1); }
+        return 2;
+    }
+    if (code == KEY_RIGHT) {
+        if (cur < len) { n->cursor = (u16)(cur + 1); }
+        return 2;
+    }
+    if (code == KEY_HOME) { n->cursor = 0; return 2; }
+    if (code == KEY_END) { n->cursor = (u16)len; return 2; }
+    return 0;
+}
+
+// Route one keyboard event (type = keyboard.EVT_*, code = key code or
+// character) to the focused node. A node's on_key handler, if set, sees DOWN
+// events first and can claim them by returning non-zero; otherwise text
+// inputs get their default editing behaviour.
+export void dispatch_key_event(i32 type, i32 code, i32 mods) {
+    Node *n = node_ptr(g_focus_id);
+    if (n == 0) { return; }
+    i32 id = g_focus_id;
+    if (type == EVT_DOWN) {
+        i32 handler = n->on_key;
+        if (handler != 0) {
+            i32 claimed = handler(id, code, mods);
+            if (claimed != 0) { return; }
+        }
+    }
+    i32 ki = NODE_TEXT_INPUT;
+    if (n->kind == ki) {
+        i32 r = input_handle(n, type, code);
+        if (r != 0) { damage_node(id); }
+        if (r == 1) { fire_change(n); }
+    }
+}
+
+// Replace a TextInput's contents (truncated to its capacity).
+export void set_input_text(i32 id, char *s) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    i32 ki = NODE_TEXT_INPUT;
+    if (n->kind != ki) { return; }
+    char *buf = (char*)n->text;
+    i32 cap = n->cap;
+    i32 i = 0;
+    while (s[i] != 0) {
+        if (i + 1 >= cap) { break; }
+        buf[i] = s[i];
+        i = i + 1;
+    }
+    buf[i] = (char)0;
+    n->len = (u16)i;
+    n->cursor = (u16)i;
+    damage_node(id);
+}
+
+// --- timers --------------------------------------------------------------------------------------
+
+// Fire every registered timer whose period has elapsed. The compositor calls
+// this once per pass; handlers run on the compositor task.
+export void tick() {
+    i32 now = scheduler.ticks();
+    i32 i = 0;
+    while (i < g_timer_count) {
+        i32 id = g_timer_ids[i];
+        Node *t = node_ptr(id);
+        if (t != 0) {
+            if (now >= t->next_due) {
+                t->next_due = now + t->interval;
+                i32 handler = t->on_tick;
+                if (handler != 0) { handler(id); }
+            }
+        }
+        i = i + 1;
+    }
+}
+
+export i32 create_timer(i32 interval, i32 handler) {
+    i32 id = create_node(NODE_TIMER, "timer");
+    Node *t = node_ptr(id);
+    t->interval = interval;
+    t->on_tick = handler;
+    t->next_due = scheduler.ticks() + interval;
+    if (g_timer_count < TIMER_MAX) {
+        g_timer_ids[g_timer_count] = id;
+        g_timer_count = g_timer_count + 1;
+    }
+    return id;
+}
+
+// --- UI node create helpers ------------------------------------------------------------------
+// Each sets kind + role + bounds + text + default state (visible/enabled) in one
+// call. Coordinates are logical (1024x768) and relative to the parent the node
+// is later appended to.
 
 // Note: NODE_*/ROLE_*/STATE_* are `export u16` globals; pass them bare as
 // function args. Casting them like (i32)STATE_VISIBLE makes semantic report
@@ -513,6 +1141,7 @@ export i32 create_window(char *title, i32 x, i32 y, i32 w, i32 h) {
     set_text(id, title);
     set_state_flag(id, STATE_VISIBLE, 1);
     set_state_flag(id, STATE_ENABLED, 1);
+    set_state_flag(id, STATE_HIT_TESTABLE, 1); // body clicks focus the window
     return id;
 }
 
@@ -547,6 +1176,16 @@ export i32 create_box(i32 x, i32 y, i32 w, i32 h,
     return id;
 }
 
+// A Panel is a themed rounded card; its children are clipped to it.
+export i32 create_panel(i32 x, i32 y, i32 w, i32 h, i32 radius) {
+    i32 id = create_node(NODE_PANEL, "panel");
+    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
+    Node *n = node_ptr(id);
+    n->radius = (u16)scale_ui(radius);
+    set_state_flag(id, STATE_VISIBLE, 1);
+    return id;
+}
+
 // A Column is a visible-to-the-renderer layout container: it draws nothing of
 // its own, but visibility gates all descendants. When a child is appended its
 // x/y are recomputed from this origin, padding, and the preceding child sizes.
@@ -555,6 +1194,61 @@ export i32 create_column(i32 x, i32 y, i32 w, i32 h,
     i32 id = create_node(NODE_COLUMN, "column");
     set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
     set_column_layout(id, scale_ui(padding), scale_ui(gap));
+    set_state_flag(id, STATE_VISIBLE, 1);
+    return id;
+}
+
+export i32 create_row(i32 x, i32 y, i32 w, i32 h,
+                      i32 padding, i32 gap) {
+    i32 id = create_node(NODE_ROW, "row");
+    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
+    set_column_layout(id, scale_ui(padding), scale_ui(gap));
+    set_state_flag(id, STATE_VISIBLE, 1);
+    return id;
+}
+
+// A single-line text field. `placeholder` shows while empty; the node owns a
+// heap buffer of `capacity` bytes (including the terminator).
+export i32 create_text_input(char *placeholder, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
+    if (capacity < 2) { capacity = 2; }
+    i32 id = create_node(NODE_TEXT_INPUT, placeholder);
+    set_role(id, ROLE_TEXTBOX);
+    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
+    Node *n = node_ptr(id);
+    char *buf = (char*)heap.alloc(capacity);
+    buf[0] = (char)0;
+    n->text = buf;
+    n->cap = (u16)capacity;
+    n->len = 0;
+    n->cursor = 0;
+    set_state_flag(id, STATE_VISIBLE, 1);
+    set_state_flag(id, STATE_ENABLED, 1);
+    set_state_flag(id, STATE_HIT_TESTABLE, 1);
+    return id;
+}
+
+export i32 create_checkbox(char *label, i32 x, i32 y, i32 checked) {
+    i32 id = create_node(NODE_CHECKBOX, label);
+    set_role(id, ROLE_CHECKBOX);
+    i32 s = ui_scale();
+    i32 box = theme.checkbox_size() * s;
+    i32 tw = graphics.text_width(label, 0, s);
+    i32 th = graphics.text_height(0, s);
+    i32 h = box;
+    if (th > h) { h = th; }
+    set_bounds(id, scale_ui(x), scale_ui(y), box + 8 * s + tw, h);
+    set_text(id, label);
+    set_state_flag(id, STATE_VISIBLE, 1);
+    set_state_flag(id, STATE_ENABLED, 1);
+    set_state_flag(id, STATE_HIT_TESTABLE, 1);
+    set_state_flag(id, STATE_CHECKED, checked);
+    return id;
+}
+
+export i32 create_separator(i32 x, i32 y, i32 w) {
+    i32 id = create_node(NODE_SEPARATOR, "separator");
+    set_role(id, ROLE_SEPARATOR);
+    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), ui_scale());
     set_state_flag(id, STATE_VISIBLE, 1);
     return id;
 }
@@ -579,8 +1273,24 @@ export i32 Button(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
     return id;
 }
 
+// Accent-coloured call to action.
+export i32 PrimaryButton(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
+    i32 id = create_button(text, x, y, w, h);
+    set_on_click(id, onClick);
+    set_style(id, STYLE_PRIMARY);
+    return id;
+}
+
 export i32 Text(char *text, i32 x, i32 y) {
     return create_text(text, x, y);
+}
+
+// Text with an explicit colour (graphics.rgb(); 0 = theme default) and weight.
+export i32 Label(char *text, i32 x, i32 y, i32 color, i32 bold) {
+    i32 id = create_text(text, x, y);
+    if (bold != 0) { set_style(id, STYLE_BOLD); }
+    set_color(id, color);
+    return id;
 }
 
 export i32 Box(i32 x, i32 y, i32 w, i32 h,
@@ -588,10 +1298,41 @@ export i32 Box(i32 x, i32 y, i32 w, i32 h,
     return create_box(x, y, w, h, background, border);
 }
 
+export i32 Panel(i32 x, i32 y, i32 w, i32 h, i32 radius) {
+    return create_panel(x, y, w, h, radius);
+}
+
 export i32 Column(i32 x, i32 y, i32 w, i32 h,
                   i32 padding, i32 gap) {
     return create_column(x, y, w, h, padding, gap);
 }
+
+export i32 Row(i32 x, i32 y, i32 w, i32 h,
+               i32 padding, i32 gap) {
+    return create_row(x, y, w, h, padding, gap);
+}
+
+export i32 TextInput(char *placeholder, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 onChange) {
+    i32 id = create_text_input(placeholder, x, y, w, h, capacity);
+    set_on_change(id, onChange);
+    return id;
+}
+
+export i32 Checkbox(char *text, i32 x, i32 y, i32 checked, i32 onClick) {
+    i32 id = create_checkbox(text, x, y, checked);
+    set_on_click(id, onClick);
+    return id;
+}
+
+export i32 Separator(i32 x, i32 y, i32 w) {
+    return create_separator(x, y, w);
+}
+
+export i32 Timer(i32 interval, i32 onTick) {
+    return create_timer(interval, onTick);
+}
+
+// --- human-readable dump ---------------------------------------------------------------------
 
 void print_indent(i32 depth) {
     i32 i = 0;
@@ -601,14 +1342,13 @@ void print_indent(i32 depth) {
     }
 }
 
-// Print "[role=R x=.. y=.. w=.. h=.. vis en ht ho pr fo]" for nodes that carry
-// UI props. Structural nodes (role=0, no bounds) print nothing extra.
-void (Node* n) dump_props() {
+// Print "[role=R x=.. y=.. w=.. h=.. vis en ho pr fo ht ck]" for nodes that
+// carry UI props. Structural nodes (role=0, no bounds) print nothing extra.
+void dump_props(Node *n) {
     i32 role = n->role;
     i32 w = n->w;
     i32 h = n->h;
     i32 state = n->state;
-    // Nothing interesting to show for plain structural nodes.
     if (role == 0) {
         if (w == 0) {
             if (h == 0) {
@@ -624,31 +1364,28 @@ void (Node* n) dump_props() {
     if ((state & STATE_PRESSED) != 0) { debug.print(" pr"); }
     if ((state & STATE_FOCUSED) != 0) { debug.print(" fo"); }
     if ((state & STATE_HIT_TESTABLE) != 0) { debug.print(" ht"); }
+    if ((state & STATE_CHECKED) != 0) { debug.print(" ck"); }
     debug.print("]");
 }
 
 void dump_node(i32 node_id, i32 depth) {
-    case get_node(node_id) of {
-        Some(raw_node) -> ({
-            Node *n = (Node*)raw_node;
-            print_indent(depth);
-            debug.printf("Node(id=%i, kind=%i) ", n->id, n->kind);
-            if (n->name != 0) {
-                debug.print((char*)n->name);
-            } else {
-                debug.print("?");
-            }
-            n.dump_props();
-            debug.println("");
+    Node *n = node_ptr(node_id);
+    if (n == 0) { return; }
+    print_indent(depth);
+    debug.printf("Node(id=%i, kind=%i) ", n->id, n->kind);
+    if (n->name != 0) {
+        debug.print((char*)n->name);
+    } else {
+        debug.print("?");
+    }
+    dump_props(n);
+    debug.println("");
 
-            i32 child_id = n->first_child;
-            while (child_id != 0) {
-                dump_node(child_id, depth + 1);
-                child_id = next_sibling(child_id);
-            }
-        });
-        None -> 0;
-    };
+    i32 child_id = n->first_child;
+    while (child_id != 0) {
+        dump_node(child_id, depth + 1);
+        child_id = next_sibling(child_id);
+    }
 }
 
 export void dump() {
@@ -657,25 +1394,31 @@ export void dump() {
     debug.println("--------------------------");
 }
 
-// --- machine-readable snapshot (MYOS-004 UI automation) ---
-// dump()/dump_node() above are for humans reading the serial log; this section
-// mirrors them but emits one JSON object per node (JSON Lines), stable enough
-// for a host-side client (qa/mydomtester) to parse into a locator tree.
+// --- machine-readable snapshot (MYOS-004 UI automation) --------------------------------------
+// Mirrors dump() but emits one JSON object per node (JSON Lines), stable
+// enough for a host-side client (qa/mydomtester) to parse into a locator tree.
 
 // role is compared as a local i32 copy: comparing an i32 against a `u16`
-// export global directly (role == ROLE_BUTTON) miscompiles to always-false,
-// same pitfall noted on draw_node above.
+// export global directly (role == ROLE_BUTTON) miscompiles to always-false.
 char* role_name(i32 role) {
     i32 r_root = ROLE_ROOT;
     i32 r_desktop = ROLE_DESKTOP;
     i32 r_window = ROLE_WINDOW;
     i32 r_button = ROLE_BUTTON;
     i32 r_text = ROLE_TEXT;
+    i32 r_textbox = ROLE_TEXTBOX;
+    i32 r_checkbox = ROLE_CHECKBOX;
+    i32 r_toolbar = ROLE_TOOLBAR;
+    i32 r_separator = ROLE_SEPARATOR;
     if (role == r_root) { return "root"; }
     if (role == r_desktop) { return "desktop"; }
     if (role == r_window) { return "window"; }
     if (role == r_button) { return "button"; }
     if (role == r_text) { return "text"; }
+    if (role == r_textbox) { return "textbox"; }
+    if (role == r_checkbox) { return "checkbox"; }
+    if (role == r_toolbar) { return "toolbar"; }
+    if (role == r_separator) { return "separator"; }
     return "none";
 }
 
@@ -709,66 +1452,54 @@ void print_json_bool(i32 v) {
     }
 }
 
+void print_json_flag(char* key, i32 state, i32 flag) {
+    debug.print(",\"");
+    debug.print(key);
+    debug.print("\":");
+    i32 on = 0;
+    if ((state & flag) != 0) { on = 1; }
+    print_json_bool(on);
+}
+
 void dump_node_json(i32 node_id) {
-    case get_node(node_id) of {
-        Some(raw_node) -> ({
-            Node *n = (Node*)raw_node;
-            i32 state = n->state;
-            i32 visible = 0;
-            if ((state & STATE_VISIBLE) != 0) { visible = 1; }
-            i32 enabled = 0;
-            if ((state & STATE_ENABLED) != 0) { enabled = 1; }
-            i32 hovered = 0;
-            if ((state & STATE_HOVERED) != 0) { hovered = 1; }
-            i32 pressed = 0;
-            if ((state & STATE_PRESSED) != 0) { pressed = 1; }
-            i32 focused = 0;
-            if ((state & STATE_FOCUSED) != 0) { focused = 1; }
-            i32 hit_testable = 0;
-            if ((state & STATE_HIT_TESTABLE) != 0) { hit_testable = 1; }
+    Node *n = node_ptr(node_id);
+    if (n == 0) { return; }
+    i32 state = n->state;
 
-            debug.print("{\"id\":");
-            debug.printf("%i", n->id);
-            debug.print(",\"parent\":");
-            debug.printf("%i", n->parent);
-            debug.print(",\"kind\":");
-            debug.printf("%i", n->kind);
-            debug.print(",\"role\":");
-            print_json_string(role_name(n->role));
-            debug.print(",\"name\":");
-            print_json_string((char*)n->name);
-            debug.print(",\"text\":");
-            print_json_string((char*)n->text);
-            debug.print(",\"x\":");
-            debug.printf("%i", n->x);
-            debug.print(",\"y\":");
-            debug.printf("%i", n->y);
-            debug.print(",\"w\":");
-            debug.printf("%i", n->w);
-            debug.print(",\"h\":");
-            debug.printf("%i", n->h);
-            debug.print(",\"visible\":");
-            print_json_bool(visible);
-            debug.print(",\"enabled\":");
-            print_json_bool(enabled);
-            debug.print(",\"hovered\":");
-            print_json_bool(hovered);
-            debug.print(",\"pressed\":");
-            print_json_bool(pressed);
-            debug.print(",\"focused\":");
-            print_json_bool(focused);
-            debug.print(",\"hitTestable\":");
-            print_json_bool(hit_testable);
-            debug.println("}");
+    debug.print("{\"id\":");
+    debug.printf("%i", n->id);
+    debug.print(",\"parent\":");
+    debug.printf("%i", n->parent);
+    debug.print(",\"kind\":");
+    debug.printf("%i", n->kind);
+    debug.print(",\"role\":");
+    print_json_string(role_name(n->role));
+    debug.print(",\"name\":");
+    print_json_string((char*)n->name);
+    debug.print(",\"text\":");
+    print_json_string((char*)n->text);
+    debug.print(",\"x\":");
+    debug.printf("%i", n->x);
+    debug.print(",\"y\":");
+    debug.printf("%i", n->y);
+    debug.print(",\"w\":");
+    debug.printf("%i", n->w);
+    debug.print(",\"h\":");
+    debug.printf("%i", n->h);
+    print_json_flag("visible", state, STATE_VISIBLE);
+    print_json_flag("enabled", state, STATE_ENABLED);
+    print_json_flag("hovered", state, STATE_HOVERED);
+    print_json_flag("pressed", state, STATE_PRESSED);
+    print_json_flag("focused", state, STATE_FOCUSED);
+    print_json_flag("hitTestable", state, STATE_HIT_TESTABLE);
+    print_json_flag("checked", state, STATE_CHECKED);
+    debug.println("}");
 
-            i32 child_id = n->first_child;
-            while (child_id != 0) {
-                dump_node_json(child_id);
-                child_id = next_sibling(child_id);
-            }
-        });
-        None -> 0;
-    };
+    i32 child_id = n->first_child;
+    while (child_id != 0) {
+        dump_node_json(child_id);
+        child_id = next_sibling(child_id);
+    }
 }
 
 // Print the whole tree as JSON Lines, bracketed by markers a host-side reader
@@ -779,23 +1510,421 @@ export void dump_json() {
     debug.println("---DOM-SNAPSHOT-END---");
 }
 
-// --- renderer ---
-// Walk the UI subtree and paint each node with graphics.*. The renderer and a
-// window manager are one for now: z-order is sibling order (later siblings on
-// top), and hover/pressed looks come from the node's state bitmask. graphics.mln
-// is untouched; this only reads node props and calls its draw primitives.
+// --- renderer ---------------------------------------------------------------------------------
+// Walk the UI subtree and paint each node with graphics.*. The renderer and
+// the window manager are one: z-order is sibling order (later siblings on
+// top), and hover/pressed/focus looks come from the node's state bitmask.
+// Colours and metrics come from theme.mln.
+//
+// Theme values are fetched into locals before use because a cross-package
+// call nested inside another package's argument list does not resolve.
 
-void (Node* n) draw_node() {
-    i32 kind = n->kind;
+i32 node_fg(Node *n, i32 fallback) {
+    i32 c = n->color;
+    if (c != 0) { return c; }
+    return fallback;
+}
+
+void draw_window(Node *n) {
+    i32 s = ui_scale();
     i32 x = n->x;
     i32 y = n->y;
     i32 w = n->w;
     i32 h = n->h;
     i32 state = n->state;
-    i32 scale = ui_scale();
+    i32 focused_bit = STATE_FOCUSED;
+    i32 hovered_bit = STATE_HOVERED;
+    i32 active = state & focused_bit;
+    i32 hovered = state & hovered_bit;
 
-    i32 black = graphics.rgb(0, 0, 0);
-    i32 white = graphics.rgb(255, 255, 255);
+    i32 r = theme.window_radius() * s;
+    i32 tb = theme.titlebar_h() * s;
+
+    // Shadow first, then the body over it.
+    i32 shadow = theme.shadow_size() * s;
+    i32 shadow_off = theme.shadow_offset() * s;
+    i32 shadow_a = theme.shadow_alpha();
+    if (active == 0) { shadow_a = theme.shadow_alpha_inactive(); }
+    graphics.draw_shadow(x, y, w, h, r, shadow, shadow_off, shadow_a);
+
+    i32 bg = theme.window_bg();
+    graphics.fill_round_rect(x, y, w, h, r, bg);
+
+    // Title bar: rounded on top, squared off where it meets the content.
+    i32 tb_top = theme.titlebar_top();
+    i32 tb_bottom = theme.titlebar_bottom();
+    if (active == 0) {
+        tb_top = theme.titlebar_inactive();
+        tb_bottom = tb_top;
+    }
+    graphics.push_clip(x, y, w, tb);
+    graphics.fill_round_rect(x, y, w, tb + r, r, tb_top);
+    graphics.fill_gradient_v(x + r, y, w - 2 * r, tb, tb_top, tb_bottom);
+    graphics.fill_gradient_v(x, y + r, r, tb - r, tb_top, tb_bottom);
+    graphics.fill_gradient_v(x + w - r, y + r, r, tb - r, tb_top, tb_bottom);
+    graphics.pop_clip();
+    i32 divider = theme.titlebar_divider();
+    graphics.blend_rect(x, y + tb - s, w, s, divider);
+
+    // Close button: a disc at the left of the bar.
+    i32 cx = close_button_cx(n);
+    i32 cy = close_button_cy(n);
+    i32 cr = close_button_r();
+    i32 close = theme.close_button();
+    if (active == 0) { close = theme.close_button_inactive(); }
+    if (hovered != 0) { close = theme.close_button_hover(); }
+    graphics.fill_disc(cx, cy, cr, close);
+    i32 ring = theme.close_button_ring();
+    graphics.draw_round_rect(cx - cr, cy - cr, 2 * cr, 2 * cr, cr, s, ring);
+    if (hovered != 0) {
+        // An x glyph appears on hover.
+        i32 g = theme.close_glyph();
+        i32 k = cr / 2;
+        graphics.draw_line(cx - k, cy - k, cx + k, cy + k, g);
+        graphics.draw_line(cx + k, cy - k, cx - k, cy + k, g);
+        graphics.draw_line(cx - k + 1, cy - k, cx + k + 1, cy + k, g);
+        graphics.draw_line(cx + k + 1, cy - k, cx - k + 1, cy + k, g);
+    }
+
+    // Title, centred, kept clear of the close button.
+    if (n->text != 0) {
+        i32 title_color = theme.text_primary();
+        if (active == 0) { title_color = theme.text_secondary(); }
+        i32 th = graphics.text_height(1, s);
+        i32 inset = 2 * (cx - x);
+        graphics.push_clip(x + inset, y, w - 2 * inset, tb);
+        graphics.draw_label_centered(x, y + (tb - th) / 2, w, (char*)n->text, title_color, 1, s);
+        graphics.pop_clip();
+    }
+
+    // Border last so it sits over the title bar edge.
+    i32 border = theme.window_border();
+    if (active == 0) { border = theme.window_border_inactive(); }
+    graphics.draw_round_rect(x, y, w, h, r, s, border);
+}
+
+void draw_button(Node *n) {
+    i32 s = ui_scale();
+    i32 x = n->x;
+    i32 y = n->y;
+    i32 w = n->w;
+    i32 h = n->h;
+    i32 state = n->state;
+    i32 pressed_bit = STATE_PRESSED;
+    i32 hovered_bit = STATE_HOVERED;
+    i32 primary_bit = STYLE_PRIMARY;
+    i32 style = n->style;
+    i32 r = theme.button_radius() * s;
+
+    i32 face = theme.button_face();
+    i32 label = theme.text_primary();
+    i32 border = theme.button_border();
+    if ((style & primary_bit) != 0) {
+        face = theme.accent();
+        label = theme.on_accent();
+        border = theme.accent_pressed();
+        if ((state & pressed_bit) != 0) { face = theme.accent_pressed(); }
+        else if ((state & hovered_bit) != 0) { face = theme.accent_hover(); }
+    } else {
+        if ((state & pressed_bit) != 0) { face = theme.button_face_pressed(); }
+        else if ((state & hovered_bit) != 0) { face = theme.button_face_hover(); }
+    }
+    label = node_fg(n, label);
+
+    graphics.fill_round_rect(x, y, w, h, r, face);
+    graphics.draw_round_rect(x, y, w, h, r, s, border);
+    if (n->text != 0) {
+        i32 th = graphics.text_height(0, s);
+        graphics.push_clip(x, y, w, h);
+        graphics.draw_label_centered(x, y + (h - th) / 2, w, (char*)n->text, label, 0, s);
+        graphics.pop_clip();
+    }
+}
+
+void draw_text_node(Node *n) {
+    if (n->text == 0) { return; }
+    i32 s = ui_scale();
+    i32 color = theme.text_primary();
+    color = node_fg(n, color);
+    i32 bold = text_bold(n);
+    i32 center_bit = STYLE_CENTER;
+    i32 style = n->style;
+    if ((style & center_bit) != 0) {
+        graphics.draw_label_centered(n->x, n->y, n->w, (char*)n->text, color, bold, s);
+    } else {
+        graphics.draw_label(n->x, n->y, (char*)n->text, color, bold, s);
+    }
+}
+
+void draw_text_input(Node *n) {
+    i32 s = ui_scale();
+    i32 x = n->x;
+    i32 y = n->y;
+    i32 w = n->w;
+    i32 h = n->h;
+    i32 state = n->state;
+    i32 focused_bit = STATE_FOCUSED;
+    i32 focused = state & focused_bit;
+    i32 r = theme.input_radius() * s;
+    i32 pad = theme.input_padding_x() * s;
+
+    i32 bg = theme.input_bg();
+    graphics.fill_round_rect(x, y, w, h, r, bg);
+    i32 border = theme.input_border();
+    i32 bw = s;
+    if (focused != 0) {
+        border = theme.input_border_focus();
+        bw = 2 * s;
+    }
+    graphics.draw_round_rect(x, y, w, h, r, bw, border);
+
+    i32 th = graphics.text_height(0, s);
+    i32 ty = y + (h - th) / 2;
+    graphics.push_clip(x + pad / 2, y, w - pad, h);
+    if (n->len == 0) {
+        if (n->name != 0) {
+            i32 ph = theme.input_placeholder();
+            graphics.draw_label(x + pad, ty, (char*)n->name, ph, 0, s);
+        }
+    } else {
+        i32 fg = theme.text_primary();
+        fg = node_fg(n, fg);
+        graphics.draw_label(x + pad, ty, (char*)n->text, fg, 0, s);
+    }
+    if (focused != 0) {
+        i32 cur = n->cursor;
+        i32 caret_x = x + pad + graphics.text_width_n((char*)n->text, cur, 0, s);
+        i32 caret = theme.caret();
+        graphics.fill_rect(caret_x, ty + s, s, th - 2 * s, caret);
+    }
+    graphics.pop_clip();
+}
+
+void draw_checkbox(Node *n) {
+    i32 s = ui_scale();
+    i32 x = n->x;
+    i32 y = n->y;
+    i32 h = n->h;
+    i32 state = n->state;
+    i32 checked_bit = STATE_CHECKED;
+    i32 hovered_bit = STATE_HOVERED;
+    i32 pressed_bit = STATE_PRESSED;
+    i32 checked = state & checked_bit;
+    i32 box = theme.checkbox_size() * s;
+    i32 r = theme.checkbox_radius() * s;
+    i32 by = y + (h - box) / 2;
+
+    i32 face = theme.checkbox_bg();
+    i32 border = theme.checkbox_border();
+    if (checked != 0) {
+        face = theme.accent();
+        border = theme.accent_pressed();
+        if ((state & pressed_bit) != 0) { face = theme.accent_pressed(); }
+        else if ((state & hovered_bit) != 0) { face = theme.accent_hover(); }
+    } else {
+        if ((state & pressed_bit) != 0) { face = theme.button_face_pressed(); }
+        else if ((state & hovered_bit) != 0) { face = theme.button_face_hover(); }
+    }
+    graphics.fill_round_rect(x, by, box, box, r, face);
+    graphics.draw_round_rect(x, by, box, box, r, s, border);
+    if (checked != 0) {
+        // Check mark: two strokes, drawn s+1 times side by side for weight.
+        i32 white = theme.on_accent();
+        i32 x0 = x + box * 25 / 100;
+        i32 y0 = by + box * 52 / 100;
+        i32 x1 = x + box * 43 / 100;
+        i32 y1 = by + box * 70 / 100;
+        i32 x2 = x + box * 76 / 100;
+        i32 y2 = by + box * 30 / 100;
+        i32 k = 0;
+        while (k < s + 1) {
+            graphics.draw_line(x0, y0 + k, x1, y1 + k, white);
+            graphics.draw_line(x1, y1 + k, x2, y2 + k, white);
+            k = k + 1;
+        }
+    }
+    if (n->text != 0) {
+        i32 fg = theme.text_primary();
+        fg = node_fg(n, fg);
+        i32 th = graphics.text_height(0, s);
+        graphics.draw_label(x + box + 8 * s, y + (h - th) / 2, (char*)n->text, fg, 0, s);
+    }
+}
+
+void draw_panel(Node *n) {
+    i32 s = ui_scale();
+    i32 bg = theme.panel_bg();
+    i32 border = theme.panel_border();
+    i32 r = n->radius;
+    graphics.fill_round_rect(n->x, n->y, n->w, n->h, r, bg);
+    graphics.draw_round_rect(n->x, n->y, n->w, n->h, r, s, border);
+}
+
+// --- taskbar ---
+// The bar lists every window on the desktop (click to activate), with a
+// launcher button at the left and an uptime clock at the right. Entries are
+// laid out arithmetically at draw and hit time rather than as child nodes,
+// so the bar never has to be rebuilt when windows come and go.
+
+// The desktop window with the smallest id greater than `after` (0 = first);
+// 0 when there is none. Walks the desktop's children, so a closed window
+// drops out and ids keep creation order.
+i32 next_window_after(i32 after) {
+    i32 kw = NODE_WINDOW;
+    i32 best = 0;
+    i32 child_id = first_child(g_desktop_node_id);
+    while (child_id != 0) {
+        Node *c = node_ptr(child_id);
+        if (c == 0) { child_id = 0; }
+        else {
+            if (c->kind == kw) {
+                if (child_id > after) {
+                    if (best == 0) { best = child_id; }
+                    else if (child_id < best) { best = child_id; }
+                }
+            }
+            child_id = c->next_sibling;
+        }
+    }
+    return best;
+}
+
+i32 taskbar_entry_x(i32 index) {
+    i32 s = ui_scale();
+    i32 launcher = theme.taskbar_launcher_w() * s;
+    i32 ew = theme.taskbar_entry_w() * s;
+    return 8 * s + launcher + 8 * s + index * (ew + 6 * s);
+}
+
+void format_clock() {
+    // Uptime from the 1 ms scheduler tick: HH:MM:SS.
+    i32 secs = scheduler.ticks() / 1000;
+    i32 hh = (secs / 3600) % 100;
+    i32 mm = (secs / 60) % 60;
+    i32 ss = secs % 60;
+    g_clock_buf[0] = (char)('0' + hh / 10);
+    g_clock_buf[1] = (char)('0' + hh % 10);
+    g_clock_buf[2] = ':';
+    g_clock_buf[3] = (char)('0' + mm / 10);
+    g_clock_buf[4] = (char)('0' + mm % 10);
+    g_clock_buf[5] = ':';
+    g_clock_buf[6] = (char)('0' + ss / 10);
+    g_clock_buf[7] = (char)('0' + ss % 10);
+    g_clock_buf[8] = (char)0;
+}
+
+void draw_taskbar(Node *n) {
+    i32 s = ui_scale();
+    i32 x = n->x;
+    i32 y = n->y;
+    i32 w = n->w;
+    i32 h = n->h;
+
+    i32 bg = theme.taskbar_bg();
+    graphics.blend_rect(x, y, w, h, bg);
+    i32 edge = theme.taskbar_edge();
+    graphics.blend_rect(x, y, w, s, edge);
+
+    // Launcher: accent dot + "MyOS".
+    i32 accent = theme.accent();
+    i32 on_dark = theme.text_on_dark();
+    i32 lx = x + 8 * s;
+    i32 lw = theme.taskbar_launcher_w() * s;
+    i32 er = theme.taskbar_entry_radius() * s;
+    i32 entry_bg = theme.taskbar_entry();
+    graphics.fill_round_rect(lx, y + 6 * s, lw, h - 12 * s, er, entry_bg);
+    graphics.fill_disc(lx + 16 * s, y + h / 2, 6 * s, accent);
+    i32 th_b = graphics.text_height(1, s);
+    graphics.draw_label(lx + 30 * s, y + (h - th_b) / 2, "MyOS", on_dark, 1, s);
+
+    // One entry per window, in creation order (ids ascend), so raising a
+    // window does not shuffle the bar.
+    i32 ew = theme.taskbar_entry_w() * s;
+    i32 active_bg = theme.taskbar_entry_active();
+    i32 dim = theme.text_on_dark_dim();
+    i32 th = graphics.text_height(0, s);
+    i32 index = 0;
+    i32 win = next_window_after(0);
+    while (win != 0) {
+        Node *c = node_ptr(win);
+        i32 ex = x + taskbar_entry_x(index);
+        i32 ebg = entry_bg;
+        i32 fg = dim;
+        if (win == g_active_window) { ebg = active_bg; fg = on_dark; }
+        graphics.fill_round_rect(ex, y + 6 * s, ew, h - 12 * s, er, ebg);
+        if (win == g_active_window) {
+            graphics.fill_round_rect(ex + 10 * s, y + h - 9 * s, ew - 20 * s, 2 * s, s, accent);
+        }
+        if (c->text != 0) {
+            graphics.push_clip(ex + 10 * s, y, ew - 20 * s, h);
+            graphics.draw_label(ex + 12 * s, y + (h - th) / 2, (char*)c->text, fg, 0, s);
+            graphics.pop_clip();
+        }
+        index = index + 1;
+        win = next_window_after(win);
+    }
+
+    // Clock at the right.
+    format_clock();
+    i32 cw = graphics.text_width(&g_clock_buf[0], 0, s);
+    graphics.draw_label(x + w - cw - 16 * s, y + (h - th) / 2, &g_clock_buf[0], on_dark, 0, s);
+}
+
+// The window whose taskbar entry is at (px, py), or 0; -1 for the launcher.
+i32 taskbar_target_at(i32 px, i32 py) {
+    Node *n = node_ptr(g_taskbar_id);
+    if (n == 0) { return 0; }
+    i32 s = ui_scale();
+    i32 x = n->x;
+    i32 lx = x + 8 * s;
+    i32 lw = theme.taskbar_launcher_w() * s;
+    if (px >= lx) {
+        if (px < lx + lw) { return 0 - 1; }
+    }
+    i32 ew = theme.taskbar_entry_w() * s;
+    i32 index = 0;
+    i32 win = next_window_after(0);
+    while (win != 0) {
+        i32 ex = x + taskbar_entry_x(index);
+        if (px >= ex) {
+            if (px < ex + ew) { return win; }
+        }
+        index = index + 1;
+        win = next_window_after(win);
+    }
+    return 0;
+}
+
+// Handle a click on the taskbar: activate the window whose entry was hit, or
+// run the launcher handler.
+export void taskbar_click(i32 px, i32 py) {
+    i32 target = taskbar_target_at(px, py);
+    if (target > 0) {
+        focus_window(target);
+        return;
+    }
+    if (target < 0) {
+        i32 handler = g_launcher;
+        if (handler != 0) { handler(); }
+    }
+}
+
+export void set_launcher(i32 handler) {
+    g_launcher = handler;
+}
+
+// Redraw the clock (called by a timer once a second).
+export void refresh_taskbar() {
+    damage_node(g_taskbar_id);
+}
+
+void draw_node(Node *n) {
+    i32 kind = n->kind;
+    i32 x = n->x;
+    i32 y = n->y;
+    i32 w = n->w;
+    i32 h = n->h;
+    i32 scale = ui_scale();
 
     // Copy the NODE_* u16 globals into i32 locals before comparing. Comparing an
     // i32 against a `u16` global directly (kind == NODE_WINDOW) miscompiles and is
@@ -804,201 +1933,141 @@ void (Node* n) draw_node() {
     i32 kbox = NODE_BOX;
     i32 kb = NODE_BUTTON;
     i32 kt = NODE_TEXT;
-    i32 pressed = STATE_PRESSED;
-    i32 hovered = STATE_HOVERED;
+    i32 ki = NODE_TEXT_INPUT;
+    i32 kc = NODE_CHECKBOX;
+    i32 ks = NODE_SEPARATOR;
+    i32 kp = NODE_PANEL;
+    i32 ktb = NODE_TASKBAR;
 
     if (kind == kbox) {
         graphics.fill_rect(x, y, w, h, n->background_color);
         graphics.draw_rect_scaled(x, y, w, h, n->border_color, scale);
     } else if (kind == kw) {
-        graphics.fill_rect(x, y, w, h, white);
-        graphics.draw_rect_scaled(x, y, w, h, graphics.rgb(136, 136, 136), scale);
-        if (n->text != 0) {
-            graphics.draw_text_scaled(x + 20 * scale, y + 8 * scale, (char*)n->text, black, white, scale);
-        }
+        draw_window(n);
     } else if (kind == kb) {
-        i32 face = graphics.rgb(204, 204, 204);
-        if ((state & pressed) != 0) {
-            face = graphics.rgb(150, 150, 150);
-        } else if ((state & hovered) != 0) {
-            face = graphics.rgb(180, 210, 255);
-        }
-        graphics.fill_rect(x, y, w, h, face);
-        graphics.draw_rect_scaled(x, y, w, h, black, scale);
-        if (n->text != 0) {
-            graphics.draw_text_scaled(x + 12 * scale, y + 8 * scale, (char*)n->text, black, face, scale);
-        }
+        draw_button(n);
     } else if (kind == kt) {
-        if (n->text != 0) {
-            graphics.draw_text_scaled(x, y, (char*)n->text, black, white, scale);
-        }
+        draw_text_node(n);
+    } else if (kind == ki) {
+        draw_text_input(n);
+    } else if (kind == kc) {
+        draw_checkbox(n);
+    } else if (kind == ks) {
+        i32 sep = theme.separator();
+        graphics.blend_rect(x, y, w, h, sep);
+    } else if (kind == kp) {
+        draw_panel(n);
+    } else if (kind == ktb) {
+        draw_taskbar(n);
     }
     // Structural nodes (root/system/process/...) draw nothing.
 }
 
-// Render node_id and its descendants. Skips invisible subtrees. Sibling order is
-// paint order, so later children appear on top.
-// True if a node's own area overlaps the damage region. Nodes that do not are
-// skipped without drawing: the clip rectangle would discard their pixels
-// anyway, but only after paying for the glyph and fill work that produced
-// them, which is the cost partial repaint exists to avoid.
-i32 (Node* n) node_in_damage() {
-    if (g_damage_x1 <= g_damage_x0) { return 1; } // no region: draw everything
-
-    i32 w = n->w;
-    i32 h = n->h;
-    if (w == 0) {
-        i32 len = 0;
-        if (n->text != 0) {
-            char *t = (char*)n->text;
-            while (t[len] != 0) { len = len + 1; }
-        }
-        w = len * 8 * ui_scale();
-        h = 8 * ui_scale();
-    }
-    i32 x0 = n->x;
-    i32 y0 = n->y;
-    if (x0 + w <= g_damage_x0) { return 0; }
-    if (y0 + h <= g_damage_y0) { return 0; }
-    if (x0 >= g_damage_x1) { return 0; }
-    if (y0 >= g_damage_y1) { return 0; }
+// True if a node's painted area overlaps the damage region. Nodes that do not
+// are skipped without drawing: the clip rectangle would discard their pixels
+// anyway, but only after paying for the fill work that produced them.
+i32 node_in_damage(Node *n) {
+    if (g_painting_all != 0) { return 1; } // full repaint: draw everything
+    node_extent(n);
+    if (g_ext_x + g_ext_w <= g_paint_x0) { return 0; }
+    if (g_ext_y + g_ext_h <= g_paint_y0) { return 0; }
+    if (g_ext_x >= g_paint_x1) { return 0; }
+    if (g_ext_y >= g_paint_y1) { return 0; }
     return 1;
 }
 
-export void render(i32 node_id) {
-    case get_node(node_id) of {
-        Some(raw_node) -> ({
-            Node *n = (Node*)raw_node;
-            if ((n->state & STATE_VISIBLE) == 0) { return; }
-
-            // Children are visited regardless: a child can overlap the damage region
-            // even when its parent does not.
-            if (n.node_in_damage() != 0) {
-                n.draw_node();
-            }
-
-            i32 child_id = n->first_child;
-            while (child_id != 0) {
-                render(child_id);
-                child_id = next_sibling(child_id);
-            }
-        });
-        None -> 0;
-    };
-}
-
-// Repaint the whole UI: clear the desktop, render each top-level window under it,
-// then flip the frame to the display. The desktop node is a structural container
-// with no STATE_VISIBLE, so we render its children directly rather than gating on
-// the desktop's own visibility. Geometry comes from graphics' functions, which
-// use the shared display configuration read by the emulator at build time.
-// Draw the scene into the back buffer WITHOUT flipping it to the display. Use
-// this when the caller wants to overlay something (e.g. the mouse cursor) before
-// presenting. Call present() yourself afterwards.
-// Add a rectangle to the damage region. Clipped to the display, so callers can
-// pass node bounds without worrying about off-screen nodes.
-export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
-    i32 display_width = graphics.display_width();
-    i32 display_height = graphics.display_height();
-    i32 x0 = x;
-    i32 y0 = y;
-    i32 x1 = x + w;
-    i32 y1 = y + h;
-
-    if (x0 < 0) { x0 = 0; }
-    if (y0 < 0) { y0 = 0; }
-    if (x1 > display_width) { x1 = display_width; }
-    if (y1 > display_height) { y1 = display_height; }
-    if (x1 <= x0) { return; }
-    if (y1 <= y0) { return; }
-
-    if (g_damage_x1 <= g_damage_x0) {
-        // Region was empty: this rectangle becomes it.
-        g_damage_x0 = x0;
-        g_damage_y0 = y0;
-        g_damage_x1 = x1;
-        g_damage_y1 = y1;
-        return;
-    }
-    if (x0 < g_damage_x0) { g_damage_x0 = x0; }
-    if (y0 < g_damage_y0) { g_damage_y0 = y0; }
-    if (x1 > g_damage_x1) { g_damage_x1 = x1; }
-    if (y1 > g_damage_y1) { g_damage_y1 = y1; }
-}
-
-// Mark a node's own area as needing repaint. Text nodes carry no width/height
-// of their own, so they damage a line-height band wide enough for their string.
-export void damage_node(i32 id) {
-    case get_node(id) of {
-        Some(raw_node) -> ({
-            Node *n = (Node*)raw_node;
-            i32 w = n->w;
-            i32 h = n->h;
-            if (w == 0) {
-                // Text: 8x8 glyphs, so the band is 8 tall and 8 per character wide.
-                i32 len = 0;
-                if (n->text != 0) {
-                    char *t = (char*)n->text;
-                    while (t[len] != 0) { len = len + 1; }
-                }
-                w = len * 8 * ui_scale();
-                h = 8 * ui_scale();
-            }
-            damage_rect(n->x, n->y, w, h);
-        });
-        None -> 0;
-    };
-}
-
-export i32 has_damage() {
-    if (g_damage_x1 > g_damage_x0) { return 1; }
+// Containers that confine their children's pixels to their own bounds.
+i32 clips_children(Node *n) {
+    i32 kw = NODE_WINDOW;
+    i32 kp = NODE_PANEL;
+    i32 k = n->kind;
+    if (k == kw) { return 1; }
+    if (k == kp) { return 1; }
     return 0;
 }
 
-export void clear_damage() {
-    g_damage_x0 = 0;
-    g_damage_y0 = 0;
-    g_damage_x1 = 0;
-    g_damage_y1 = 0;
+// Render node_id and its descendants. Skips invisible subtrees. Sibling order
+// is paint order, so later children appear on top.
+export void render(i32 node_id) {
+    Node *n = node_ptr(node_id);
+    if (n == 0) { return; }
+    if ((n->state & STATE_VISIBLE) == 0) { return; }
+
+    i32 in_damage = node_in_damage(n);
+    if (in_damage != 0) {
+        draw_node(n);
+    }
+
+    // Children are visited regardless: a child can overlap the damage region
+    // even when its parent does not -- unless the parent clips them, in
+    // which case an off-damage parent means off-damage children.
+    i32 clip = clips_children(n);
+    if (clip != 0) {
+        if (in_damage == 0) { return; }
+        graphics.push_clip(n->x, n->y, n->w, n->h);
+    }
+    i32 child_id = n->first_child;
+    while (child_id != 0) {
+        render(child_id);
+        child_id = next_sibling(child_id);
+    }
+    if (clip != 0) { graphics.pop_clip(); }
+}
+
+// Paint the desktop: wallpaper, every window in z-order, then the taskbar on
+// top. Honours the current clip, so render_scene can call it for a region.
+void paint_desktop() {
+    i32 top = theme.desktop_top();
+    i32 bottom = theme.desktop_bottom();
+    i32 dw = graphics.display_width();
+    i32 dh = graphics.display_height();
+    graphics.fill_gradient_v(0, 0, dw, dh, top, bottom);
+
+    i32 child_id = first_child(g_desktop_node_id);
+    while (child_id != 0) {
+        if (child_id != g_taskbar_id) { render(child_id); }
+        child_id = next_sibling(child_id);
+    }
+    if (g_taskbar_id != 0) { render(g_taskbar_id); }
 }
 
 // Repaint every node, ignoring the damage region. Used for the first frame and
 // whenever a caller wants an unconditional repaint.
 export void render_all() {
-    graphics.fill_rect(0, 0, graphics.display_width(), graphics.display_height(), graphics.rgb(30, 30, 40));
-    i32 child_id = first_child(g_desktop_node_id);
-    while (child_id != 0) {
-        render(child_id);
-        child_id = next_sibling(child_id);
-    }
+    clear_damage();
+    g_painting_all = 1;
+    graphics.clear_clip();
+    paint_desktop();
     clear_damage();
 }
 
-// Repaint just the damaged region: clear it to the desktop colour, then redraw
-// every node that overlaps it. Nodes outside the region are skipped entirely,
-// which is where the saving comes from -- a hover highlight redraws one button,
-// not all 786432 pixels. Falls back to a full repaint when nothing is marked,
-// so a caller that never damages anything still gets a correct frame.
+// Repaint just the damaged region: everything that overlaps it is redrawn
+// under a clip, nodes outside it are skipped entirely -- a hover highlight
+// redraws one button, not the whole screen. Falls back to a full repaint when
+// nothing is marked, so a caller that never damages anything still gets a
+// correct frame.
 export void render_scene() {
-    if (g_damage_x1 <= g_damage_x0) {
+    if (g_damage_count == 0) {
         render_all();
         return;
     }
 
-    i32 dx = g_damage_x0;
-    i32 dy = g_damage_y0;
-    i32 dw = g_damage_x1 - g_damage_x0;
-    i32 dh = g_damage_y1 - g_damage_y0;
-
-    graphics.set_clip(dx, dy, dw, dh);
-    graphics.fill_rect(dx, dy, dw, dh, graphics.rgb(30, 30, 40));
-
-    i32 child_id = first_child(g_desktop_node_id);
-    while (child_id != 0) {
-        render(child_id);
-        child_id = next_sibling(child_id);
+    // Paint each damaged rectangle under its own clip. The count is
+    // snapshotted so anything damaged while painting waits for the next
+    // frame rather than extending this loop.
+    i32 count = g_damage_count;
+    i32 i = 0;
+    while (i < count) {
+        g_paint_x0 = g_damage_x0[i];
+        g_paint_y0 = g_damage_y0[i];
+        g_paint_x1 = g_damage_x1[i];
+        g_paint_y1 = g_damage_y1[i];
+        g_painting_all = 0;
+        graphics.set_clip(g_paint_x0, g_paint_y0, g_paint_x1 - g_paint_x0, g_paint_y1 - g_paint_y0);
+        paint_desktop();
+        i = i + 1;
     }
-
+    g_painting_all = 1;
     graphics.clear_clip();
     clear_damage();
 }
@@ -1008,9 +2077,10 @@ export void render_desktop() {
     graphics.present();
 }
 
-// --- hit-test ---
+// --- hit-test --------------------------------------------------------------------------------------
+
 // True if (px, py) is inside a node's bounds. Nodes with zero size never hit.
-i32 (Node* n) node_contains(i32 px, i32 py) {
+i32 node_contains(Node *n, i32 px, i32 py) {
     i32 x = n->x;
     i32 y = n->y;
     i32 w = n->w;
@@ -1025,55 +2095,65 @@ i32 (Node* n) node_contains(i32 px, i32 py) {
 }
 
 // Return the id of the topmost visible node in node_id's subtree whose bounds
-// contain (px, py), or 0 if none. Later siblings are on top (paint order), so we
-// scan children last-to-topmost by taking the deepest/last hit.
+// contain (px, py), or 0 if none. Later siblings are on top (paint order), so
+// the last hit among the children wins over earlier ones and over the parent.
 i32 hit_test(i32 node_id, i32 px, i32 py) {
-    return case get_node(node_id) of {
-        Some(raw_node) -> ({
-            Node *n = (Node*)raw_node;
-            if ((n->state & STATE_VISIBLE) == 0) { return 0; }
+    Node *n = node_ptr(node_id);
+    if (n == 0) { return 0; }
+    if ((n->state & STATE_VISIBLE) == 0) { return 0; }
 
-            i32 found = 0;
-            if (n.node_contains(px, py) != 0) {
-                if ((n->state & STATE_HIT_TESTABLE) != 0) {
-                    found = node_id;
-                }
-            }
-
-            // A child that also contains the point wins over the parent, and a later
-            // child wins over an earlier one (it paints on top).
-            i32 child_id = n->first_child;
-            while (child_id != 0) {
-                i32 child_hit = hit_test(child_id, px, py);
-                if (child_hit != 0) {
-                    found = child_hit;
-                }
-                child_id = next_sibling(child_id);
-            }
-            found;
-        });
-        None -> 0;
-    };
-}
-
-// Return the topmost UI node under (x, y), searching the whole desktop. 0 if none.
-export i32 find_at(i32 x, i32 y) {
-    i32 child_id = first_child(g_desktop_node_id);
+    i32 inside = node_contains(n, px, py);
     i32 found = 0;
+    if (inside != 0) {
+        if ((n->state & STATE_HIT_TESTABLE) != 0) {
+            found = node_id;
+        }
+    }
+
+    // Children of a clipping container cannot be hit outside it.
+    if (inside == 0) {
+        if (clips_children(n) != 0) { return 0; }
+    }
+
+    i32 child_id = n->first_child;
     while (child_id != 0) {
-        i32 hit = hit_test(child_id, x, y);
-        if (hit != 0) {
-            found = hit;
+        i32 child_hit = hit_test(child_id, px, py);
+        if (child_hit != 0) {
+            found = child_hit;
         }
         child_id = next_sibling(child_id);
     }
     return found;
 }
 
+// Return the topmost UI node under (x, y), searching the whole desktop. 0 if
+// none. The taskbar is always on top.
+export i32 find_at(i32 x, i32 y) {
+    if (g_taskbar_id != 0) {
+        i32 tb = hit_test(g_taskbar_id, x, y);
+        if (tb != 0) { return tb; }
+    }
+    i32 child_id = first_child(g_desktop_node_id);
+    i32 found = 0;
+    while (child_id != 0) {
+        if (child_id != g_taskbar_id) {
+            i32 hit = hit_test(child_id, x, y);
+            if (hit != 0) {
+                found = hit;
+            }
+        }
+        child_id = next_sibling(child_id);
+    }
+    return found;
+}
+
+// --- init ------------------------------------------------------------------------------------------
+
 export void init() {
     graphics.init();
     i32 root = create_node(NODE_ROOT, "root");
     g_root_node_id = root;
+    set_role(root, ROLE_ROOT);
 
     i32 sys = create_node(NODE_SYSTEM, "system");
     append_child(root, sys);
@@ -1089,8 +2169,45 @@ export void init() {
 
     i32 ui = create_node(NODE_UI, "ui");
     append_child(sys, ui);
-    
+
     i32 desktop = create_node(NODE_DESKTOP, "desktop");
     append_child(ui, desktop);
     g_desktop_node_id = desktop;
+    set_role(desktop, ROLE_DESKTOP);
+
+    i32 timers = create_node(NODE_UI, "timers");
+    append_child(ui, timers);
+    g_timers_node_id = timers;
+    g_timer_count = 0;
+
+    g_active_window = 0;
+    g_focus_id = 0;
+    g_taskbar_id = 0;
+}
+
+// Add the taskbar to the desktop. Separate from init() so tests that only
+// need a bare tree keep the layout they expect.
+export i32 create_taskbar() {
+    if (g_taskbar_id != 0) { return g_taskbar_id; }
+    i32 s = ui_scale();
+    i32 h = theme.taskbar_h() * s;
+    i32 dw = graphics.display_width();
+    i32 dh = graphics.display_height();
+    i32 id = create_node(NODE_TASKBAR, "taskbar");
+    set_role(id, ROLE_TOOLBAR);
+    set_text(id, "taskbar");
+    set_bounds(id, 0, dh - h, dw, h);
+    set_state_flag(id, STATE_VISIBLE, 1);
+    set_state_flag(id, STATE_HIT_TESTABLE, 1);
+    append_child(g_desktop_node_id, id);
+    g_taskbar_id = id;
+    return id;
+}
+
+// Height of the taskbar in display pixels (0 if none), so callers can keep
+// windows above it.
+export i32 taskbar_height() {
+    Node *n = node_ptr(g_taskbar_id);
+    if (n == 0) { return 0; }
+    return n->h;
 }

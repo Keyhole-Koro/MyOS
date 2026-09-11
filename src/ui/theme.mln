@@ -1,0 +1,86 @@
+package theme;
+
+import graphics from "graphics.mln";
+
+// Desktop theme: every colour and metric the renderer uses, in one place.
+// Colours are graphics.rgb()/rgba() values; metrics are in logical pixels
+// (the 1024x768 design space) and callers multiply by dom.ui_scale().
+//
+// Exposed as functions rather than globals because a MyLang package cannot
+// read another package's exported globals, only call its functions.
+//
+// The look: a deep blue-grey desktop gradient, light windows with a soft
+// shadow and an 8px corner radius, a blue accent for primary actions and
+// focus rings, and a translucent dark taskbar along the bottom edge.
+
+// --- desktop ---------------------------------------------------------------
+export i32 desktop_top()    { return graphics.rgb(0x2B, 0x3A, 0x5C); }
+export i32 desktop_bottom() { return graphics.rgb(0x0E, 0x14, 0x24); }
+
+// --- accent ----------------------------------------------------------------
+export i32 accent()         { return graphics.rgb(0x3B, 0x82, 0xF6); }
+export i32 accent_hover()   { return graphics.rgb(0x60, 0x9A, 0xF8); }
+export i32 accent_pressed() { return graphics.rgb(0x25, 0x63, 0xEB); }
+export i32 on_accent()      { return graphics.rgb(0xFF, 0xFF, 0xFF); }
+
+// --- text ------------------------------------------------------------------
+export i32 text_primary()   { return graphics.rgb(0x1F, 0x23, 0x28); }
+export i32 text_secondary() { return graphics.rgb(0x6B, 0x72, 0x80); }
+export i32 text_disabled()  { return graphics.rgb(0xA0, 0xA6, 0xB0); }
+export i32 text_on_dark()   { return graphics.rgb(0xF3, 0xF4, 0xF6); }
+export i32 text_on_dark_dim() { return graphics.rgb(0xA8, 0xB0, 0xBE); }
+
+// --- window ----------------------------------------------------------------
+export i32 window_bg()              { return graphics.rgb(0xF6, 0xF7, 0xF9); }
+export i32 window_border()          { return graphics.rgba(0x00, 0x00, 0x00, 70); }
+export i32 window_border_inactive() { return graphics.rgba(0x00, 0x00, 0x00, 45); }
+export i32 titlebar_top()           { return graphics.rgb(0xEC, 0xEE, 0xF2); }
+export i32 titlebar_bottom()        { return graphics.rgb(0xDF, 0xE2, 0xE8); }
+export i32 titlebar_inactive()      { return graphics.rgb(0xF0, 0xF1, 0xF4); }
+export i32 titlebar_divider()       { return graphics.rgba(0x00, 0x00, 0x00, 35); }
+export i32 close_button()           { return graphics.rgb(0xFF, 0x5F, 0x57); }
+export i32 close_button_ring()      { return graphics.rgba(0x00, 0x00, 0x00, 45); }
+export i32 close_button_inactive()  { return graphics.rgb(0xC8, 0xCB, 0xD1); }
+export i32 close_button_hover()     { return graphics.rgb(0xE0, 0x44, 0x3E); }
+export i32 close_glyph()            { return graphics.rgb(0x4A, 0x00, 0x00); }
+
+export i32 titlebar_h()        { return 32; }
+export i32 window_radius()     { return 8; }
+export i32 shadow_size()       { return 12; }
+export i32 shadow_offset()     { return 5; }
+export i32 shadow_alpha()      { return 90; }
+export i32 shadow_alpha_inactive() { return 50; }
+
+// --- controls ----------------------------------------------------------------
+export i32 button_face()         { return graphics.rgb(0xFF, 0xFF, 0xFF); }
+export i32 button_face_hover()   { return graphics.rgb(0xF1, 0xF3, 0xF7); }
+export i32 button_face_pressed() { return graphics.rgb(0xE2, 0xE6, 0xEC); }
+export i32 button_border()       { return graphics.rgba(0x00, 0x00, 0x00, 55); }
+export i32 button_radius()       { return 6; }
+
+export i32 panel_bg()      { return graphics.rgb(0xFF, 0xFF, 0xFF); }
+export i32 panel_border()  { return graphics.rgba(0x00, 0x00, 0x00, 30); }
+export i32 separator()     { return graphics.rgba(0x00, 0x00, 0x00, 30); }
+
+export i32 input_bg()            { return graphics.rgb(0xFF, 0xFF, 0xFF); }
+export i32 input_border()        { return graphics.rgba(0x00, 0x00, 0x00, 60); }
+export i32 input_border_focus()  { return accent(); }
+export i32 input_placeholder()   { return text_disabled(); }
+export i32 caret()               { return accent(); }
+export i32 input_radius()        { return 6; }
+export i32 input_padding_x()     { return 8; }
+
+export i32 checkbox_size()       { return 18; }
+export i32 checkbox_radius()     { return 4; }
+export i32 checkbox_border()     { return graphics.rgba(0x00, 0x00, 0x00, 80); }
+export i32 checkbox_bg()         { return graphics.rgb(0xFF, 0xFF, 0xFF); }
+
+// --- taskbar -------------------------------------------------------------------
+export i32 taskbar_h()          { return 40; }
+export i32 taskbar_bg()         { return graphics.rgba(0x10, 0x14, 0x1E, 225); }
+export i32 taskbar_edge()       { return graphics.rgba(0xFF, 0xFF, 0xFF, 28); }
+export i32 taskbar_entry()      { return graphics.rgba(0xFF, 0xFF, 0xFF, 22); }
+export i32 taskbar_entry_active() { return graphics.rgba(0xFF, 0xFF, 0xFF, 50); }
+export i32 taskbar_entry_w()    { return 168; }
+export i32 taskbar_entry_radius() { return 6; }
+export i32 taskbar_launcher_w() { return 88; }

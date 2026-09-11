@@ -1,14 +1,31 @@
 # MYOS-012 phase 3 example: click the counter UI's button and confirm the
-# label updates. Run with:
+# label updates, then exercise the keyboard and window management added in
+# MYOS-014. Run with:
 #   make dom-script SCRIPT=system/MyOS/tests/dom/counter.domscript
 
 dump
 
-click role=button name="CLICK ME"
+click role=button name="Click me"
 wait_for text="clicks: 1"
 
-click role=button name="CLICK ME"
-click role=button name="CLICK ME"
+click role=button name="Click me"
+click role=button name="Click me"
 wait_for text="clicks: 3"
+
+click role=checkbox name="Count by two"
+click role=button name="Click me"
+wait_for text="clicks: 5"
+click role=button name="Reset"
+wait_for text="clicks: 0"
+
+# Type into the Notes window
+click role=textbox name="Title"
+type Hello MyOS
+wait_for text="You typed: Hello MyOS"
+
+# Drag the Counter window by its title bar, then close Notes
+drag role=window name="Counter" dx=120 dy=80
+click_at role=window name="Notes" dx=32 dy=32
+wait_gone role=window name="Notes"
 
 dump

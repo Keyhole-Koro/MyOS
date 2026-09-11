@@ -2,6 +2,7 @@ package graphics;
 
 import display_config from "display_config.mln";
 import font from "font8x8.mln";
+import font_sans from "font_sans.mln";
 import str from "../../../../toolchain/MyStdLib/str.mln";
 
 export i32 VRAM_BASE = 0x30000000;
@@ -17,6 +18,7 @@ export i32 display_height() {
     return display_config.height();
 }
 
+// 2D accelerator registers. Must match runtime/MyEmulator/src/constants.rs.
 i32 DMA2D_DEST_ADDR = 0x24000020;
 i32 DMA2D_COLOR_ADDR = 0x24000024;
 i32 DMA2D_WIDTH_ADDR = 0x24000028;
@@ -27,6 +29,26 @@ i32 DISPLAY_SWAP_ADDR = 0x24000038;
 i32 CURSOR_X_ADDR = 0x24000060;
 i32 CURSOR_Y_ADDR = 0x24000064;
 i32 CURSOR_CTRL_ADDR = 0x24000068;
+i32 DMA2D_SRC_ADDR = 0x24000090;
+i32 DMA2D_SRC_STRIDE_ADDR = 0x24000094;
+i32 DMA2D_COLOR2_ADDR = 0x24000098;
+i32 DMA2D_RADIUS_ADDR = 0x2400009C;
+i32 DMA2D_SPREAD_ADDR = 0x240000B8;
+i32 DMA2D_CLIP_X0_ADDR = 0x240000C0;
+i32 DMA2D_CLIP_Y0_ADDR = 0x240000C4;
+i32 DMA2D_CLIP_X1_ADDR = 0x240000C8;
+i32 DMA2D_CLIP_Y1_ADDR = 0x240000CC;
+
+i32 DMA2D_CMD_FILL = 1;
+i32 DMA2D_CMD_BLEND_FILL = 2;
+i32 DMA2D_CMD_COPY = 3;
+i32 DMA2D_CMD_COPY_BLEND = 4;
+i32 DMA2D_CMD_MASK_A8 = 5;
+i32 DMA2D_CMD_GRADIENT_V = 6;
+i32 DMA2D_CMD_GRADIENT_H = 7;
+i32 DMA2D_CMD_ROUND_RECT = 8;
+i32 DMA2D_CMD_ROUND_RECT_OUTLINE = 9;
+i32 DMA2D_CMD_SHADOW = 10;
 
 // Present the back buffer: copy everything drawn since the last present to the
 // visible front buffer in one shot, so partially-drawn frames never appear.
@@ -51,16 +73,87 @@ export void show_cursor(i32 on) {
     *ctrl = on;
 }
 
+// ---------------------------------------------------------------------------
+// Colours. Packed 0xAARRGGBB. rgb() leaves alpha at 0, which every opaque
+// primitive ignores; the blend primitives read it, so build translucent
+// colours with rgba() or with_alpha().
+// ---------------------------------------------------------------------------
+
+export i32 rgb(i32 r, i32 g, i32 b) {
+    return r * 65536 + g * 256 + b;
+}
+
+export i32 rgba(i32 r, i32 g, i32 b, i32 a) {
+    return (a << 24) | rgb(r, g, b);
+}
+
+export i32 with_alpha(i32 color, i32 a) {
+    return (a << 24) | (color & 0xFFFFFF);
+}
+
+export i32 alpha_of(i32 color) {
+    return (color >> 24) & 0xFF;
+}
+
+export i32 red_of(i32 color) { return (color >> 16) & 0xFF; }
+export i32 green_of(i32 color) { return (color >> 8) & 0xFF; }
+export i32 blue_of(i32 color) { return color & 0xFF; }
+
+// Linear blend of two colours, t in 0..255 (0 = c0, 255 = c1). Alpha is
+// dropped; callers re-attach one with with_alpha if they need it.
+export i32 mix(i32 c0, i32 c1, i32 t) {
+    if (t <= 0) { return c0 & 0xFFFFFF; }
+    if (t >= 255) { return c1 & 0xFFFFFF; }
+    i32 r = (red_of(c0) * (255 - t) + red_of(c1) * t + 127) / 255;
+    i32 g = (green_of(c0) * (255 - t) + green_of(c1) * t + 127) / 255;
+    i32 b = (blue_of(c0) * (255 - t) + blue_of(c1) * t + 127) / 255;
+    return rgb(r, g, b);
+}
+
+// Move a colour toward black / white by `amount` (0..255).
+export i32 darken(i32 color, i32 amount) {
+    return mix(color, rgb(0, 0, 0), amount);
+}
+
+export i32 lighten(i32 color, i32 amount) {
+    return mix(color, rgb(255, 255, 255), amount);
+}
+
+// ---------------------------------------------------------------------------
 // Clip rectangle. All drawing is confined to it, so a partial repaint can draw
-// whole nodes and have the parts outside the damaged region dropped. Defaults
-// to the whole display; clear_clip() restores that.
+// whole nodes and have the parts outside the damaged region dropped, and a
+// container can confine its children. Defaults to the whole display;
+// clear_clip() restores that. push_clip() intersects with the current clip
+// and pop_clip() restores the previous one, nesting up to CLIP_DEPTH deep.
+// ---------------------------------------------------------------------------
 i32 g_clip_x0 = 0;
 i32 g_clip_y0 = 0;
 i32 g_clip_x1 = 0;
 i32 g_clip_y1 = 0;
 
+i32 CLIP_DEPTH = 16;
+i32 g_clip_stack_x0[16];
+i32 g_clip_stack_y0[16];
+i32 g_clip_stack_x1[16];
+i32 g_clip_stack_y1[16];
+i32 g_clip_sp = 0;
+
 export void init() {
     clear_clip();
+    g_clip_sp = 0;
+}
+
+// Mirror the clip into the accelerator's scissor registers, so shapes drawn
+// by DMA2D (rounded rects, shadows) are clipped without being reshaped.
+void sync_scissor() {
+    i32* x0 = (i32*)DMA2D_CLIP_X0_ADDR;
+    i32* y0 = (i32*)DMA2D_CLIP_Y0_ADDR;
+    i32* x1 = (i32*)DMA2D_CLIP_X1_ADDR;
+    i32* y1 = (i32*)DMA2D_CLIP_Y1_ADDR;
+    *x0 = g_clip_x0;
+    *y0 = g_clip_y0;
+    *x1 = g_clip_x1;
+    *y1 = g_clip_y1;
 }
 
 export void set_clip(i32 x, i32 y, i32 w, i32 h) {
@@ -78,6 +171,7 @@ export void set_clip(i32 x, i32 y, i32 w, i32 h) {
     g_clip_y0 = y0;
     g_clip_x1 = x1;
     g_clip_y1 = y1;
+    sync_scissor();
 }
 
 export void clear_clip() {
@@ -85,13 +179,143 @@ export void clear_clip() {
     g_clip_y0 = 0;
     g_clip_x1 = display_config.width();
     g_clip_y1 = display_config.height();
+    sync_scissor();
 }
 
-export i32 rgb(i32 r, i32 g, i32 b) {
-    return r * 65536 + g * 256 + b;
+// Intersect the clip with (x, y, w, h), remembering the old one for pop_clip.
+// Overflowing the stack keeps clipping (the intersection still applies) but
+// the matching pop restores the outermost saved clip rather than panicking.
+export void push_clip(i32 x, i32 y, i32 w, i32 h) {
+    if (g_clip_sp < CLIP_DEPTH) {
+        g_clip_stack_x0[g_clip_sp] = g_clip_x0;
+        g_clip_stack_y0[g_clip_sp] = g_clip_y0;
+        g_clip_stack_x1[g_clip_sp] = g_clip_x1;
+        g_clip_stack_y1[g_clip_sp] = g_clip_y1;
+    }
+    g_clip_sp = g_clip_sp + 1;
+    i32 x1 = x + w;
+    i32 y1 = y + h;
+    if (x > g_clip_x0) { g_clip_x0 = x; }
+    if (y > g_clip_y0) { g_clip_y0 = y; }
+    if (x1 < g_clip_x1) { g_clip_x1 = x1; }
+    if (y1 < g_clip_y1) { g_clip_y1 = y1; }
+    sync_scissor();
 }
 
-// Write a single pixel, bounds-checked against the display.
+export void pop_clip() {
+    if (g_clip_sp <= 0) { return; }
+    g_clip_sp = g_clip_sp - 1;
+    i32 i = g_clip_sp;
+    if (i >= CLIP_DEPTH) { i = CLIP_DEPTH - 1; }
+    g_clip_x0 = g_clip_stack_x0[i];
+    g_clip_y0 = g_clip_stack_y0[i];
+    g_clip_x1 = g_clip_stack_x1[i];
+    g_clip_y1 = g_clip_stack_y1[i];
+    sync_scissor();
+}
+
+// True if the clip rectangle is empty (nothing can be drawn).
+export i32 clip_is_empty() {
+    if (g_clip_x1 <= g_clip_x0) { return 1; }
+    if (g_clip_y1 <= g_clip_y0) { return 1; }
+    return 0;
+}
+
+// Intersect (x, y, w, h) with the clip. The result lands in g_cl_* and the
+// return value says whether anything is left. Every accelerator primitive
+// goes through this so DMA2D never writes outside the clip.
+i32 g_cl_x = 0;
+i32 g_cl_y = 0;
+i32 g_cl_w = 0;
+i32 g_cl_h = 0;
+
+i32 clip_rect(i32 x, i32 y, i32 w, i32 h) {
+    i32 x0 = x;
+    i32 y0 = y;
+    i32 x1 = x + w;
+    i32 y1 = y + h;
+    if (x0 < g_clip_x0) { x0 = g_clip_x0; }
+    if (y0 < g_clip_y0) { y0 = g_clip_y0; }
+    if (x1 > g_clip_x1) { x1 = g_clip_x1; }
+    if (y1 > g_clip_y1) { y1 = g_clip_y1; }
+    if (x1 <= x0) { return 0; }
+    if (y1 <= y0) { return 0; }
+    g_cl_x = x0;
+    g_cl_y = y0;
+    g_cl_w = x1 - x0;
+    g_cl_h = y1 - y0;
+    return 1;
+}
+
+// ---------------------------------------------------------------------------
+// DMA2D submission. dest is the already-clipped rectangle (g_cl_*).
+// ---------------------------------------------------------------------------
+void dma_dest(i32 x, i32 y, i32 w, i32 h) {
+    i32 width = display_config.width();
+    i32* dest = (i32*)DMA2D_DEST_ADDR;
+    i32* dw = (i32*)DMA2D_WIDTH_ADDR;
+    i32* dh = (i32*)DMA2D_HEIGHT_ADDR;
+    i32* ds = (i32*)DMA2D_STRIDE_ADDR;
+    *dest = VRAM_BASE + (y * width + x) * 4;
+    *dw = w;
+    *dh = h;
+    *ds = width;
+}
+
+// Shape commands take the unclipped rectangle (the scissor trims it), but
+// the destination address must stay inside VRAM: a rectangle that starts
+// above or left of the display is shifted in and shrunk instead, which the
+// scissor cannot do for us. The shape's corners move with it, which only
+// matters for the few pixels of a corner already off-screen.
+void dma_dest_shape(i32 x, i32 y, i32 w, i32 h) {
+    if (x < 0) { w = w + x; x = 0; }
+    if (y < 0) { h = h + y; y = 0; }
+    dma_dest(x, y, w, h);
+}
+
+void dma_color(i32 color) {
+    i32* c = (i32*)DMA2D_COLOR_ADDR;
+    *c = color;
+}
+
+void dma_color2(i32 color) {
+    i32* c = (i32*)DMA2D_COLOR2_ADDR;
+    *c = color;
+}
+
+void dma_src(i32 addr, i32 stride) {
+    i32* s = (i32*)DMA2D_SRC_ADDR;
+    i32* ss = (i32*)DMA2D_SRC_STRIDE_ADDR;
+    *s = addr;
+    *ss = stride;
+}
+
+void dma_shape(i32 radius, i32 spread) {
+    i32* r = (i32*)DMA2D_RADIUS_ADDR;
+    i32* sp = (i32*)DMA2D_SPREAD_ADDR;
+    *r = radius;
+    *sp = spread;
+}
+
+void dma_run(i32 cmd) {
+    i32* c = (i32*)DMA2D_CMD_ADDR;
+    *c = cmd;
+}
+
+// True if (x, y, w, h) misses the clip entirely (nothing to draw).
+i32 outside_clip(i32 x, i32 y, i32 w, i32 h) {
+    if (x + w <= g_clip_x0) { return 1; }
+    if (y + h <= g_clip_y0) { return 1; }
+    if (x >= g_clip_x1) { return 1; }
+    if (y >= g_clip_y1) { return 1; }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Pixels and rectangles.
+// ---------------------------------------------------------------------------
+
+// Write a single pixel, bounds-checked against the clip.
 export void put_pixel(i32 x, i32 y, i32 color) {
     if (x < g_clip_x0) { return; }
     if (y < g_clip_y0) { return; }
@@ -102,48 +326,114 @@ export void put_pixel(i32 x, i32 y, i32 color) {
     *ptr = color;
 }
 
-export void fill_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
-    i32 width = display_config.width();
-    i32 height = display_config.height();
-    if (x < width) {
-        if (y < height) {
-            if (x < 0) {
-                w = w + x;
-                x = 0;
-            }
-            if (y < 0) {
-                h = h + y;
-                y = 0;
-            }
-            if (x + w > width) { w = width - x; }
-            if (y + h > height) { h = height - y; }
+// Read a pixel back from the back buffer (0 outside the display).
+export i32 get_pixel(i32 x, i32 y) {
+    if (x < 0) { return 0; }
+    if (y < 0) { return 0; }
+    if (x >= display_config.width()) { return 0; }
+    if (y >= display_config.height()) { return 0; }
+    i32 addr = VRAM_BASE + (y * display_config.width() + x) * 4;
+    i32* ptr = (i32*)addr;
+    return *ptr;
+}
 
-            // Intersect with the clip rectangle so a partial repaint cannot
-            // paint outside the damaged region.
-            if (x < g_clip_x0) { w = w - (g_clip_x0 - x); x = g_clip_x0; }
-            if (y < g_clip_y0) { h = h - (g_clip_y0 - y); y = g_clip_y0; }
-            if (x + w > g_clip_x1) { w = g_clip_x1 - x; }
-            if (y + h > g_clip_y1) { h = g_clip_y1 - y; }
-            
-            if (w > 0) {
-                if (h > 0) {
-                    i32* DMA2D_DEST = (i32*)DMA2D_DEST_ADDR;
-                    i32* DMA2D_COLOR = (i32*)DMA2D_COLOR_ADDR;
-                    i32* DMA2D_WIDTH = (i32*)DMA2D_WIDTH_ADDR;
-                    i32* DMA2D_HEIGHT = (i32*)DMA2D_HEIGHT_ADDR;
-                    i32* DMA2D_STRIDE = (i32*)DMA2D_STRIDE_ADDR;
-                    i32* DMA2D_CMD = (i32*)DMA2D_CMD_ADDR;
-                    
-                    *DMA2D_DEST = VRAM_BASE + (y * width + x) * 4;
-                    *DMA2D_COLOR = color;
-                    *DMA2D_WIDTH = w;
-                    *DMA2D_HEIGHT = h;
-                    *DMA2D_STRIDE = width;
-                    *DMA2D_CMD = 1; // triggers fill
-                }
-            }
-        }
-    }
+// Blend one pixel with the colour's alpha (software; use for edges only).
+export void blend_pixel(i32 x, i32 y, i32 color) {
+    i32 a = alpha_of(color);
+    if (a == 0) { return; }
+    if (a >= 255) { put_pixel(x, y, color); return; }
+    if (x < g_clip_x0) { return; }
+    if (y < g_clip_y0) { return; }
+    if (x >= g_clip_x1) { return; }
+    if (y >= g_clip_y1) { return; }
+    i32 addr = VRAM_BASE + (y * display_config.width() + x) * 4;
+    i32* ptr = (i32*)addr;
+    *ptr = mix(*ptr, color, a);
+}
+
+export void fill_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
+    if (clip_rect(x, y, w, h) == 0) { return; }
+    dma_dest(g_cl_x, g_cl_y, g_cl_w, g_cl_h);
+    dma_color(color);
+    dma_run(DMA2D_CMD_FILL);
+}
+
+// Fill with a translucent colour (alpha in the top byte). Alpha 0 draws
+// nothing, 255 is an opaque fill.
+export void blend_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
+    i32 a = alpha_of(color);
+    if (a == 0) { return; }
+    if (a >= 255) { fill_rect(x, y, w, h, color); return; }
+    if (clip_rect(x, y, w, h) == 0) { return; }
+    dma_dest(g_cl_x, g_cl_y, g_cl_w, g_cl_h);
+    dma_color(color);
+    dma_run(DMA2D_CMD_BLEND_FILL);
+}
+
+// Vertical gradient: c0 on the top row fading to c1 on the bottom row. When
+// the clip cuts rows off, the end colours are re-derived so the visible part
+// matches what an unclipped fill would have shown.
+export void fill_gradient_v(i32 x, i32 y, i32 w, i32 h, i32 c0, i32 c1) {
+    if (h <= 0) { return; }
+    if (w <= 0) { return; }
+    if (outside_clip(x, y, w, h) != 0) { return; }
+    // The full rectangle goes to the device and the scissor trims it, so a
+    // partial repaint reproduces exactly the rows a full paint produced
+    // (re-deriving end colours for the visible part rounds differently and
+    // leaves seams).
+    dma_dest_shape(x, y, w, h);
+    dma_color(c0);
+    dma_color2(c1);
+    dma_run(DMA2D_CMD_GRADIENT_V);
+}
+
+// Horizontal gradient: c0 at the left edge fading to c1 at the right edge.
+export void fill_gradient_h(i32 x, i32 y, i32 w, i32 h, i32 c0, i32 c1) {
+    if (w <= 0) { return; }
+    if (h <= 0) { return; }
+    if (outside_clip(x, y, w, h) != 0) { return; }
+    dma_dest_shape(x, y, w, h);
+    dma_color(c0);
+    dma_color2(c1);
+    dma_run(DMA2D_CMD_GRADIENT_H);
+}
+
+// Copy a w x h block of the back buffer from (sx, sy) to (dx, dy). The
+// accelerator stages the source, so overlapping rectangles copy correctly
+// (a window being dragged over its old position).
+export void copy_rect(i32 sx, i32 sy, i32 dx, i32 dy, i32 w, i32 h) {
+    if (clip_rect(dx, dy, w, h) == 0) { return; }
+    i32 width = display_config.width();
+    i32 off_x = g_cl_x - dx;
+    i32 off_y = g_cl_y - dy;
+    dma_dest(g_cl_x, g_cl_y, g_cl_w, g_cl_h);
+    dma_src(VRAM_BASE + ((sy + off_y) * width + sx + off_x) * 4, width);
+    dma_run(DMA2D_CMD_COPY);
+}
+
+// Blend an 8-bit coverage mask (row-major bytes at `src`, `stride` bytes per
+// row) onto the screen with `color`. Clipping shifts the source origin so the
+// visible part of the mask lines up.
+export void mask_blit(i32 src, i32 stride, i32 x, i32 y, i32 w, i32 h, i32 color) {
+    if (clip_rect(x, y, w, h) == 0) { return; }
+    i32 off_x = g_cl_x - x;
+    i32 off_y = g_cl_y - y;
+    dma_dest(g_cl_x, g_cl_y, g_cl_w, g_cl_h);
+    dma_src(src + off_y * stride + off_x, stride);
+    dma_color(color);
+    dma_run(DMA2D_CMD_MASK_A8);
+}
+
+// Draw a w x h block of 0xAARRGGBB pixels from RAM at `src` (row-major,
+// `stride` pixels per row) with per-pixel alpha. Pixels with alpha 0 leave
+// the background alone, so non-rectangular sprites composite cleanly.
+export void blit_alpha(i32 src, i32 stride, i32 x, i32 y, i32 w, i32 h) {
+    if (clip_rect(x, y, w, h) == 0) { return; }
+    i32 off_x = g_cl_x - x;
+    i32 off_y = g_cl_y - y;
+    dma_dest(g_cl_x, g_cl_y, g_cl_w, g_cl_h);
+    dma_src(src + (off_y * stride + off_x) * 4, stride);
+    dma_run(DMA2D_CMD_COPY_BLEND);
 }
 
 export void draw_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
@@ -164,10 +454,87 @@ export void draw_rect_scaled(i32 x, i32 y, i32 w, i32 h, i32 color, i32 scale) {
     fill_rect(x + w - scale, y, scale, h, color);
 }
 
+// ---------------------------------------------------------------------------
+// Rounded rectangles and shadows.
+//
+// These are accelerator commands: the guest hands DMA2D the unclipped
+// rectangle plus radius/thickness/blur, and the scissor (mirrored from the
+// clip stack) trims the result. Shapes therefore cost a handful of register
+// writes regardless of size, and their anti-aliased edges are computed by
+// the device.
+// ---------------------------------------------------------------------------
+
 i32 iabs(i32 v) {
     if (v < 0) { return 0 - v; }
     return v;
 }
+
+// Integer square root (floor).
+export i32 isqrt(i32 n) {
+    if (n <= 0) { return 0; }
+    i32 res = 0;
+    i32 bit = 1 << 30;
+    while (bit > n) { bit = bit >> 2; }
+    while (bit != 0) {
+        if (n >= res + bit) {
+            n = n - (res + bit);
+            res = (res >> 1) + bit;
+        } else {
+            res = res >> 1;
+        }
+        bit = bit >> 2;
+    }
+    return res;
+}
+
+// Rounded rectangle with anti-aliased corners. Alpha in `color` is honoured
+// (0 = nothing, 255 or rgb() = opaque).
+export void fill_round_rect(i32 x, i32 y, i32 w, i32 h, i32 r, i32 color) {
+    if (w <= 0) { return; }
+    if (h <= 0) { return; }
+    if (outside_clip(x, y, w, h) != 0) { return; }
+    i32 a = alpha_of(color);
+    if (r <= 0) {
+        if (a == 0) { fill_rect(x, y, w, h, color); }
+        else { blend_rect(x, y, w, h, color); }
+        return;
+    }
+    dma_dest_shape(x, y, w, h);
+    dma_color(color);
+    dma_shape(r, 0);
+    dma_run(DMA2D_CMD_ROUND_RECT);
+}
+
+// Rounded outline of thickness t (drawn inside the rectangle).
+export void draw_round_rect(i32 x, i32 y, i32 w, i32 h, i32 r, i32 t, i32 color) {
+    if (w <= 0) { return; }
+    if (h <= 0) { return; }
+    if (t < 1) { t = 1; }
+    if (outside_clip(x, y, w, h) != 0) { return; }
+    dma_dest_shape(x, y, w, h);
+    dma_color(color);
+    dma_shape(r, t);
+    dma_run(DMA2D_CMD_ROUND_RECT_OUTLINE);
+}
+
+// Soft drop shadow of a rounded rectangle: opaque `alpha` at the edge,
+// fading to nothing `size` pixels out, offset down by `offset_y`. The
+// rectangle itself is expected to be painted on top afterwards.
+export void draw_shadow(i32 x, i32 y, i32 w, i32 h, i32 r, i32 size, i32 offset_y, i32 alpha) {
+    if (size < 1) { return; }
+    if (w <= 0) { return; }
+    if (h <= 0) { return; }
+    i32 sy = y + offset_y;
+    if (outside_clip(x - size, sy - size, w + 2 * size, h + 2 * size) != 0) { return; }
+    dma_dest_shape(x, sy, w, h);
+    dma_color(rgba(0, 0, 0, alpha));
+    dma_shape(r, size);
+    dma_run(DMA2D_CMD_SHADOW);
+}
+
+// ---------------------------------------------------------------------------
+// Lines and circles (software, put_pixel based).
+// ---------------------------------------------------------------------------
 
 // Draw a line from (x0, y0) to (x1, y1) using Bresenham's algorithm. Handles
 // any slope, including horizontal/vertical and steep lines.
@@ -239,9 +606,123 @@ export void fill_circle(i32 cx, i32 cy, i32 r, i32 color) {
     }
 }
 
-// Draw a single 8x8 glyph at (x, y). Set pixels use `fg`; if `bg` differs from
-// `fg` the cell background is filled with `bg` first (opaque text). Pass
-// bg == fg for transparent rendering.
+// Anti-aliased filled disc: a rounded rectangle whose radius is half its
+// size. Diameter is 2r.
+export void fill_disc(i32 cx, i32 cy, i32 r, i32 color) {
+    fill_round_rect(cx - r, cy - r, 2 * r, 2 * r, r, color);
+}
+
+// ---------------------------------------------------------------------------
+// Anti-aliased proportional text (font_sans). Positions are the top-left of
+// the line box; the baseline sits ascent() below it. `bold` selects the
+// heavier face, `scale` (1 or 2) the size matching the UI scale.
+// ---------------------------------------------------------------------------
+
+// (A cross-package call nested inside another's argument list does not
+// resolve, hence the locals.)
+export i32 text_height(i32 bold, i32 scale) {
+    i32 face = font_sans.face_for(bold, scale);
+    return font_sans.line_height(face);
+}
+
+export i32 text_ascent(i32 bold, i32 scale) {
+    i32 face = font_sans.face_for(bold, scale);
+    return font_sans.ascent(face);
+}
+
+// Width in pixels of s in the given face (advance widths summed).
+export i32 text_width(char* s, i32 bold, i32 scale) {
+    i32 face = font_sans.face_for(bold, scale);
+    i32 w = 0;
+    i32 i = 0;
+    i32 c = (i32)s[i] & 0xFF;
+    while (c != 0) {
+        if (c != 10) {
+            w = w + font_sans.advance(face, c);
+        }
+        i = i + 1;
+        c = (i32)s[i] & 0xFF;
+    }
+    return w;
+}
+
+// Width of the first `n` characters, for caret placement in text fields.
+export i32 text_width_n(char* s, i32 n, i32 bold, i32 scale) {
+    i32 face = font_sans.face_for(bold, scale);
+    i32 w = 0;
+    i32 i = 0;
+    i32 c = (i32)s[i] & 0xFF;
+    while (c != 0) {
+        if (i >= n) { return w; }
+        if (c != 10) {
+            w = w + font_sans.advance(face, c);
+        }
+        i = i + 1;
+        c = (i32)s[i] & 0xFF;
+    }
+    return w;
+}
+
+// Draw one glyph with its line box's top-left at (x, y); returns the advance.
+export i32 draw_glyph(i32 x, i32 y, i32 ch, i32 color, i32 bold, i32 scale) {
+    i32 face = font_sans.face_for(bold, scale);
+    i32 w = font_sans.width(face, ch);
+    i32 h = font_sans.height(face, ch);
+    if (w > 0) {
+        if (h > 0) {
+            i32 src = font_sans.data(face, ch);
+            i32 gx = x + font_sans.bearing_x(face, ch);
+            i32 gy = y + font_sans.bearing_y(face, ch);
+            mask_blit(src, w, gx, gy, w, h, color);
+        }
+    }
+    return font_sans.advance(face, ch);
+}
+
+// Draw a NUL-terminated string. Newline returns to x and drops one line.
+export void draw_label(i32 x, i32 y, char* s, i32 color, i32 bold, i32 scale) {
+    i32 face = font_sans.face_for(bold, scale);
+    i32 line_h = font_sans.line_height(face);
+    i32 cx = x;
+    i32 cy = y;
+    i32 i = 0;
+    i32 c = (i32)s[i] & 0xFF;
+    while (c != 0) {
+        if (c == 10) {
+            cx = x;
+            cy = cy + line_h;
+        } else {
+            // Skip glyphs entirely outside the clip without touching DMA2D.
+            i32 adv = font_sans.advance(face, c);
+            if (cx < g_clip_x1) {
+                if (cx + adv + 4 > g_clip_x0) {
+                    draw_glyph(cx, cy, c, color, bold, scale);
+                }
+            }
+            cx = cx + adv;
+        }
+        i = i + 1;
+        c = (i32)s[i] & 0xFF;
+    }
+}
+
+// Draw s horizontally centred in [x, x + w) with its line box top at y.
+export void draw_label_centered(i32 x, i32 y, i32 w, char* s, i32 color, i32 bold, i32 scale) {
+    i32 tw = text_width(s, bold, scale);
+    draw_label(x + (w - tw) / 2, y, s, color, bold, scale);
+}
+
+// Draw s vertically centred in a box of height h whose top is y.
+export void draw_label_vcentered(i32 x, i32 y, i32 h, char* s, i32 color, i32 bold, i32 scale) {
+    i32 th = text_height(bold, scale);
+    draw_label(x, y + (h - th) / 2, s, color, bold, scale);
+}
+
+// ---------------------------------------------------------------------------
+// Legacy 8x8 bitmap text. Still used by the serial-oriented debugging paths
+// and as a fallback; UI code uses draw_label above.
+// ---------------------------------------------------------------------------
+
 // Per-pixel glyph draw for the edge case where a character straddles the clip
 // boundary. Slower than the direct-to-VRAM path, but only runs for the few
 // glyphs on the edge of a damaged region.
@@ -261,6 +742,9 @@ void draw_char_clipped(i32 x, i32 y, i32 ch, i32 fg) {
     }
 }
 
+// Draw a single 8x8 glyph at (x, y). Set pixels use `fg`; if `bg` differs from
+// `fg` the cell background is filled with `bg` first (opaque text). Pass
+// bg == fg for transparent rendering.
 export void draw_char(i32 x, i32 y, i32 ch, i32 fg, i32 bg) {
     if (bg != fg) {
         fill_rect(x, y, 8, 8, bg);

@@ -3,11 +3,15 @@ package compositor;
 import dom from "dom.mln";
 import graphics from "graphics.mln";
 import mouse from "../../../MyKernel/src/io/mouse.mln";
+import keyboard from "../../../MyKernel/src/io/keyboard.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+import irq from "../../../MyKernel/src/arch/irq.mln";
 
-// Presents the DOM scene and turns mouse events into DOM interactions.
+// Presents the DOM scene and turns mouse and keyboard events into DOM
+// interactions: hover, press/click, window focus and z-order, title-bar
+// dragging, the close button, the taskbar, keyboard focus and timers.
 //
-// The compositor knows no node ids. Every interaction starts from
+// The compositor knows no node ids of its own. Every interaction starts from
 // dom.find_at(x, y), so whatever tree the running apps built is what gets
 // hovered, pressed and clicked; a node participates simply by being hit-
 // testable, and it reacts to a click by having an on_click handler.
@@ -26,36 +30,117 @@ void present_frame() {
 // the first timer interrupt can preempt task 0 anywhere, and render_all()
 // recursively walks every node doing DMA2D fills and glyph draws, so a tick
 // landing mid-walk left the desktop showing only whatever had been drawn so
-// far (typically just the window, not its box/button/text children) until
-// enough scheduler slices later let it finish -- which looked like an
-// unrelated rectangle appearing on the next click, when really it was the
-// deferred first paint completing. Doing this paint before scheduler.init()/
-// irq.enable() makes it atomic: nothing can preempt it.
+// far until enough scheduler slices later let it finish. Doing this paint
+// before scheduler.init()/irq.enable() makes it atomic: nothing can preempt it.
 export void paint_first_frame() {
     graphics.show_cursor(1);
     dom.render_all();
     graphics.present();
 }
 
-// Interactive loop, event-driven. The mouse IRQ handler drains the hardware
-// event FIFO into mouse's software queue; each pass consumes every queued
+// Drag state: the window being moved by its title bar, and where the pointer
+// was at the last event so each motion event applies only its own delta.
+i32 g_drag_win = 0;
+i32 g_drag_last_x = 0;
+i32 g_drag_last_y = 0;
+
+// Press state: the node under the pointer when the left button went down.
+// A click fires on release only if the pointer is still over that node, so
+// dragging off a button cancels it.
+i32 g_pressed_id = 0;
+i32 g_hot_id = 0;
+
+void on_press(i32 ex, i32 ey) {
+    i32 hit = dom.find_at(ex, ey);
+    if (hit == 0) {
+        dom.set_focus(0);
+        return;
+    }
+
+    // Anything inside a window activates that window first.
+    i32 win = dom.window_of(hit);
+    if (win != 0) {
+        dom.focus_window(win);
+    }
+
+    if (hit == dom.taskbar_id()) {
+        dom.taskbar_click(ex, ey);
+        return;
+    }
+
+    if (hit == win) {
+        // The window itself: close button, title-bar drag, or just focus.
+        if (dom.close_button_hit(win, ex, ey) != 0) {
+            g_hot_id = 0;
+            dom.close_window(win);
+            return;
+        }
+        if (dom.titlebar_hit(win, ex, ey) != 0) {
+            g_drag_win = win;
+            g_drag_last_x = ex;
+            g_drag_last_y = ey;
+        }
+        return;
+    }
+
+    // A control. Text fields take keyboard focus; everything else is a
+    // press-and-release click target.
+    i32 kind = dom.kind_of(hit);
+    i32 k_input = 15; // dom.NODE_TEXT_INPUT (u16 exports are not callable values)
+    if (kind == k_input) {
+        dom.set_focus(hit);
+        return;
+    }
+    dom.set_pressed(hit, 1);
+    g_pressed_id = hit;
+}
+
+void on_release(i32 ex, i32 ey) {
+    if (g_drag_win != 0) {
+        g_drag_win = 0;
+        return;
+    }
+    if (g_pressed_id != 0) {
+        // Un-press whatever this loop pressed, not whatever happens to be
+        // under the pointer now; click only if it is the same node.
+        dom.set_pressed(g_pressed_id, 0);
+        i32 hit = dom.find_at(ex, ey);
+        if (hit == g_pressed_id) {
+            dom.dispatch_click(hit); // may change the node's text
+        }
+        g_pressed_id = 0;
+    }
+}
+
+void on_motion(i32 ex, i32 ey) {
+    if (g_drag_win != 0) {
+        i32 dx = ex - g_drag_last_x;
+        i32 dy = ey - g_drag_last_y;
+        if (dx != 0) { dom.move_node(g_drag_win, dx, dy); }
+        else if (dy != 0) { dom.move_node(g_drag_win, dx, dy); }
+        g_drag_last_x = ex;
+        g_drag_last_y = ey;
+    }
+}
+
+// Interactive loop, event-driven. The mouse and keyboard IRQ handlers drain
+// the hardware FIFOs into software queues; each pass consumes every queued
 // event and edge-detects the button per event, so a click whose press and
-// release both happened since the last pass still dispatches (nothing shorter
-// than a display frame is lost anymore). The live registers stay authoritative
-// for the cursor position and hover state, so a dropped event can delay a
-// repaint but never wedge a node in a pressed or hovered state.
+// release both happened since the last pass still dispatches. The live
+// registers stay authoritative for the cursor position and hover state, so a
+// dropped event can delay a repaint but never wedge a node in a pressed or
+// hovered state.
 export void run() {
     i32 prev_left = 0;
-    i32 pressed_id = 0; // node currently held down, 0 if none
-    i32 hot_id = 0;     // node currently hovered, 0 if none
 
     // paint_first_frame() already painted the desktop (called from main.mln
     // before interrupts were enabled, so that paint could not be preempted).
 
     while (1) {
 
-        // Consume all queued events. Clicks are dispatched at the event's own
-        // coordinates: where the press happened, not where the pointer is now.
+        // Consume all queued mouse events. Clicks are dispatched at the
+        // event's own coordinates: where the press happened, not where the
+        // pointer is now.
         while (mouse.has_event() != 0) {
             i32 ex = mouse.event_x();
             i32 ey = mouse.event_y();
@@ -64,23 +149,25 @@ export void run() {
 
             if (eb != 0) {
                 if (prev_left == 0) {
-                    // Press edge: whatever sits under the pointer takes it.
-                    i32 hit = dom.find_at(ex, ey);
-                    if (hit != 0) {
-                        dom.set_pressed(hit, 1);
-                        pressed_id = hit;
-                        dom.dispatch_click(hit); // may change the node's text
-                    }
+                    on_press(ex, ey);
+                } else {
+                    on_motion(ex, ey);
                 }
             } else {
-                // Release: un-press whatever this loop pressed, not whatever
-                // happens to be under the pointer now.
-                if (pressed_id != 0) {
-                    dom.set_pressed(pressed_id, 0);
-                    pressed_id = 0;
+                if (prev_left != 0) {
+                    on_release(ex, ey);
                 }
             }
             prev_left = eb;
+        }
+
+        // Keyboard events go to whichever node holds focus.
+        while (keyboard.has_event() != 0) {
+            i32 t = keyboard.event_type();
+            i32 c = keyboard.event_code();
+            i32 m = keyboard.event_mods();
+            keyboard.pop_event();
+            dom.dispatch_key_event(t, c, m);
         }
 
         // Live state drives the cursor and hover. Moving the pointer is two
@@ -91,11 +178,14 @@ export void run() {
         graphics.set_cursor(mx, my);
 
         i32 hit = dom.find_at(mx, my);
-        if (hit != hot_id) {
-            if (hot_id != 0) { dom.set_hovered(hot_id, 0); }
+        if (hit != g_hot_id) {
+            if (g_hot_id != 0) { dom.set_hovered(g_hot_id, 0); }
             if (hit != 0) { dom.set_hovered(hit, 1); }
-            hot_id = hit;
+            g_hot_id = hit;
         }
+
+        // Timers (clock, animations) run on this task between events.
+        dom.tick();
 
         // The setters above record what changed, so the damage region is the
         // authority on whether a repaint is needed.

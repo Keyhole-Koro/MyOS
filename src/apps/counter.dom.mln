@@ -1,61 +1,85 @@
 package counter;
 
 import dom from "../ui/dom.mln";
+import graphics from "../ui/graphics.mln";
 import strbuf from "../../../../toolchain/MyStdLib/strbuf.mln";
 
 // Click counter demo app.
 //
-// The window is described declaratively: each element calls the dom function of
-// the same name, every property is handed to the parameter of the same name,
-// and children become dom.append_child. mount() builds that tree, attaches it
-// to the desktop, and keeps the label id so the handler can rewrite its text.
+// The window is described declaratively: each element calls the dom function
+// of the same name, every property is handed to the parameter of the same
+// name, and children become dom.append_child. Coordinates are logical
+// (1024x768) and relative to the parent element -- a Window's children start
+// below its title bar. mount() builds the tree, attaches it to the desktop,
+// and keeps the label id so the handlers can rewrite its text.
 //
 // Interaction is not this app's concern. The compositor hit-tests the pointer
 // and calls whatever handler the hit node carries, so all this app does to
-// become clickable is pass on_click as the Button's onClick property.
+// become clickable is pass handlers as onClick properties.
 
 i32 g_clicks = 0;
+i32 g_step = 1;
 i32 g_label_id = 0;
 
 char g_click_buf[32];
+
+void refresh_label() {
+    i32 n = strbuf.reset(&g_click_buf[0]);
+    n = strbuf.append(&g_click_buf[0], 32, n, "clicks: ");
+    n = strbuf.append_i32(&g_click_buf[0], 32, n, g_clicks);
+    dom.set_text(g_label_id, &g_click_buf[0]);
+}
 
 // Bumps the counter and rewrites the label text; the next render picks up the
 // new text from the node. dom.dispatch_click invokes this indirectly with the
 // button id.
 void on_click(i32 id) {
-    g_clicks = g_clicks + 1;
+    g_clicks = g_clicks + g_step;
+    refresh_label();
+}
 
-    i32 n = strbuf.reset(&g_click_buf[0]);
-    n = strbuf.append(&g_click_buf[0], 32, n, "clicks: ");
-    n = strbuf.append_i32(&g_click_buf[0], 32, n, g_clicks);
+void on_reset(i32 id) {
+    g_clicks = 0;
+    refresh_label();
+}
 
-    dom.set_text(g_label_id, &g_click_buf[0]);
+// Checkbox: dispatch_click toggles the node's checked state before calling
+// this, so reading it back gives the new value.
+void on_step(i32 id) {
+    g_step = 1;
+    if (dom.is_checked(id) != 0) { g_step = 2; }
 }
 
 i32 build_ui() {
-    // Column owns its children's x/y. The zero coordinates below are
-    // intentional: the resulting button stays at (120, 130).
-    return <Window title="MyKernel Window" x={100} y={100} w={600} h={400}>
-        <Box x={110} y={120} w={580} h={360}
-             background={14737632} border={8947848} />
-        <Column x={120} y={130} w={540} h={320} padding={0} gap={16}>
-            <Button text="CLICK ME" x={0} y={0} w={150} h={60} onClick={on_click} />
-            <Text text="clicks: 0" x={0} y={0} />
-        </Column>
+    // Column and Row own their children's x/y, so the zeros below are
+    // intentional; only sizes matter inside them.
+    i32 muted = graphics.rgb(0x6B, 0x72, 0x80);
+    return <Window title="Counter" x={96} y={72} w={400} h={272}>
+        <Panel x={20} y={20} w={360} h={140} radius={10}>
+            <Column x={20} y={16} w={320} h={110} padding={0} gap={10}>
+                <Label text="A window, a panel, two buttons." x={0} y={0} color={muted} bold={0} />
+                <Label text="clicks: 0" x={0} y={0} color={0} bold={1} />
+                <Row x={0} y={0} w={320} h={36} padding={0} gap={10}>
+                    <PrimaryButton text="Click me" x={0} y={0} w={120} h={36} onClick={on_click} />
+                    <Button text="Reset" x={0} y={0} w={90} h={36} onClick={on_reset} />
+                </Row>
+            </Column>
+        </Panel>
+        <Checkbox text="Count by two" x={24} y={180} checked={0} onClick={on_step} />
     </Window>;
 }
 
-// Build the window, mount it on the desktop and remember the label. Returns the
-// window node id. The Box is a decorative first child; the Column contains the
-// button followed by the label.
+// Build the window, mount it on the desktop and remember the label. Returns
+// the window node id. Tree: Window > [Panel > Column > [Label, Label, Row >
+// [PrimaryButton, Button]], Checkbox].
 export i32 mount() {
     i32 win = build_ui();
     dom.append_child(dom.desktop_id(), win);
 
     i32 panel = dom.first_child(win);
-    i32 column = dom.next_sibling(panel);
-    i32 btn = dom.first_child(column);
-    g_label_id = dom.next_sibling(btn);
+    i32 column = dom.first_child(panel);
+    i32 caption = dom.first_child(column);
+    g_label_id = dom.next_sibling(caption);
 
     return win;
 }

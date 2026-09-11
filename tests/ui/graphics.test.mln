@@ -1,0 +1,211 @@
+import assert from "../../../../toolchain/MyStdLib/assert.mln";
+import graphics from "../../src/ui/graphics.mln";
+
+// Pixel-level checks of the drawing primitives against the emulator's 2D
+// accelerator (runtime/MyEmulator/src/machine/dma2d.rs): opaque and blended
+// fills, gradients, rounded rectangles, the scissor mirrored from the clip
+// stack, glyph masks and text metrics. Everything is read back from VRAM
+// with get_pixel, so a regression in either the guest wrappers or the
+// device shows up here without a screenshot.
+
+i32 red_of(i32 c) { return (c >> 16) & 0xFF; }
+i32 green_of(i32 c) { return (c >> 8) & 0xFF; }
+i32 blue_of(i32 c) { return c & 0xFF; }
+
+i32 near(i32 a, i32 b, i32 tol) {
+    i32 d = a - b;
+    if (d < 0) { d = 0 - d; }
+    if (d <= tol) { return 1; }
+    return 0;
+}
+
+i32 pixel_near(i32 x, i32 y, i32 color, i32 tol) {
+    i32 p = graphics.get_pixel(x, y);
+    if (near(red_of(p), red_of(color), tol) == 0) { return 0; }
+    if (near(green_of(p), green_of(color), tol) == 0) { return 0; }
+    if (near(blue_of(p), blue_of(color), tol) == 0) { return 0; }
+    return 1;
+}
+
+/*@Test "fills, blending and gradients" {
+    step: 5000000;
+}*/
+void fills() {
+    graphics.init();
+    i32 white = graphics.rgb(255, 255, 255);
+    i32 black = graphics.rgb(0, 0, 0);
+    graphics.fill_rect(0, 0, 200, 200, white);
+    assert.assert_true(graphics.get_pixel(10, 10) == white, "opaque fill");
+    assert.assert_true(graphics.get_pixel(199, 199) == white, "fill covers its last pixel");
+
+    // 50% black over white is mid grey; alpha 0 leaves the pixel alone.
+    graphics.blend_rect(0, 0, 100, 100, graphics.rgba(0, 0, 0, 128));
+    assert.assert_true(pixel_near(50, 50, graphics.rgb(127, 127, 127), 1), "blend at half alpha");
+    assert.assert_true(graphics.get_pixel(150, 150) == white, "blend stays inside its rect");
+    graphics.blend_rect(0, 0, 100, 100, graphics.rgba(255, 0, 0, 0));
+    assert.assert_true(pixel_near(50, 50, graphics.rgb(127, 127, 127), 1), "alpha 0 is a no-op");
+
+    // Vertical gradient: exact end colours, monotone in between.
+    graphics.fill_gradient_v(0, 0, 100, 101, black, white);
+    assert.assert_true(graphics.get_pixel(50, 0) == black, "gradient top");
+    assert.assert_true(graphics.get_pixel(50, 100) == white, "gradient bottom");
+    assert.assert_true(pixel_near(50, 50, graphics.rgb(127, 127, 127), 2), "gradient middle");
+    i32 prev = 0;
+    i32 y = 0;
+    i32 monotone = 1;
+    while (y <= 100) {
+        i32 v = red_of(graphics.get_pixel(50, y));
+        if (v < prev) { monotone = 0; }
+        prev = v;
+        y = y + 1;
+    }
+    assert.assert_true(monotone, "gradient is monotone");
+
+    // Horizontal gradient.
+    graphics.fill_gradient_h(0, 0, 101, 20, black, white);
+    assert.assert_true(graphics.get_pixel(0, 10) == black, "h gradient left");
+    assert.assert_true(graphics.get_pixel(100, 10) == white, "h gradient right");
+
+    // mix() matches the device's end-point rounding.
+    assert.assert_true(graphics.mix(black, white, 0) == black, "mix t=0");
+    assert.assert_true(graphics.mix(black, white, 255) == white, "mix t=255");
+}
+
+/*@Test "rounded rectangles and shadows" {
+    step: 5000000;
+}*/
+void shapes() {
+    graphics.init();
+    i32 white = graphics.rgb(255, 255, 255);
+    i32 blue = graphics.rgb(0, 0, 255);
+    graphics.fill_rect(0, 0, 300, 300, white);
+
+    // 100x60 with r=16 at (50,50): centre and straight edges are solid, the
+    // very corner pixel is cut away, and the edge is anti-aliased between.
+    graphics.fill_round_rect(50, 50, 100, 60, 16, blue);
+    assert.assert_true(graphics.get_pixel(100, 80) == blue, "round rect interior");
+    assert.assert_true(graphics.get_pixel(100, 50) == blue, "round rect top edge is solid");
+    assert.assert_true(graphics.get_pixel(50, 80) == blue, "round rect left edge is solid");
+    assert.assert_true(graphics.get_pixel(50, 50) == white, "corner pixel is outside the radius");
+    assert.assert_true(graphics.get_pixel(149, 109) == white, "opposite corner too");
+    i32 edge = graphics.get_pixel(55, 53); // on the arc
+    assert.assert_true(edge != white, "arc pixel is touched");
+    assert.assert_true(edge != blue, "arc pixel is blended, not solid");
+    assert.assert_true(graphics.get_pixel(49, 80) == white, "nothing outside the rect");
+    assert.assert_true(graphics.get_pixel(150, 80) == white, "nothing past the right edge");
+
+    // Outline: 2px ring, hollow inside.
+    graphics.fill_rect(0, 0, 300, 300, white);
+    graphics.draw_round_rect(50, 50, 100, 60, 8, 2, blue);
+    assert.assert_true(graphics.get_pixel(100, 50) == blue, "outline top row");
+    assert.assert_true(graphics.get_pixel(100, 51) == blue, "outline second row");
+    assert.assert_true(graphics.get_pixel(100, 53) == white, "outline is hollow");
+    assert.assert_true(graphics.get_pixel(51, 80) == blue, "outline left column");
+
+    // Shadow: darkens just outside the rect, fades to nothing at `size`,
+    // and is drawn under the (later) body.
+    graphics.fill_rect(0, 0, 300, 300, white);
+    graphics.draw_shadow(100, 100, 80, 40, 8, 12, 0, 128);
+    i32 just_outside = graphics.get_pixel(99, 120);
+    i32 far_outside = graphics.get_pixel(80, 120);
+    assert.assert_true(red_of(just_outside) < 200, "shadow is dark next to the edge");
+    assert.assert_true(far_outside == white, "shadow ends at its spread");
+    assert.assert_true(red_of(graphics.get_pixel(95, 120)) > red_of(just_outside), "shadow fades outward");
+    assert.assert_true(red_of(graphics.get_pixel(99, 120)) < red_of(graphics.get_pixel(99, 99)), "corner is lighter than the straight edge");
+}
+
+/*@Test "clip stack scissors the device" {
+    step: 5000000;
+}*/
+void clipping() {
+    graphics.init();
+    i32 white = graphics.rgb(255, 255, 255);
+    i32 red = graphics.rgb(255, 0, 0);
+    graphics.fill_rect(0, 0, 300, 300, white);
+
+    graphics.push_clip(100, 100, 50, 50);
+    graphics.fill_rect(0, 0, 300, 300, red);            // opaque fill, guest-clipped
+    graphics.fill_round_rect(0, 0, 300, 300, 40, red);  // device-clipped by the scissor
+    graphics.fill_gradient_v(0, 0, 300, 300, red, red);
+    assert.assert_true(graphics.get_pixel(125, 125) == red, "inside the clip is painted");
+    // A shadow whose spread reaches well past the clip: the scissor must
+    // stop it too (it darkens inside the clip, never outside).
+    graphics.draw_shadow(120, 120, 10, 10, 2, 30, 0, 255);
+    graphics.pop_clip();
+
+    assert.assert_true(green_of(graphics.get_pixel(110, 110)) == 0, "shadow blended over red inside the clip");
+    assert.assert_true(red_of(graphics.get_pixel(110, 110)) < 255, "shadow darkened inside the clip");
+    assert.assert_true(graphics.get_pixel(99, 125) == white, "left of the clip untouched");
+    assert.assert_true(graphics.get_pixel(150, 125) == white, "right of the clip untouched");
+    assert.assert_true(graphics.get_pixel(125, 99) == white, "above the clip untouched");
+    assert.assert_true(graphics.get_pixel(125, 150) == white, "below the clip untouched");
+
+    // Nested clips intersect; popping restores the outer one.
+    graphics.push_clip(0, 0, 200, 200);
+    graphics.push_clip(150, 150, 100, 100);
+    graphics.fill_rect(0, 0, 300, 300, red);
+    assert.assert_true(graphics.get_pixel(175, 175) == red, "intersection painted");
+    assert.assert_true(graphics.get_pixel(225, 225) == white, "outside the outer clip untouched");
+    graphics.pop_clip();
+    graphics.fill_rect(0, 0, 300, 300, red);
+    assert.assert_true(graphics.get_pixel(10, 10) == red, "outer clip restored");
+    assert.assert_true(graphics.get_pixel(225, 225) == white, "outer clip still applies");
+    graphics.pop_clip();
+    assert.assert_true(graphics.clip_is_empty() == 0, "full clip after popping everything");
+}
+
+/*@Test "text metrics and glyph masks" {
+    step: 40000000;
+}*/
+void text() {
+    graphics.init();
+    i32 white = graphics.rgb(255, 255, 255);
+    i32 black = graphics.rgb(0, 0, 0);
+    graphics.fill_rect(0, 0, 400, 100, white);
+
+    i32 w1 = graphics.text_width("Hello", 0, 1);
+    i32 w2 = graphics.text_width("Hello Hello", 0, 1);
+    i32 wb = graphics.text_width("Hello", 1, 1);
+    i32 w2x = graphics.text_width("Hello", 0, 2);
+    assert.assert_true(w1 > 0, "text has width");
+    assert.assert_true(w2 > w1, "longer text is wider");
+    assert.assert_true(wb > w1, "bold face is wider");
+    assert.assert_true(w2x > w1, "2x face is wider");
+    assert.assert_true(graphics.text_width_n("Hello", 0, 0, 1) == 0, "prefix of length 0");
+    assert.assert_true(graphics.text_width_n("Hello", 5, 0, 1) == w1, "prefix of full length");
+    assert.assert_true(graphics.text_height(0, 2) > graphics.text_height(0, 1), "2x line is taller");
+
+    // Drawing 'H' leaves black-ish pixels inside its box and nothing far away;
+    // the stems are solid and the interior between them stays white.
+    graphics.draw_label(10, 10, "H", black, 0, 2);
+    i32 dark = 0;
+    i32 x = 10;
+    i32 h = graphics.text_height(0, 2);
+    while (x < 10 + w1) {
+        i32 y = 10;
+        while (y < 10 + h) {
+            if (red_of(graphics.get_pixel(x, y)) < 128) { dark = dark + 1; }
+            y = y + 1;
+        }
+        x = x + 1;
+    }
+    assert.assert_true(dark > 20, "glyph painted coverage");
+    assert.assert_true(graphics.get_pixel(200, 50) == white, "nothing drawn outside the glyph");
+
+    // A clipped glyph: only the part inside the clip is painted.
+    graphics.fill_rect(0, 0, 400, 100, white);
+    graphics.push_clip(0, 0, 20, 100);
+    graphics.draw_label(10, 10, "MM", black, 0, 2);
+    graphics.pop_clip();
+    i32 outside_dark = 0;
+    x = 20;
+    while (x < 80) {
+        i32 y = 10;
+        while (y < 10 + h) {
+            if (red_of(graphics.get_pixel(x, y)) < 128) { outside_dark = outside_dark + 1; }
+            y = y + 1;
+        }
+        x = x + 1;
+    }
+    assert.assert_true(outside_dark == 0, "glyphs respect the clip");
+}
