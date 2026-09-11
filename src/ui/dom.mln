@@ -4,6 +4,7 @@ import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import serial from "../../../MyKernel/src/io/serial.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+import automation_io from "../io/automation_io.mln";
 import graphics from "graphics.mln";
 import theme from "theme.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
@@ -72,7 +73,7 @@ export u16 STYLE_CENTER  = 4; // Text: centre within w when w > 0
 // text=16 x=20 y=22 w=24 h=26 state=28 style=30 on_click=32
 // background_color=36 border_color=40 padding=44 gap=46 color=48 on_key=52
 // on_change=56 cap=60 len=62 cursor=64 radius=66 on_tick=68 interval=72
-// next_due=76 -> sizeof = 80. Allocated as 80.
+// next_due=76 test_id=80 -> sizeof = 84. Allocated as 84.
 //
 // Public because it is the payload type of get_node(). Mutation still goes
 // through the DOM setters by convention.
@@ -106,9 +107,10 @@ export typedef struct {
     i32 on_tick;          // Timer handler(id)
     i32 interval;         // Timer period in scheduler ticks
     i32 next_due;         // Timer: tick at which it next fires
+    char *test_id;        // stable automation identity; 0 = none
 } Node;
 
-i32 NODE_SIZE = 80;
+i32 NODE_SIZE = 84;
 
 // Damage rectangles: the areas that changed since the last render, in
 // display coordinates. render_scene repaints each one under a clip. Keeping
@@ -132,6 +134,7 @@ i32 g_paint_y1 = 0;
 i32 g_painting_all = 1;
 
 i32 g_next_node_id = 1; // 0 is invalid/null
+i32 g_revision = 0;     // increments on externally observable DOM mutation
 i32 g_root_node_id = 0;
 i32 g_desktop_node_id = 0; // set in init(); UI attaches under this
 i32 g_taskbar_id = 0;      // the desktop's taskbar node, drawn above windows
@@ -158,6 +161,9 @@ i32 g_ext_h = 0;
 
 // Formatted uptime clock for the taskbar.
 char g_clock_buf[16];
+
+void touch() { g_revision = g_revision + 1; }
+export i32 revision() { return g_revision; }
 
 // DOM markup uses logical 1024x768 coordinates. Scale it uniformly to the
 // physical display so its proportions remain intact on larger resolutions.
@@ -239,8 +245,10 @@ export i32 create_node(i32 kind, char *name) {
     n->on_tick = 0;
     n->interval = 0;
     n->next_due = 0;
+    n->test_id = (char*)0;
 
     g_node_table[id] = n;
+    touch();
     return id;
 }
 
@@ -489,6 +497,7 @@ export void set_bounds(i32 id, i32 x, i32 y, i32 w, i32 h) {
     relayout_container(n);
     Node *parent = node_ptr(n->parent);
     if (parent != 0) { relayout_container(parent); }
+    touch();
 }
 
 // Translate a node and everything under it, keeping damage in sync. This is
@@ -499,6 +508,7 @@ export void move_node(i32 id, i32 dx, i32 dy) {
     damage_node(id);
     offset_subtree(id, dx, dy);
     damage_node(id);
+    touch();
 }
 
 export void set_text(i32 id, char *text) {
@@ -518,12 +528,23 @@ export void set_text(i32 id, char *text) {
         if (parent != 0) { relayout_container(parent); }
     }
     damage_node(id);   // new string may be longer
+    touch();
 }
 
 export void set_role(i32 id, i32 role) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
     n->role = (u16)role;
+    touch();
+}
+
+// Stable, non-user-facing identity for a locator. Do not derive this from
+// visible text, because labels may be localized or change as state updates.
+export void set_test_id(i32 id, char *test_id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    n->test_id = test_id;
+    touch();
 }
 
 // Box colours: raw graphics.rgb() values, the same construction API as the
@@ -614,6 +635,7 @@ export void set_state_flag(i32 id, i32 flag, i32 on) {
         if (state_is_visible(n, flag) != 0) {
             damage_node(id);
         }
+        touch();
     }
 }
 
@@ -740,6 +762,7 @@ export void append_child(i32 parent_id, i32 child_id) {
     // A Column/Row controls the positions of its direct children. This runs
     // after linking so the new child participates immediately.
     relayout_container(parent);
+    touch();
 }
 
 // Unlink a node from its parent's child list (no damage, no free).
@@ -786,6 +809,7 @@ export void bring_to_front(i32 id) {
         last->next_sibling = (u16)id;
     }
     damage_node(id);
+    touch();
 }
 
 void free_subtree(i32 id) {
@@ -827,6 +851,7 @@ export void remove_node(i32 id) {
     damage_node(id);
     unlink(n);
     free_subtree(id);
+    touch();
 }
 
 // Return the id of the fixed desktop node created by init(); UI attaches here.
@@ -1508,6 +1533,104 @@ export void dump_json() {
     debug.println("---DOM-SNAPSHOT-BEGIN---");
     dump_node_json(g_root_node_id);
     debug.println("---DOM-SNAPSHOT-END---");
+}
+
+// --- automation bridge snapshot ---------------------------------------------------------------
+// Unlike dump_json(), this never touches serial. The host reads the dedicated
+// automation MMIO TX FIFO, so a shell prompt or another task's log line cannot
+// corrupt the protocol response.
+
+i32 g_automation_first = 1;
+
+void automation_raw(char *s) {
+    if (s == 0) { return; }
+    while (*s != 0) {
+        automation_io.putc(*s);
+        s = s + 1;
+    }
+}
+
+void automation_i32(i32 value) {
+    if (value == 0) { automation_io.putc('0'); return; }
+    if (value < 0) { automation_io.putc('-'); value = 0 - value; }
+    char digits[12];
+    i32 n = 0;
+    while (value > 0) {
+        digits[n] = (char)('0' + value % 10);
+        value = value / 10;
+        n = n + 1;
+    }
+    n = n - 1;
+    while (n >= 0) {
+        automation_io.putc(digits[n]);
+        n = n - 1;
+    }
+}
+
+void automation_json_string(char *s) {
+    automation_io.putc('"');
+    if (s != 0) {
+        while (*s != 0) {
+            i32 c = *s;
+            if (c == '"') { automation_io.putc('\\'); automation_io.putc('"'); }
+            else if (c == '\\') { automation_io.putc('\\'); automation_io.putc('\\'); }
+            else if (c == '\n') { automation_io.putc('\\'); automation_io.putc('n'); }
+            else { automation_io.putc(c); }
+            s = s + 1;
+        }
+    }
+    automation_io.putc('"');
+}
+
+void automation_bool(i32 value) {
+    if (value != 0) { automation_raw("true"); }
+    else { automation_raw("false"); }
+}
+
+void automation_state(Node *n, i32 flag) {
+    automation_bool(n->state & flag);
+}
+
+void automation_node(i32 node_id) {
+    Node *n = node_ptr(node_id);
+    if (n == 0) { return; }
+    if (g_automation_first == 0) { automation_io.putc(','); }
+    g_automation_first = 0;
+
+    automation_raw("{\"id\":"); automation_i32(n->id);
+    automation_raw(",\"parent\":"); automation_i32(n->parent);
+    automation_raw(",\"role\":"); automation_json_string(role_name(n->role));
+    automation_raw(",\"name\":"); automation_json_string((char*)n->name);
+    automation_raw(",\"text\":"); automation_json_string((char*)n->text);
+    automation_raw(",\"testId\":"); automation_json_string((char*)n->test_id);
+    automation_raw(",\"value\":");
+    i32 textbox = ROLE_TEXTBOX;
+    if (n->role == textbox) { automation_json_string((char*)n->text); }
+    else { automation_json_string(""); }
+    automation_raw(",\"bounds\":{\"x\":"); automation_i32(n->x);
+    automation_raw(",\"y\":"); automation_i32(n->y);
+    automation_raw(",\"width\":"); automation_i32(n->w);
+    automation_raw(",\"height\":"); automation_i32(n->h);
+    automation_raw("},\"visible\":"); automation_state(n, STATE_VISIBLE);
+    automation_raw(",\"enabled\":"); automation_state(n, STATE_ENABLED);
+    automation_raw(",\"focused\":"); automation_state(n, STATE_FOCUSED);
+    automation_raw(",\"checked\":"); automation_state(n, STATE_CHECKED);
+    automation_raw(",\"hitTestable\":"); automation_state(n, STATE_HIT_TESTABLE);
+    automation_io.putc('}');
+
+    i32 child = n->first_child;
+    while (child != 0) {
+        automation_node(child);
+        child = next_sibling(child);
+    }
+}
+
+export void write_automation_snapshot() {
+    g_automation_first = 1;
+    automation_raw("{\"revision\":"); automation_i32(g_revision);
+    automation_raw(",\"nodes\":[");
+    automation_node(g_root_node_id);
+    automation_raw("]}");
 }
 
 // --- renderer ---------------------------------------------------------------------------------

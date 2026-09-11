@@ -2,7 +2,7 @@ package notes;
 
 import dom from "../ui/dom.mln";
 import graphics from "../ui/graphics.mln";
-import strbuf from "../../../../toolchain/MyStdLib/strbuf.mln";
+import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
 
 // "Notes": a small form that exercises keyboard input. Two text fields, a
 // checkbox and a separator, plus a label that echoes what was typed. The
