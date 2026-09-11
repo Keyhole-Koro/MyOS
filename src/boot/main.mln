@@ -6,7 +6,7 @@ import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import irq_dispatch from "../../../MyKernel/src/kernel/irq_dispatch.mln";
 import irq from "../../../MyKernel/src/arch/irq.mln";
 import shell from "../apps/shell.mln";
-import automation from "../automation.mln";
+import automation_ui from "../meta/automation_ui.mln";
 import compositor from "../ui/compositor.mln";
 import counter from "../apps/counter.dom.mln";
 import notes from "../apps/notes.dom.mln";
@@ -78,7 +78,7 @@ void kernel_init() {
 
     debug.println("kernel: spawning shell task");
     scheduler.spawn_task(shell.run);
-    scheduler.spawn_task(automation.run);
+    scheduler.spawn_task(automation_ui.run);
 
     debug.println("ui: click the button (window must have focus)");
     compositor.run();

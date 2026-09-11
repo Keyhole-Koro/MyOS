@@ -521,6 +521,7 @@ radius / on_tick / interval / next_due` を追加）。`state` に `STATE_CHECKE
 
 ### snapshot / dump
 
-`dump_json()` に `"checked"` が増え、role 名に `textbox / checkbox / toolbar /
-separator` が加わった。`tests/mydomtester` は `nth=` 指定、`click_at`、`drag`、
-`type`、`key`、`wheel`、`wait_gone`、`wait_count` を持つ。
+Automation snapshot は専用MMIO bridgeへJSONとして出力する。snapshotにはtree
+`revision`、stableな`testId`、textboxの`value`、bounds、visible/enabled/focused/
+checked/hitTestableを含める。host側は`MyOS` / strict `Locator` / `expect`だけを
+公開し、shellの`dom`コマンドや行指向DSLには依存しない。

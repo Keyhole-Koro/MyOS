@@ -1,0 +1,27 @@
+package automation_ui;
+
+import automation_transport from "automation_transport.mln";
+import dom from "../ui/dom.mln";
+import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+
+i32 CMD_DOM_SNAPSHOT = 1;
+i32 CMD_DOM_HIT_TEST = 2;
+
+// Metadata service running inside MyOS. It exposes inspection only; real
+// pointer and keyboard operations still enter through emulator devices.
+export void run() {
+    while (1) {
+        if (automation_transport.has_request() != 0) {
+            i32 command = automation_transport.read_request();
+            if (command == CMD_DOM_SNAPSHOT) { dom.write_automation_snapshot(); }
+            else if ((command >> 28) == CMD_DOM_HIT_TEST) {
+                i32 x = (command >> 14) & 0x3FFF;
+                i32 y = command & 0x3FFF;
+                dom.write_automation_hit_test(x, y);
+            }
+            else { automation_transport.putc('{'); automation_transport.putc('}'); }
+            automation_transport.done();
+        }
+        scheduler.sleep(1);
+    }
+}

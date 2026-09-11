@@ -80,6 +80,7 @@ export i32 mount() {
     i32 column = dom.first_child(panel);
     i32 caption = dom.first_child(column);
     g_label_id = dom.next_sibling(caption);
+    dom.set_test_id(g_label_id, "counter");
 
     return win;
 }

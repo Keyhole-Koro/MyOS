@@ -2,9 +2,8 @@ package dom;
 
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
-import serial from "../../../MyKernel/src/io/serial.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
-import automation_io from "../io/automation_io.mln";
+import automation_transport from "../meta/automation_transport.mln";
 import graphics from "graphics.mln";
 import theme from "theme.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
@@ -1092,7 +1091,7 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
     i32 ki = NODE_TEXT_INPUT;
     if (n->kind == ki) {
         i32 r = input_handle(n, type, code);
-        if (r != 0) { damage_node(id); }
+        if (r != 0) { damage_node(id); touch(); }
         if (r == 1) { fire_change(n); }
     }
 }
@@ -1115,6 +1114,7 @@ export void set_input_text(i32 id, char *s) {
     n->len = (u16)i;
     n->cursor = (u16)i;
     damage_node(id);
+    touch();
 }
 
 // --- timers --------------------------------------------------------------------------------------
@@ -1447,112 +1447,23 @@ char* role_name(i32 role) {
     return "none";
 }
 
-// Emit one char, escaping the handful of bytes that would break JSON string
-// syntax. UI text in this codebase is plain ASCII labels, so this does not
-// attempt full JSON/unicode escaping -- just enough to stay well-formed.
-void putc_json_escaped(i32 c) {
-    if (c == '"') { serial.putc('\\'); serial.putc('"'); return; }
-    if (c == '\\') { serial.putc('\\'); serial.putc('\\'); return; }
-    if (c == '\n') { serial.putc('\\'); serial.putc('n'); return; }
-    serial.putc(c);
-}
-
-void print_json_string(char* s) {
-    serial.putc('"');
-    if (s) {
-        i32 i = 0;
-        while (s[i] != 0) {
-            putc_json_escaped(s[i]);
-            i = i + 1;
-        }
-    }
-    serial.putc('"');
-}
-
-void print_json_bool(i32 v) {
-    if (v != 0) {
-        debug.print("true");
-    } else {
-        debug.print("false");
-    }
-}
-
-void print_json_flag(char* key, i32 state, i32 flag) {
-    debug.print(",\"");
-    debug.print(key);
-    debug.print("\":");
-    i32 on = 0;
-    if ((state & flag) != 0) { on = 1; }
-    print_json_bool(on);
-}
-
-void dump_node_json(i32 node_id) {
-    Node *n = node_ptr(node_id);
-    if (n == 0) { return; }
-    i32 state = n->state;
-
-    debug.print("{\"id\":");
-    debug.printf("%i", n->id);
-    debug.print(",\"parent\":");
-    debug.printf("%i", n->parent);
-    debug.print(",\"kind\":");
-    debug.printf("%i", n->kind);
-    debug.print(",\"role\":");
-    print_json_string(role_name(n->role));
-    debug.print(",\"name\":");
-    print_json_string((char*)n->name);
-    debug.print(",\"text\":");
-    print_json_string((char*)n->text);
-    debug.print(",\"x\":");
-    debug.printf("%i", n->x);
-    debug.print(",\"y\":");
-    debug.printf("%i", n->y);
-    debug.print(",\"w\":");
-    debug.printf("%i", n->w);
-    debug.print(",\"h\":");
-    debug.printf("%i", n->h);
-    print_json_flag("visible", state, STATE_VISIBLE);
-    print_json_flag("enabled", state, STATE_ENABLED);
-    print_json_flag("hovered", state, STATE_HOVERED);
-    print_json_flag("pressed", state, STATE_PRESSED);
-    print_json_flag("focused", state, STATE_FOCUSED);
-    print_json_flag("hitTestable", state, STATE_HIT_TESTABLE);
-    print_json_flag("checked", state, STATE_CHECKED);
-    debug.println("}");
-
-    i32 child_id = n->first_child;
-    while (child_id != 0) {
-        dump_node_json(child_id);
-        child_id = next_sibling(child_id);
-    }
-}
-
-// Print the whole tree as JSON Lines, bracketed by markers a host-side reader
-// can scan for on the serial stream (mixed in with ordinary debug output).
-export void dump_json() {
-    debug.println("---DOM-SNAPSHOT-BEGIN---");
-    dump_node_json(g_root_node_id);
-    debug.println("---DOM-SNAPSHOT-END---");
-}
-
 // --- automation bridge snapshot ---------------------------------------------------------------
-// Unlike dump_json(), this never touches serial. The host reads the dedicated
-// automation MMIO TX FIFO, so a shell prompt or another task's log line cannot
-// corrupt the protocol response.
+// This never touches serial. The host reads the dedicated automation MMIO TX
+// FIFO, so a shell prompt or another task's log line cannot corrupt a response.
 
 i32 g_automation_first = 1;
 
 void automation_raw(char *s) {
     if (s == 0) { return; }
     while (*s != 0) {
-        automation_io.putc(*s);
+        automation_transport.putc(*s);
         s = s + 1;
     }
 }
 
 void automation_i32(i32 value) {
-    if (value == 0) { automation_io.putc('0'); return; }
-    if (value < 0) { automation_io.putc('-'); value = 0 - value; }
+    if (value == 0) { automation_transport.putc('0'); return; }
+    if (value < 0) { automation_transport.putc('-'); value = 0 - value; }
     char digits[12];
     i32 n = 0;
     while (value > 0) {
@@ -1562,24 +1473,24 @@ void automation_i32(i32 value) {
     }
     n = n - 1;
     while (n >= 0) {
-        automation_io.putc(digits[n]);
+        automation_transport.putc(digits[n]);
         n = n - 1;
     }
 }
 
 void automation_json_string(char *s) {
-    automation_io.putc('"');
+    automation_transport.putc('"');
     if (s != 0) {
         while (*s != 0) {
             i32 c = *s;
-            if (c == '"') { automation_io.putc('\\'); automation_io.putc('"'); }
-            else if (c == '\\') { automation_io.putc('\\'); automation_io.putc('\\'); }
-            else if (c == '\n') { automation_io.putc('\\'); automation_io.putc('n'); }
-            else { automation_io.putc(c); }
+            if (c == '"') { automation_transport.putc('\\'); automation_transport.putc('"'); }
+            else if (c == '\\') { automation_transport.putc('\\'); automation_transport.putc('\\'); }
+            else if (c == '\n') { automation_transport.putc('\\'); automation_transport.putc('n'); }
+            else { automation_transport.putc(c); }
             s = s + 1;
         }
     }
-    automation_io.putc('"');
+    automation_transport.putc('"');
 }
 
 void automation_bool(i32 value) {
@@ -1594,7 +1505,7 @@ void automation_state(Node *n, i32 flag) {
 void automation_node(i32 node_id) {
     Node *n = node_ptr(node_id);
     if (n == 0) { return; }
-    if (g_automation_first == 0) { automation_io.putc(','); }
+    if (g_automation_first == 0) { automation_transport.putc(','); }
     g_automation_first = 0;
 
     automation_raw("{\"id\":"); automation_i32(n->id);
@@ -1616,7 +1527,7 @@ void automation_node(i32 node_id) {
     automation_raw(",\"focused\":"); automation_state(n, STATE_FOCUSED);
     automation_raw(",\"checked\":"); automation_state(n, STATE_CHECKED);
     automation_raw(",\"hitTestable\":"); automation_state(n, STATE_HIT_TESTABLE);
-    automation_io.putc('}');
+    automation_transport.putc('}');
 
     i32 child = n->first_child;
     while (child != 0) {
@@ -1631,6 +1542,12 @@ export void write_automation_snapshot() {
     automation_raw(",\"nodes\":[");
     automation_node(g_root_node_id);
     automation_raw("]}");
+}
+
+export void write_automation_hit_test(i32 x, i32 y) {
+    automation_raw("{\"id\":");
+    automation_i32(find_at(x, y));
+    automation_raw("}");
 }
 
 // --- renderer ---------------------------------------------------------------------------------

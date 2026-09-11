@@ -1,0 +1,17 @@
+package automation_transport;
+
+import mem from "../../../MyKernel/src/mm/mem.mln";
+
+// Transport for the metadata/automation boundary. The registers are MMIO in
+// hardware terms, but this package is not an OS I/O driver: it exists solely
+// to exchange diagnostic metadata with the host test controller.
+i32 RX_ADDR = 0x24000120;
+i32 STATUS_ADDR = 0x24000124;
+i32 TX_ADDR = 0x24000128;
+i32 DONE_ADDR = 0x2400012C;
+i32 STATUS_REQUEST = 1;
+
+export i32 has_request() { return mem.read_word(STATUS_ADDR) & STATUS_REQUEST; }
+export i32 read_request() { return mem.read_word(RX_ADDR); }
+export void putc(i32 c) { mem.write_word(TX_ADDR, c & 255); }
+export void done() { mem.write_word(DONE_ADDR, 1); }

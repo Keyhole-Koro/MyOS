@@ -1,194 +1,202 @@
-"""MyDOMTester: Playwright-style UI automation for MyKernel (MYOS-004).
+"""A strict, Playwright-inspired automation API for the MyOS UI tree.
 
-Not a browser: this drives a headless MyEmulator over its
-`--control-stdio` JSON Lines protocol (see
-runtime/MyEmulator/src/control_stdio.rs) and queries the MyKernel DOM /
-accessibility tree (system/MyOS/src/ui/dom.mln) instead of an HTML DOM.
-Locators are role/name/text based, matching the ticket's target API:
-
-    page = launch("build/firmware_linked.mbin", disk="build/disk.img")
-    page.get_by_role("button", name="CLICK ME").click()
-    expect(page.get_by_text("clicks: 1")).to_be_visible()
-    page.close()
-
-Non-goals (see the ticket): CSS selectors, full Playwright API parity,
-HTML DOM compatibility, multiple pages/contexts.
+The public surface intentionally stays small: ``MyOS``, ``Locator`` and
+``expect``. It drives real emulator mouse/keyboard devices, while DOM reads
+use the dedicated automation bridge rather than the interactive OS shell.
 """
-
 from __future__ import annotations
 
 import json
+import select
 import subprocess
 import sys
 import time
+import threading
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 from tools.project_paths import MYEMULATOR_DIR  # noqa: E402
 
 DEFAULT_MYEMU = MYEMULATOR_DIR / "target" / "release" / "myemu"
-
-# Wall-clock budgets for round trips to the guest. Generous because a cold
-# boot (wait_for_boot in control_stdio.rs) is the slow part, not any single
-# command once the shell is up.
 LAUNCH_TIMEOUT_S = 15.0
 COMMAND_TIMEOUT_S = 5.0
+POLL_INTERVAL_S = 0.04
 
 
-class MyDOMTesterError(RuntimeError):
-    """Raised when the emulator process misbehaves or a command fails."""
+class MyOSError(RuntimeError):
+    pass
 
 
-def launch(
-    binary_path,
-    disk: Optional[str] = None,
-    myemu_path: Optional[str] = None,
-    extra_args: Optional[list] = None,
-) -> "Page":
-    """Start `myemu --control-stdio` against `binary_path` and wait for boot."""
-    myemu = Path(myemu_path) if myemu_path else DEFAULT_MYEMU
-    if not myemu.exists():
-        raise MyDOMTesterError(
-            f"myemu not found at {myemu}; build it first (make -C runtime/MyEmulator)"
+class StrictModeError(MyOSError):
+    pass
+
+
+@dataclass(frozen=True)
+class Bounds:
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+@dataclass(frozen=True)
+class Node:
+    id: int
+    parent: int
+    role: str
+    name: str
+    text: str
+    test_id: str
+    value: str
+    bounds: Bounds
+    visible: bool
+    enabled: bool
+    focused: bool
+    checked: bool
+    hit_testable: bool
+
+    @classmethod
+    def from_json(cls, value: dict[str, Any]) -> "Node":
+        bounds = value["bounds"]
+        return cls(
+            id=value["id"], parent=value["parent"], role=value["role"],
+            name=value["name"], text=value["text"], test_id=value["testId"],
+            value=value["value"],
+            bounds=Bounds(bounds["x"], bounds["y"], bounds["width"], bounds["height"]),
+            visible=value["visible"], enabled=value["enabled"], focused=value["focused"],
+            checked=value["checked"], hit_testable=value["hitTestable"],
         )
 
-    cmd = [str(myemu), "-i", str(binary_path), "--control-stdio"]
-    if disk:
-        cmd += ["--disk", str(disk)]
-    if extra_args:
-        cmd += list(extra_args)
 
-    proc = subprocess.Popen(
-        cmd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,  # line-buffered
-    )
-    page = Page(proc)
-    page._wait_ready()
-    return page
+@dataclass(frozen=True)
+class Snapshot:
+    revision: int
+    nodes: tuple[Node, ...]
 
 
-class Page:
-    def __init__(self, proc: subprocess.Popen):
+class MyOS:
+    """One running MyOS instance and its UI automation connection."""
+
+    def __init__(self, proc: subprocess.Popen[str], artifacts: Optional[Path] = None):
         self._proc = proc
-        self._log: list = []  # every line read from the guest, for debugging
+        self._next_id = 1
+        self._log: list[str] = []
+        self._actions: list[dict[str, Any]] = []
+        self._artifacts = artifacts
+        self._stderr_thread = threading.Thread(target=self._drain_guest_log, daemon=True)
+        self._stderr_thread.start()
 
-    # --- low-level protocol -------------------------------------------------
+    def _drain_guest_log(self) -> None:
+        if self._proc.stderr is None:
+            return
+        for line in self._proc.stderr:
+            self._log.append(line)
 
-    def _send(self, cmd: dict) -> None:
+    @classmethod
+    def launch(
+        cls, binary_path: str | Path, *, disk: str | Path | None = None,
+        myemu_path: str | Path | None = None, artifacts: str | Path | None = None,
+        extra_args: Optional[list[str]] = None,
+    ) -> "MyOS":
+        myemu = Path(myemu_path) if myemu_path else DEFAULT_MYEMU
+        if not myemu.exists():
+            raise MyOSError(f"myemu not found at {myemu}; build runtime/MyEmulator first")
+        cmd = [str(myemu), "-i", str(binary_path), "--control-stdio"]
+        if disk is not None:
+            cmd += ["--disk", str(disk)]
+        if extra_args:
+            cmd += extra_args
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, bufsize=1)
+        os = cls(proc, Path(artifacts) if artifacts else None)
+        try:
+            hello = os._request("session.hello", {}, timeout=LAUNCH_TIMEOUT_S)
+            if hello.get("protocol") != 2:
+                raise MyOSError(f"unsupported automation protocol: {hello!r}")
+            os._request("os.ready", {}, timeout=LAUNCH_TIMEOUT_S)
+            return os
+        except BaseException:
+            os.close()
+            raise
+
+    def _request(self, method: str, params: dict[str, Any], *, timeout: float = COMMAND_TIMEOUT_S) -> Any:
         if self._proc.poll() is not None:
-            raise MyDOMTesterError(
-                f"myemu exited (code {self._proc.returncode}) before command {cmd!r}; "
-                f"last output:\n" + "\n".join(self._log[-20:])
-            )
-        assert self._proc.stdin is not None
-        self._proc.stdin.write(json.dumps(cmd) + "\n")
+            raise MyOSError(f"myemu exited with {self._proc.returncode}; guest log:\n" + "".join(self._log[-40:]))
+        request_id = self._next_id
+        self._next_id += 1
+        assert self._proc.stdin is not None and self._proc.stdout is not None
+        self._proc.stdin.write(json.dumps({"id": request_id, "method": method, "params": params}) + "\n")
         self._proc.stdin.flush()
-
-    def _read_response(self, timeout: float = COMMAND_TIMEOUT_S) -> dict:
-        """Read lines until one parses as a control response ({"ok": ...}).
-
-        Everything else is the guest's own serial output (boot log, shell
-        prompt, debug prints) interleaved on the same stream; skip it. See
-        control_stdio.rs's module doc for why a leading blank line always
-        precedes a real response.
-        """
-        assert self._proc.stdout is not None
         deadline = time.monotonic() + timeout
         while True:
-            if time.monotonic() >= deadline:
-                raise MyDOMTesterError(
-                    "timed out waiting for a control-stdio response; last output:\n"
-                    + "\n".join(self._log[-20:])
-                )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise MyOSError(f"timed out waiting for {method}; guest log:\n" + "".join(self._log[-40:]))
+            ready, _, _ = select.select([self._proc.stdout], [], [], remaining)
+            if not ready:
+                continue
             line = self._proc.stdout.readline()
             if line == "":
-                if self._proc.poll() is not None:
-                    raise MyDOMTesterError(
-                        f"myemu exited (code {self._proc.returncode}) while waiting for a "
-                        f"response; last output:\n" + "\n".join(self._log[-20:])
-                    )
-                continue
-            line = line.rstrip("\n")
-            self._log.append(line)
-            stripped = line.strip()
-            if not stripped.startswith("{"):
-                continue
+                raise MyOSError(f"myemu closed protocol stdout during {method}")
             try:
-                parsed = json.loads(stripped)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict) and "ok" in parsed:
-                if not parsed.get("ok", False):
-                    raise MyDOMTesterError(
-                        f"control-stdio command failed: {parsed.get('error')}"
-                    )
-                return parsed
+                response = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise MyOSError(f"non-JSON control response: {line!r}") from error
+            if response.get("id") != request_id:
+                raise MyOSError(f"out-of-order control response: {response!r}")
+            if not response.get("ok"):
+                error = response.get("error", {})
+                raise MyOSError(f"{method}: {error.get('code')}: {error.get('message')}; {error.get('details')}")
+            return response.get("result")
 
-    def _command(self, cmd: dict, timeout: float = COMMAND_TIMEOUT_S) -> dict:
-        self._send(cmd)
-        return self._read_response(timeout)
+    def snapshot(self) -> Snapshot:
+        raw = self._request("dom.snapshot", {})
+        return Snapshot(raw["revision"], tuple(Node.from_json(node) for node in raw["nodes"]))
 
-    def _wait_ready(self) -> None:
-        self._read_response(timeout=LAUNCH_TIMEOUT_S)
-
-    # --- DOM/accessibility queries -------------------------------------------
-
-    def dom_snapshot(self) -> list:
-        """Return the current DOM tree as a flat list of node dicts."""
-        return self._command({"cmd": "dom.snapshot"})["nodes"]
-
-    def get_by_role(self, role: str, name: Optional[str] = None) -> "Locator":
+    def get_by_role(self, role: str, *, name: Optional[str] = None) -> "Locator":
         return Locator(self, role=role, name=name)
 
     def get_by_text(self, text: str) -> "Locator":
         return Locator(self, text=text)
 
-    # --- input injection ------------------------------------------------------
+    def get_by_test_id(self, test_id: str) -> "Locator":
+        return Locator(self, test_id=test_id)
 
-    def mouse_move(self, x: int, y: int) -> None:
-        self._command({"cmd": "mouse.move", "x": int(x), "y": int(y)})
+    def screenshot(self, path: str | Path) -> Path:
+        result = self._request("screen.screenshot", {"path": str(path)})
+        return Path(result["path"])
 
-    def mouse_down(self, button: str = "left") -> None:
-        self._command({"cmd": "mouse.down", "button": button})
+    def _pointer_sequence(self, events: list[dict[str, Any]]) -> None:
+        self._request("input.pointer.sequence", {"events": events})
 
-    def mouse_up(self, button: str = "left") -> None:
-        self._command({"cmd": "mouse.up", "button": button})
+    def _hit_test(self, x: int, y: int) -> int:
+        return int(self._request("dom.hit_test", {"x": x, "y": y})["id"])
 
-    def mouse_wheel(self, steps: int) -> None:
-        self._command({"cmd": "mouse.wheel", "steps": int(steps)})
+    def _type(self, text: str) -> None:
+        self._request("input.key.type", {"text": text})
 
-    def type_text(self, text: str) -> None:
-        """Feed characters to the focused node (KBD CHAR events)."""
-        self._command({"cmd": "key.type", "text": text})
+    def _press(self, key: str, mods: int = 0) -> None:
+        self._request("input.key.press", {"key": key, "mods": mods})
 
-    def key_press(self, key: str, mods: int = 0) -> None:
-        """Press and release a key: a name ("enter", "backspace", "left", ...)
-        or a single character."""
-        self._command({"cmd": "key.press", "key": key, "mods": mods})
-        self._command({"cmd": "key.release", "key": key, "mods": mods})
+    def _record(self, action: str, locator: "Locator", node: Node, before: int, after: int, **extra: Any) -> None:
+        self._actions.append({"action": action, "locator": repr(locator), "nodeId": node.id,
+                              "revisionBefore": before, "revisionAfter": after, **extra})
 
-    def drag(self, x0: int, y0: int, x1: int, y1: int, steps: int = 4) -> None:
-        """Press at (x0, y0), move to (x1, y1) in a few motion events, release."""
-        self.mouse_move(x0, y0)
-        self.mouse_down()
-        for i in range(1, steps + 1):
-            self.mouse_move(x0 + (x1 - x0) * i // steps, y0 + (y1 - y0) * i // steps)
-        self.mouse_up()
-        self.frame_wait()
-
-    def frame_wait(self) -> None:
-        self._command({"cmd": "frame.wait"})
-
-    def screenshot(self, path: str) -> None:
-        """Save the displayed frame; .png or .ppm by extension."""
-        self._command({"cmd": "screenshot", "path": str(path)})
-
-    # --- lifecycle --------------------------------------------------------
+    def _write_failure_artifacts(self) -> None:
+        if self._artifacts is None:
+            return
+        self._artifacts.mkdir(parents=True, exist_ok=True)
+        (self._artifacts / "actions.jsonl").write_text(
+            "".join(json.dumps(action) + "\n" for action in self._actions), encoding="utf-8")
+        try:
+            raw = self._request("dom.snapshot", {})
+            (self._artifacts / "dom.json").write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+            self.screenshot(self._artifacts / "screenshot.png")
+        except MyOSError:
+            pass
+        (self._artifacts / "guest.log").write_text("".join(self._log), encoding="utf-8")
 
     def close(self) -> None:
         if self._proc.poll() is None:
@@ -198,134 +206,165 @@ class Page:
             except subprocess.TimeoutExpired:
                 self._proc.kill()
 
-    def __enter__(self) -> "Page":
+    def __enter__(self) -> "MyOS":
         return self
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        if exc_type is not None:
+            self._write_failure_artifacts()
         self.close()
 
 
 class Locator:
-    """A query, re-resolved against a fresh DOM snapshot on every use --
-    matches Playwright's locators-are-lazy behaviour, so `expect(...)` can
-    poll a locator across UI state changes instead of matching a stale node.
-    """
-
-    def __init__(self, page: Page, role: Optional[str] = None,
-                 name: Optional[str] = None, text: Optional[str] = None,
-                 nth: int = 0):
-        self._page = page
-        self._role = role
-        self._name = name
-        self._text = text
-        self._nth = nth  # which match to use in tree order; -1 = last
+    def __init__(self, os: MyOS, *, role: str | None = None, name: str | None = None,
+                 text: str | None = None, test_id: str | None = None,
+                 parent: "Locator | None" = None, index: int | None = None):
+        self._os, self._role, self._name = os, role, name
+        self._text, self._test_id, self._parent, self._index = text, test_id, parent, index
 
     def __repr__(self) -> str:
-        parts = []
-        if self._role:
-            parts.append(f"role={self._role!r}")
-        if self._name:
-            parts.append(f"name={self._name!r}")
-        if self._text:
-            parts.append(f"text={self._text!r}")
-        return f"Locator({', '.join(parts)})"
+        fields = [("role", self._role), ("name", self._name), ("text", self._text), ("test_id", self._test_id)]
+        return "Locator(" + ", ".join(f"{key}={value!r}" for key, value in fields if value is not None) + ")"
 
-    def _matches(self, node: dict) -> bool:
-        if self._role is not None and node.get("role") != self._role:
-            return False
-        if self._name is not None and node.get("name") != self._name:
-            return False
-        if self._text is not None and node.get("text") != self._text:
-            return False
-        return True
+    def get_by_role(self, role: str, *, name: str | None = None) -> "Locator":
+        return Locator(self._os, role=role, name=name, parent=self)
 
-    def resolve_all(self) -> list:
-        """Every matching node from a fresh snapshot, in tree order."""
-        return [n for n in self._page.dom_snapshot() if self._matches(n)]
+    def get_by_text(self, text: str) -> "Locator":
+        return Locator(self._os, text=text, parent=self)
 
-    def resolve(self) -> Optional[dict]:
-        """Return the nth matching node from a fresh snapshot, or None."""
-        matches = self.resolve_all()
-        try:
-            return matches[self._nth]
-        except IndexError:
-            return None
+    def get_by_test_id(self, test_id: str) -> "Locator":
+        return Locator(self._os, test_id=test_id, parent=self)
 
-    def is_visible(self) -> bool:
-        node = self.resolve()
-        return bool(node and node.get("visible"))
+    @property
+    def first(self) -> "Locator": return self.nth(0)
+    @property
+    def last(self) -> "Locator": return self.nth(-1)
+    def nth(self, index: int) -> "Locator":
+        return Locator(self._os, role=self._role, name=self._name, text=self._text,
+                       test_id=self._test_id, parent=self._parent, index=index)
 
-    def click(self) -> None:
-        node = self.resolve()
-        if node is None:
-            raise MyDOMTesterError(f"{self!r}: no matching node in the current DOM")
-        cx = node["x"] + node["w"] // 2
-        cy = node["y"] + node["h"] // 2
-        self._page.mouse_move(cx, cy)
-        self._page.mouse_down()
-        self._page.mouse_up()
-        self._page.frame_wait()
+    def _matches(self, node: Node) -> bool:
+        return ((self._role is None or node.role == self._role)
+                and (self._name is None or node.name == self._name)
+                and (self._text is None or node.text == self._text)
+                and (self._test_id is None or node.test_id == self._test_id))
 
-    def click_at(self, dx: int, dy: int) -> None:
-        """Click at an offset from the node's top-left (e.g. a window's
-        close button or title bar)."""
-        node = self.resolve()
-        if node is None:
-            raise MyDOMTesterError(f"{self!r}: no matching node in the current DOM")
-        self._page.mouse_move(node["x"] + dx, node["y"] + dy)
-        self._page.mouse_down()
-        self._page.mouse_up()
-        self._page.frame_wait()
+    def _resolve_snapshot(self, snapshot: Snapshot) -> list[Node]:
+        allowed: set[int] | None = None
+        if self._parent is not None:
+            parent_ids = {node.id for node in self._parent._resolve_snapshot(snapshot)}
+            by_id = {node.id: node for node in snapshot.nodes}
+            allowed = set()
+            for node in snapshot.nodes:
+                current = node.parent
+                while current:
+                    if current in parent_ids:
+                        allowed.add(node.id)
+                        break
+                    ancestor = by_id.get(current)
+                    current = ancestor.parent if ancestor else 0
+        matches = [node for node in snapshot.nodes if self._matches(node) and (allowed is None or node.id in allowed)]
+        if self._index is not None:
+            try: return [matches[self._index]]
+            except IndexError: return []
+        return matches
 
-    def drag_by(self, dx: int, dy: int, grab_x: Optional[int] = None, grab_y: Optional[int] = None) -> None:
-        """Drag the node by (dx, dy), grabbing it at (grab_x, grab_y) from
-        its top-left (default: a point on a window's title bar)."""
-        node = self.resolve()
-        if node is None:
-            raise MyDOMTesterError(f"{self!r}: no matching node in the current DOM")
-        gx = node["w"] // 2 if grab_x is None else grab_x
-        gy = 12 if grab_y is None else grab_y
-        x0 = node["x"] + gx
-        y0 = node["y"] + gy
-        self._page.drag(x0, y0, x0 + dx, y0 + dy)
+    def resolve_all(self) -> list[Node]:
+        return self._resolve_snapshot(self._os.snapshot())
+
+    def count(self) -> int:
+        return len(self.resolve_all())
+
+    def snapshot(self) -> Node:
+        nodes = self.resolve_all()
+        if len(nodes) != 1:
+            raise StrictModeError(f"{self!r}: expected exactly one node, found {len(nodes)}")
+        return nodes[0]
+
+    def _actionable(self, timeout: float) -> tuple[Snapshot, Node]:
+        deadline = time.monotonic() + timeout
+        previous: tuple[int, Bounds] | None = None
+        last = "no matching node"
+        while time.monotonic() < deadline:
+            snapshot = self._os.snapshot()
+            nodes = self._resolve_snapshot(snapshot)
+            if len(nodes) != 1:
+                last = f"expected exactly one node, found {len(nodes)}"
+            else:
+                node = nodes[0]
+                bounds = node.bounds
+                state = (node.visible and node.enabled and node.hit_testable
+                         and bounds.width > 0 and bounds.height > 0)
+                signature = (node.id, bounds)
+                if not state:
+                    last = f"node is not actionable: {node}"
+                elif previous == signature:
+                    x = bounds.x + bounds.width // 2
+                    y = bounds.y + bounds.height // 2
+                    hit = self._os._hit_test(x, y)
+                    if hit == node.id:
+                        return snapshot, node
+                    last = f"node is covered at its click point by node #{hit}"
+                else:
+                    previous = signature
+                    last = "waiting for stable bounds"
+            time.sleep(POLL_INTERVAL_S)
+        raise MyOSError(f"{self!r}: actionability timeout: {last}")
+
+    def click(self, *, timeout: float = COMMAND_TIMEOUT_S) -> None:
+        before, node = self._actionable(timeout)
+        x = node.bounds.x + node.bounds.width // 2
+        y = node.bounds.y + node.bounds.height // 2
+        self._os._pointer_sequence([{"type": "move", "x": x, "y": y},
+                                    {"type": "down", "button": "left"},
+                                    {"type": "up", "button": "left"}])
+        after = self._os.snapshot().revision
+        self._os._record("click", self, node, before.revision, after, point={"x": x, "y": y})
+
+    def focus(self, *, timeout: float = COMMAND_TIMEOUT_S) -> None:
+        self.click(timeout=timeout)
+
+    def fill(self, text: str, *, timeout: float = COMMAND_TIMEOUT_S) -> None:
+        self.focus(timeout=timeout)
+        self._os._press("home")
+        # MyOS currently lacks selection/delete-all; clear with backspace.
+        node = self.snapshot()
+        for _ in node.value:
+            self._os._press("backspace")
+        self._os._type(text)
+
+    def press(self, key: str) -> None:
+        self._os._press(key)
 
 
 class _Expect:
-    def __init__(self, locator: Locator):
-        self._locator = locator
+    def __init__(self, locator: Locator): self._locator = locator
 
-    def to_be_visible(self, timeout: float = 2.0) -> None:
+    def _until(self, predicate: Any, description: str, timeout: float) -> None:
         deadline = time.monotonic() + timeout
-        last_node = None
+        last: list[Node] = []
         while time.monotonic() < deadline:
-            last_node = self._locator.resolve()
-            if last_node is not None and last_node.get("visible"):
-                return
-            time.sleep(0.05)
-        if last_node is None:
-            raise AssertionError(f"{self._locator!r}: expected visible, found no matching node")
-        raise AssertionError(f"{self._locator!r}: expected visible, node was {last_node}")
+            last = self._locator.resolve_all()
+            if predicate(last): return
+            time.sleep(POLL_INTERVAL_S)
+        raise AssertionError(f"{self._locator!r}: expected {description}, found {last}")
 
-    def to_be_gone(self, timeout: float = 2.0) -> None:
-        """Assert no node matches (e.g. after a window was closed)."""
-        deadline = time.monotonic() + timeout
-        last_node = None
-        while time.monotonic() < deadline:
-            last_node = self._locator.resolve()
-            if last_node is None:
-                return
-            time.sleep(0.05)
-        raise AssertionError(f"{self._locator!r}: expected no match, found {last_node}")
-
-    def to_have_count(self, count: int, timeout: float = 2.0) -> None:
-        deadline = time.monotonic() + timeout
-        found = []
-        while time.monotonic() < deadline:
-            found = self._locator.resolve_all()
-            if len(found) == count:
-                return
-            time.sleep(0.05)
-        raise AssertionError(f"{self._locator!r}: expected {count} matches, found {len(found)}")
+    def to_be_visible(self, timeout: float = COMMAND_TIMEOUT_S) -> None:
+        self._until(lambda ns: len(ns) == 1 and ns[0].visible, "one visible node", timeout)
+    def to_be_hidden(self, timeout: float = COMMAND_TIMEOUT_S) -> None:
+        self._until(lambda ns: not ns or not ns[0].visible, "hidden node", timeout)
+    def to_be_enabled(self, timeout: float = COMMAND_TIMEOUT_S) -> None:
+        self._until(lambda ns: len(ns) == 1 and ns[0].enabled, "one enabled node", timeout)
+    def to_be_focused(self, timeout: float = COMMAND_TIMEOUT_S) -> None:
+        self._until(lambda ns: len(ns) == 1 and ns[0].focused, "one focused node", timeout)
+    def to_be_checked(self, timeout: float = COMMAND_TIMEOUT_S) -> None:
+        self._until(lambda ns: len(ns) == 1 and ns[0].checked, "one checked node", timeout)
+    def to_have_text(self, text: str, timeout: float = COMMAND_TIMEOUT_S) -> None:
+        self._until(lambda ns: len(ns) == 1 and ns[0].text == text, f"text={text!r}", timeout)
+    def to_have_value(self, value: str, timeout: float = COMMAND_TIMEOUT_S) -> None:
+        self._until(lambda ns: len(ns) == 1 and ns[0].value == value, f"value={value!r}", timeout)
+    def to_have_count(self, count: int, timeout: float = COMMAND_TIMEOUT_S) -> None:
+        self._until(lambda ns: len(ns) == count, f"count={count}", timeout)
 
 
 def expect(locator: Locator) -> _Expect:
