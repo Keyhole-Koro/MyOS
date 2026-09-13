@@ -3,7 +3,6 @@ package dom;
 import debug from "../../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../../MyKernel/src/mm/heap.mln";
 import scheduler from "../../../../MyKernel/src/kernel/scheduler.mln";
-import automation_transport from "../../meta/automation_transport.mln";
 import graphics from "../graphics.mln";
 import theme from "../theme.mln";
 import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
@@ -298,6 +297,42 @@ export char* text_of(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return (char*)0; }
     return (char*)n->text;
+}
+
+export i32 role_of(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return 0; }
+    return n->role;
+}
+
+export char* name_of(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return (char*)0; }
+    return (char*)n->name;
+}
+
+export char* test_id_of(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return (char*)0; }
+    return (char*)n->test_id;
+}
+
+export i32 root_node_id() { return g_root_node_id; }
+
+// The automation-visible "value" of a node: a textbox/textarea's current
+// text, empty for anything else. Kept here (rather than computed from
+// role_of()/text_of() by the caller) because comparing against ROLE_* only
+// resolves within this package -- an `export u16` global doesn't resolve as
+// a cross-package symbol (see set_hovered() and friends above).
+export char* automation_value_of(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return ""; }
+    i32 role = n->role;
+    i32 textbox = ROLE_TEXTBOX;
+    i32 textarea = ROLE_TEXTAREA;
+    if (role == textbox) { return (char*)n->text; }
+    if (role == textarea) { return (char*)n->text; }
+    return "";
 }
 
 // --- damage -------------------------------------------------------------------------
@@ -689,6 +724,20 @@ export void set_hit_testable(i32 id, i32 on) { set_state_flag(id, STATE_HIT_TEST
 export void set_checked(i32 id, i32 on) { set_state_flag(id, STATE_CHECKED, on); }
 export i32 is_checked(i32 id) { return get_state_flag(id, STATE_CHECKED); }
 export i32 is_visible(i32 id) { return get_state_flag(id, STATE_VISIBLE); }
+export i32 is_enabled(i32 id) { return get_state_flag(id, STATE_ENABLED); }
+export i32 is_focused(i32 id) { return get_state_flag(id, STATE_FOCUSED); }
+export i32 is_hit_testable(i32 id) { return get_state_flag(id, STATE_HIT_TESTABLE); }
+export i32 is_hovered(i32 id) { return get_state_flag(id, STATE_HOVERED); }
+export i32 is_pressed(i32 id) { return get_state_flag(id, STATE_PRESSED); }
+
+// Raw state bitmask. Meaningless to a caller without the STATE_* flags
+// (an `export u16` global doesn't resolve as a cross-package symbol), but
+// useful as an "does this node have any interesting state at all" check.
+export i32 state_of(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return 0; }
+    return n->state;
+}
 
 // Store a click handler (a function pointer, passed as i32) on a node. The
 // handler is invoked by dispatch_click via an indirect call. 0 clears it.
@@ -2240,75 +2289,14 @@ export i32 List(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 onChan
     return id;
 }
 
-// --- human-readable dump ---------------------------------------------------------------------
-
-void print_indent(i32 depth) {
-    i32 i = 0;
-    while (i < depth) {
-        debug.print("  ");
-        i = i + 1;
-    }
-}
-
-// Print "[role=R x=.. y=.. w=.. h=.. vis en ho pr fo ht ck]" for nodes that
-// carry UI props. Structural nodes (role=0, no bounds) print nothing extra.
-void dump_props(Node *n) {
-    i32 role = n->role;
-    i32 w = n->w;
-    i32 h = n->h;
-    i32 state = n->state;
-    if (role == 0) {
-        if (w == 0) {
-            if (h == 0) {
-                if (state == 0) { return; }
-            }
-        }
-    }
-    debug.printf(" [role=%i x=%i y=%i w=%i h=%i",
-                 role, n->x, n->y, w, h);
-    if ((state & STATE_VISIBLE) != 0) { debug.print(" vis"); }
-    if ((state & STATE_ENABLED) != 0) { debug.print(" en"); }
-    if ((state & STATE_HOVERED) != 0) { debug.print(" ho"); }
-    if ((state & STATE_PRESSED) != 0) { debug.print(" pr"); }
-    if ((state & STATE_FOCUSED) != 0) { debug.print(" fo"); }
-    if ((state & STATE_HIT_TESTABLE) != 0) { debug.print(" ht"); }
-    if ((state & STATE_CHECKED) != 0) { debug.print(" ck"); }
-    debug.print("]");
-}
-
-void dump_node(i32 node_id, i32 depth) {
-    Node *n = node_ptr(node_id);
-    if (n == 0) { return; }
-    print_indent(depth);
-    debug.printf("Node(id=%i, kind=%i) ", n->id, n->kind);
-    if (n->name != 0) {
-        debug.print((char*)n->name);
-    } else {
-        debug.print("?");
-    }
-    dump_props(n);
-    debug.println("");
-
-    i32 child_id = n->first_child;
-    while (child_id != 0) {
-        dump_node(child_id, depth + 1);
-        child_id = next_sibling(child_id);
-    }
-}
-
-export void dump() {
-    debug.println("--- Kernel Object Tree ---");
-    dump_node(g_root_node_id, 0);
-    debug.println("--------------------------");
-}
-
-// --- machine-readable snapshot (MYOS-004 UI automation) --------------------------------------
-// Mirrors dump() but emits one JSON object per node (JSON Lines), stable
-// enough for a host-side client (qa/mydomtester) to parse into a locator tree.
-
-// role is compared as a local i32 copy: comparing an i32 against a `u16`
-// export global directly (role == ROLE_BUTTON) miscompiles to always-false.
-char* role_name(i32 role) {
+// The human-readable dump (dump()), the JSON snapshot, and the automation
+// bridge (write_automation_snapshot/write_automation_hit_test) moved to
+// dom_automation.mln -- they only walk the tree through accessors above,
+// never touch tree state, and made this file harder to find things in.
+// role_name() stays here because it compares against ROLE_*, and an
+// `export u16` global doesn't resolve as a cross-package symbol (see
+// set_hovered() and friends above); dom_automation.mln calls dom.role_name().
+export char* role_name(i32 role) {
     i32 r_root = ROLE_ROOT;
     i32 r_desktop = ROLE_DESKTOP;
     i32 r_window = ROLE_WINDOW;
@@ -2336,110 +2324,6 @@ char* role_name(i32 role) {
     return "none";
 }
 
-// --- automation bridge snapshot ---------------------------------------------------------------
-// This never touches serial. The host reads the dedicated automation MMIO TX
-// FIFO, so a shell prompt or another task's log line cannot corrupt a response.
-
-i32 g_automation_first = 1;
-
-void automation_raw(char *s) {
-    if (s == 0) { return; }
-    while (*s != 0) {
-        automation_transport.putc(*s);
-        s = s + 1;
-    }
-}
-
-void automation_i32(i32 value) {
-    if (value == 0) { automation_transport.putc('0'); return; }
-    if (value < 0) { automation_transport.putc('-'); value = 0 - value; }
-    char digits[12];
-    i32 n = 0;
-    while (value > 0) {
-        digits[n] = (char)('0' + value % 10);
-        value = value / 10;
-        n = n + 1;
-    }
-    n = n - 1;
-    while (n >= 0) {
-        automation_transport.putc(digits[n]);
-        n = n - 1;
-    }
-}
-
-void automation_json_string(char *s) {
-    automation_transport.putc('"');
-    if (s != 0) {
-        while (*s != 0) {
-            i32 c = *s;
-            if (c == '"') { automation_transport.putc('\\'); automation_transport.putc('"'); }
-            else if (c == '\\') { automation_transport.putc('\\'); automation_transport.putc('\\'); }
-            else if (c == '\n') { automation_transport.putc('\\'); automation_transport.putc('n'); }
-            else { automation_transport.putc(c); }
-            s = s + 1;
-        }
-    }
-    automation_transport.putc('"');
-}
-
-void automation_bool(i32 value) {
-    if (value != 0) { automation_raw("true"); }
-    else { automation_raw("false"); }
-}
-
-void automation_state(Node *n, i32 flag) {
-    automation_bool(n->state & flag);
-}
-
-void automation_node(i32 node_id) {
-    Node *n = node_ptr(node_id);
-    if (n == 0) { return; }
-    if (g_automation_first == 0) { automation_transport.putc(','); }
-    g_automation_first = 0;
-
-    automation_raw("{\"id\":"); automation_i32(n->id);
-    automation_raw(",\"parent\":"); automation_i32(n->parent);
-    automation_raw(",\"role\":"); automation_json_string(role_name(n->role));
-    automation_raw(",\"name\":"); automation_json_string((char*)n->name);
-    automation_raw(",\"text\":"); automation_json_string((char*)n->text);
-    automation_raw(",\"testId\":"); automation_json_string((char*)n->test_id);
-    automation_raw(",\"value\":");
-    i32 textbox = ROLE_TEXTBOX;
-    i32 textarea = ROLE_TEXTAREA;
-    if (n->role == textbox) { automation_json_string((char*)n->text); }
-    else if (n->role == textarea) { automation_json_string((char*)n->text); }
-    else { automation_json_string(""); }
-    automation_raw(",\"bounds\":{\"x\":"); automation_i32(n->x);
-    automation_raw(",\"y\":"); automation_i32(n->y);
-    automation_raw(",\"width\":"); automation_i32(n->w);
-    automation_raw(",\"height\":"); automation_i32(n->h);
-    automation_raw("},\"visible\":"); automation_state(n, STATE_VISIBLE);
-    automation_raw(",\"enabled\":"); automation_state(n, STATE_ENABLED);
-    automation_raw(",\"focused\":"); automation_state(n, STATE_FOCUSED);
-    automation_raw(",\"checked\":"); automation_state(n, STATE_CHECKED);
-    automation_raw(",\"hitTestable\":"); automation_state(n, STATE_HIT_TESTABLE);
-    automation_transport.putc('}');
-
-    i32 child = n->first_child;
-    while (child != 0) {
-        automation_node(child);
-        child = next_sibling(child);
-    }
-}
-
-export void write_automation_snapshot() {
-    g_automation_first = 1;
-    automation_raw("{\"revision\":"); automation_i32(g_revision);
-    automation_raw(",\"nodes\":[");
-    automation_node(g_root_node_id);
-    automation_raw("]}");
-}
-
-export void write_automation_hit_test(i32 x, i32 y) {
-    automation_raw("{\"id\":");
-    automation_i32(find_at(x, y));
-    automation_raw("}");
-}
 
 // --- renderer ---------------------------------------------------------------------------------
 // Walk the UI subtree and paint each node with graphics.*. The renderer and

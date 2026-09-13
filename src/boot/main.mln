@@ -1,6 +1,7 @@
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import dom from "../ui/dom/dom.mln";
+import dom_automation from "../ui/dom/dom_automation.mln";
 import graphics from "../ui/graphics.mln";
 import fs from "../fs/fs.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
@@ -110,7 +111,7 @@ void kernel_init() {
     notes.mount();
     i32 term = terminal.mount();
     dom.focus_window(term);
-    dom.dump();
+    dom_automation.dump();
 
     // Paint the desktop once before interrupts are enabled. render_all()
     // walks the whole tree (DMA2D fills + glyph draws); once scheduler.init()

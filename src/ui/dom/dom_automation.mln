@@ -1,0 +1,166 @@
+package dom_automation;
+
+import dom from "dom.mln";
+import automation_transport from "../../meta/automation_transport.mln";
+import debug from "../../../../MyKernel/src/debug/debug.mln";
+
+// Human-readable tree dump (the kernel debug shell's `dump` command) and the
+// machine-readable JSON snapshot for the MYOS-004 UI automation bridge.
+// Split out of dom.mln: neither reads nor mutates tree state, they only walk
+// it through dom's exported accessors -- kept dom.mln itself readable as it
+// grew past 3000 lines.
+
+// --- human-readable dump -----------------------------------------------------------------
+
+void print_indent(i32 depth) {
+    i32 i = 0;
+    while (i < depth) {
+        debug.print("  ");
+        i = i + 1;
+    }
+}
+
+// Print "[role=R x=.. y=.. w=.. h=.. vis en ho pr fo ht ck]" for nodes that
+// carry UI props. Structural nodes (role=0, no bounds, no state) print
+// nothing extra.
+void dump_props(i32 id) {
+    i32 role = dom.role_of(id);
+    i32 w = dom.node_w(id);
+    i32 h = dom.node_h(id);
+    if (role == 0) {
+        if (w == 0) {
+            if (h == 0) {
+                if (dom.state_of(id) == 0) { return; }
+            }
+        }
+    }
+    debug.printf(" [role=%i x=%i y=%i w=%i h=%i",
+                 role, dom.node_x(id), dom.node_y(id), w, h);
+    if (dom.is_visible(id) != 0) { debug.print(" vis"); }
+    if (dom.is_enabled(id) != 0) { debug.print(" en"); }
+    if (dom.is_hovered(id) != 0) { debug.print(" ho"); }
+    if (dom.is_pressed(id) != 0) { debug.print(" pr"); }
+    if (dom.is_focused(id) != 0) { debug.print(" fo"); }
+    if (dom.is_hit_testable(id) != 0) { debug.print(" ht"); }
+    if (dom.is_checked(id) != 0) { debug.print(" ck"); }
+    debug.print("]");
+}
+
+void dump_node(i32 id, i32 depth) {
+    print_indent(depth);
+    debug.printf("Node(id=%i, kind=%i) ", id, dom.kind_of(id));
+    char *name = dom.name_of(id);
+    if (name != 0) {
+        debug.print(name);
+    } else {
+        debug.print("?");
+    }
+    dump_props(id);
+    debug.println("");
+
+    i32 child_id = dom.first_child(id);
+    while (child_id != 0) {
+        dump_node(child_id, depth + 1);
+        child_id = dom.next_sibling(child_id);
+    }
+}
+
+export void dump() {
+    debug.println("--- Kernel Object Tree ---");
+    dump_node(dom.root_node_id(), 0);
+    debug.println("--------------------------");
+}
+
+// --- automation bridge snapshot -----------------------------------------------------------
+// This never touches serial. The host reads the dedicated automation MMIO TX
+// FIFO, so a shell prompt or another task's log line cannot corrupt a response.
+
+i32 g_automation_first = 1;
+
+void automation_raw(char *s) {
+    if (s == 0) { return; }
+    while (*s != 0) {
+        automation_transport.putc(*s);
+        s = s + 1;
+    }
+}
+
+void automation_i32(i32 value) {
+    if (value == 0) { automation_transport.putc('0'); return; }
+    if (value < 0) { automation_transport.putc('-'); value = 0 - value; }
+    char digits[12];
+    i32 n = 0;
+    while (value > 0) {
+        digits[n] = (char)('0' + value % 10);
+        value = value / 10;
+        n = n + 1;
+    }
+    n = n - 1;
+    while (n >= 0) {
+        automation_transport.putc(digits[n]);
+        n = n - 1;
+    }
+}
+
+void automation_json_string(char *s) {
+    automation_transport.putc('"');
+    if (s != 0) {
+        while (*s != 0) {
+            i32 c = *s;
+            if (c == '"') { automation_transport.putc('\\'); automation_transport.putc('"'); }
+            else if (c == '\\') { automation_transport.putc('\\'); automation_transport.putc('\\'); }
+            else if (c == '\n') { automation_transport.putc('\\'); automation_transport.putc('n'); }
+            else { automation_transport.putc(c); }
+            s = s + 1;
+        }
+    }
+    automation_transport.putc('"');
+}
+
+void automation_bool(i32 value) {
+    if (value != 0) { automation_raw("true"); }
+    else { automation_raw("false"); }
+}
+
+void automation_node(i32 id) {
+    if (g_automation_first == 0) { automation_transport.putc(','); }
+    g_automation_first = 0;
+
+    automation_raw("{\"id\":"); automation_i32(id);
+    automation_raw(",\"parent\":"); automation_i32(dom.parent_of(id));
+    automation_raw(",\"role\":"); automation_json_string(dom.role_name(dom.role_of(id)));
+    automation_raw(",\"name\":"); automation_json_string(dom.name_of(id));
+    automation_raw(",\"text\":"); automation_json_string(dom.text_of(id));
+    automation_raw(",\"testId\":"); automation_json_string(dom.test_id_of(id));
+    automation_raw(",\"value\":"); automation_json_string(dom.automation_value_of(id));
+    automation_raw(",\"bounds\":{\"x\":"); automation_i32(dom.node_x(id));
+    automation_raw(",\"y\":"); automation_i32(dom.node_y(id));
+    automation_raw(",\"width\":"); automation_i32(dom.node_w(id));
+    automation_raw(",\"height\":"); automation_i32(dom.node_h(id));
+    automation_raw("},\"visible\":"); automation_bool(dom.is_visible(id));
+    automation_raw(",\"enabled\":"); automation_bool(dom.is_enabled(id));
+    automation_raw(",\"focused\":"); automation_bool(dom.is_focused(id));
+    automation_raw(",\"checked\":"); automation_bool(dom.is_checked(id));
+    automation_raw(",\"hitTestable\":"); automation_bool(dom.is_hit_testable(id));
+    automation_transport.putc('}');
+
+    i32 child = dom.first_child(id);
+    while (child != 0) {
+        automation_node(child);
+        child = dom.next_sibling(child);
+    }
+}
+
+export void write_automation_snapshot() {
+    g_automation_first = 1;
+    automation_raw("{\"revision\":"); automation_i32(dom.revision());
+    automation_raw(",\"nodes\":[");
+    automation_node(dom.root_node_id());
+    automation_raw("]}");
+}
+
+export void write_automation_hit_test(i32 x, i32 y) {
+    automation_raw("{\"id\":");
+    automation_i32(dom.find_at(x, y));
+    automation_raw("}");
+}
