@@ -1,6 +1,6 @@
 package compositor;
 
-import dom from "dom.mln";
+import dom from "dom/dom.mln";
 import graphics from "graphics.mln";
 import mouse from "../../../MyKernel/src/io/mouse.mln";
 import keyboard from "../../../MyKernel/src/io/keyboard.mln";

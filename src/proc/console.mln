@@ -14,7 +14,7 @@ import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import { FsError } from "../fs/fs.mln";
 import fs from "../fs/fs.mln";
-import dom from "../ui/dom.mln";
+import dom from "../ui/dom/dom.mln";
 
 // Process consoles (MYOS-015): the glue between user-space processes and
 // terminal windows.
@@ -146,7 +146,7 @@ export i32 spawn_file(char *path) {
     };
     if (size <= 0) { fs.close(fd); return 0; }
     Result<i32, FsError> rewound = fs.seek(fd, 0, 0);
-    case rewound of { Ok(_) -> 0; Err(_) -> 0; };
+    case rewound of { Ok(_) -> _; Err(_) -> _; };
     i32 buf = heap.alloc(size);
     if (buf == 0) { fs.close(fd); return 0; }
     i32 got = case fs.read(fd, buf, size) of {
@@ -208,7 +208,7 @@ export i32 reap(i32 pid) {
     // A discarded aggregate-returning call passes no out-pointer (the
     // callee would write through a stale register), so bind every Result.
     Result<_, ProcessError> freed = process.free_proc(pid);
-    case freed of { Ok(_) -> 0; Err(_) -> 0; };
+    case freed of { Ok(_) -> _; Err(_) -> _; };
     unbind(pid);
     return code;
 }

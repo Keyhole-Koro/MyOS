@@ -1,6 +1,6 @@
 package files;
 
-import dom from "../ui/dom.mln";
+import dom from "../ui/dom/dom.mln";
 import graphics from "../ui/graphics.mln";
 import fs from "../fs/fs.mln";
 import editor from "editor.dom.mln";
@@ -98,7 +98,7 @@ void on_confirm_delete(i32 id) {
     char *name = selected_name();
     if (name == 0) { return; }
     Result<_, FsError> removed = fs.remove(name);
-    case removed of { Ok(_) -> 0; Err(_) -> 0; };
+    case removed of { Ok(_) -> _; Err(_) -> _; };
     refresh();
     files_status("deleted");
 }

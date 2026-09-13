@@ -1,6 +1,6 @@
 package terminal;
 
-import dom from "../ui/dom.mln";
+import dom from "../ui/dom/dom.mln";
 import console from "../proc/console.mln";
 import fs from "../fs/fs.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";

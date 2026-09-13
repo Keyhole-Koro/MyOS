@@ -1,6 +1,6 @@
 package editor;
 
-import dom from "../ui/dom.mln";
+import dom from "../ui/dom/dom.mln";
 import graphics from "../ui/graphics.mln";
 import fs from "../fs/fs.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
@@ -64,7 +64,7 @@ void on_save(i32 id) {
     while (text[len] != 0) { len = len + 1; }
     // Bind the Result: a discarded aggregate return has no out-pointer.
     Result<_, FsError> removed = fs.remove(path);
-    case removed of { Ok(_) -> 0; Err(_) -> 0; };
+    case removed of { Ok(_) -> _; Err(_) -> _; };
     i32 fd = case fs.create(path) of {
         Ok(v) -> v;
         Err(e) -> ({ editor_status("save failed: cannot create file"); return; });

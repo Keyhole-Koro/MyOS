@@ -1,5 +1,5 @@
 import assert from "../../../../toolchain/MyStdLib/assert.mln";
-import dom from "../../src/ui/dom.mln";
+import dom from "../../src/ui/dom/dom.mln";
 import graphics from "../../src/ui/graphics.mln";
 import theme from "../../src/ui/theme.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";

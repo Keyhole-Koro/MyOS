@@ -3,7 +3,7 @@ import heap from "../../../MyKernel/src/mm/heap.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import irq from "../../../MyKernel/src/arch/irq.mln";
 import irq_dispatch from "../../../MyKernel/src/kernel/irq_dispatch.mln";
-import dom from "../../src/ui/dom.mln";
+import dom from "../../src/ui/dom/dom.mln";
 import graphics from "../../src/ui/graphics.mln";
 import counter from "../../src/apps/counter.dom.mln";
 

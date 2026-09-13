@@ -1,6 +1,6 @@
 package notes;
 
-import dom from "../ui/dom.mln";
+import dom from "../ui/dom/dom.mln";
 import graphics from "../ui/graphics.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
 

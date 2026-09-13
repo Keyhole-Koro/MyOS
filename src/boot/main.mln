@@ -1,6 +1,6 @@
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
-import dom from "../ui/dom.mln";
+import dom from "../ui/dom/dom.mln";
 import graphics from "../ui/graphics.mln";
 import fs from "../fs/fs.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
@@ -53,7 +53,7 @@ void enable_kernel_paging() {
     };
     Result<_, MmuError> mapped = mmu.setup_identity_kernel_mapping(kpd);
     case mapped of {
-        Ok(_) -> 0;
+        Ok(_) -> _;
         Err(e) -> ({ debug.panic("kernel: identity mapping failed"); });
     };
     mmu.enable_paging(kpd);
@@ -129,9 +129,9 @@ void kernel_init() {
     // spawn_task returns a Result; bind it so the callee has somewhere to
     // write it (a bare aggregate-returning call passes no out-pointer).
     Result<i32, SchedulerError> shell_task = scheduler.spawn_task(shell.run);
-    case shell_task of { Ok(_) -> 0; Err(_) -> ({ debug.println("kernel: no task slot for the shell"); }); };
+    case shell_task of { Ok(_) -> _; Err(_) -> ({ debug.println("kernel: no task slot for the shell"); }); };
     Result<i32, SchedulerError> automation_task = scheduler.spawn_task(automation_ui.run);
-    case automation_task of { Ok(_) -> 0; Err(_) -> ({ debug.println("kernel: no task slot for automation"); }); };
+    case automation_task of { Ok(_) -> _; Err(_) -> ({ debug.println("kernel: no task slot for automation"); }); };
 
     debug.println("ui: click the button (window must have focus)");
     compositor.run();

@@ -1,7 +1,7 @@
 package automation_ui;
 
 import automation_transport from "automation_transport.mln";
-import dom from "../ui/dom.mln";
+import dom from "../ui/dom/dom.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 
 i32 CMD_DOM_SNAPSHOT = 1;

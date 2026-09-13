@@ -1,13 +1,13 @@
 package dom;
 
-import debug from "../../../MyKernel/src/debug/debug.mln";
-import heap from "../../../MyKernel/src/mm/heap.mln";
-import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
-import automation_transport from "../meta/automation_transport.mln";
-import graphics from "graphics.mln";
-import theme from "theme.mln";
-import { Option } from "../../../../toolchain/MyStdLib/option.mln";
-import { halt_cpu } from "../../../MyKernel/src/arch/halt.masm";
+import debug from "../../../../MyKernel/src/debug/debug.mln";
+import heap from "../../../../MyKernel/src/mm/heap.mln";
+import scheduler from "../../../../MyKernel/src/kernel/scheduler.mln";
+import automation_transport from "../../meta/automation_transport.mln";
+import graphics from "../graphics.mln";
+import theme from "../theme.mln";
+import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
+import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
 
 // Kernel object tree + UI DOM. See docs/DOM_SPEC.md and MYOS-014.
 //
