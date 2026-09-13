@@ -1,0 +1,173 @@
+package files;
+
+import dom from "../ui/dom.mln";
+import graphics from "../ui/graphics.mln";
+import fs from "../fs/fs.mln";
+import editor from "editor.dom.mln";
+import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { FsError } from "../fs/fs.mln";
+
+// File manager: lists the MFS disk, opens a file in the editor (activate a
+// row, or the Open button), deletes after a confirmation dialog, and creates
+// new files through the editor.
+
+i32 g_win = 0;
+i32 g_list = 0;
+i32 g_status = 0;
+i32 g_dialog = 0;
+char g_items[1024];
+char g_selected[16];
+char g_status_buf[64];
+
+void files_status(char *s) { dom.set_text(g_status, s); }
+
+// Rebuild the list from the disk: one "name  (N bytes)" row per file.
+export void refresh() {
+    char name[16];
+    i32 k = strbuf.reset(&g_items[0]);
+    i32 idx = fs.dir_next(0, &name[0], 16);
+    i32 count = 0;
+    while (idx >= 0) {
+        if (count > 0) { k = strbuf.append(&g_items[0], 1024, k, "\n"); }
+        k = strbuf.append(&g_items[0], 1024, k, &name[0]);
+        k = strbuf.append(&g_items[0], 1024, k, "   (");
+        k = strbuf.append_i32(&g_items[0], 1024, k, fs.entry_size(idx));
+        k = strbuf.append(&g_items[0], 1024, k, " bytes)");
+        count = count + 1;
+        idx = fs.dir_next(idx + 1, &name[0], 16);
+    }
+    dom.list_set_items(g_list, &g_items[0]);
+    i32 s = strbuf.reset(&g_status_buf[0]);
+    s = strbuf.append_i32(&g_status_buf[0], 64, s, count);
+    s = strbuf.append(&g_status_buf[0], 64, s, " file(s) on disk");
+    files_status(&g_status_buf[0]);
+}
+
+// The selected row's file name (the part before the size), or 0.
+char* selected_name() {
+    i32 row = dom.list_selected(g_list);
+    if (row < 0) { return (char*)0; }
+    char item[48];
+    dom.list_item(g_list, row, &item[0], 48);
+    i32 i = 0;
+    while (item[i] != 0) {
+        if (item[i] == ' ') { break; }
+        g_selected[i] = item[i];
+        i = i + 1;
+        if (i >= 15) { break; }
+    }
+    g_selected[i] = (char)0;
+    return &g_selected[0];
+}
+
+void on_select(i32 id) {
+    char *name = selected_name();
+    if (name == 0) { return; }
+    i32 k = strbuf.reset(&g_status_buf[0]);
+    k = strbuf.append(&g_status_buf[0], 64, k, "selected ");
+    k = strbuf.append(&g_status_buf[0], 64, k, name);
+    files_status(&g_status_buf[0]);
+}
+
+void on_open(i32 id) {
+    char *name = selected_name();
+    if (name == 0) { files_status("select a file first"); return; }
+    editor.forget_if_closed();
+    editor.open(name);
+}
+
+void on_new(i32 id) {
+    editor.forget_if_closed();
+    editor.open("untitled.txt");
+}
+
+void on_refresh(i32 id) { refresh(); }
+
+// --- delete confirmation dialog ---
+
+void close_dialog() {
+    if (g_dialog != 0) {
+        dom.close_window(g_dialog);
+        g_dialog = 0;
+    }
+}
+
+void on_confirm_delete(i32 id) {
+    close_dialog();
+    char *name = selected_name();
+    if (name == 0) { return; }
+    Result<_, FsError> removed = fs.remove(name);
+    case removed of { Ok(_) -> 0; Err(_) -> 0; };
+    refresh();
+    files_status("deleted");
+}
+
+void on_cancel_delete(i32 id) {
+    close_dialog();
+}
+
+char g_question[64];
+
+i32 build_dialog(i32 x, i32 y) {
+    return <Window title="Delete file?" x={x} y={y} w={340} h={140}>
+        <Label text="" x={20} y={16} color={0} bold={0} />
+        <Row x={20} y={60} w={300} h={34} padding={0} gap={10}>
+            <PrimaryButton text="Delete" x={0} y={0} w={110} h={34} onClick={on_confirm_delete} />
+            <Button text="Cancel" x={0} y={0} w={110} h={34} onClick={on_cancel_delete} />
+        </Row>
+    </Window>;
+}
+
+void on_delete(i32 id) {
+    char *name = selected_name();
+    if (name == 0) { files_status("select a file first"); return; }
+    close_dialog();
+    i32 k = strbuf.reset(&g_question[0]);
+    k = strbuf.append(&g_question[0], 64, k, "Delete \"");
+    k = strbuf.append(&g_question[0], 64, k, name);
+    k = strbuf.append(&g_question[0], 64, k, "\" permanently?");
+    i32 s = dom.ui_scale();
+    i32 wx = dom.node_x(g_win) / s + 60;
+    i32 wy = dom.node_y(g_win) / s + 90;
+    g_dialog = build_dialog(wx, wy);
+    dom.append_child(dom.desktop_id(), g_dialog);
+    dom.set_text(dom.first_child(g_dialog), &g_question[0]);
+    dom.focus_window(g_dialog);
+}
+
+void files_noop(i32 id) { }
+
+i32 build_ui() {
+    i32 muted = graphics.rgb(0x6B, 0x72, 0x80);
+    return <Window title="Files" x={60} y={60} w={440} h={400}>
+        <List name="files" x={12} y={12} w={416} h={270} capacity={1024} onChange={on_select} onActivate={on_open} />
+        <Row x={12} y={294} w={416} h={34} padding={0} gap={8}>
+            <PrimaryButton text="Open" x={0} y={0} w={90} h={34} onClick={on_open} />
+            <Button text="New" x={0} y={0} w={80} h={34} onClick={on_new} />
+            <Button text="Delete" x={0} y={0} w={90} h={34} onClick={on_delete} />
+            <Button text="Refresh" x={0} y={0} w={96} h={34} onClick={on_refresh} />
+        </Row>
+        <Label text="" x={12} y={340} color={muted} bold={0} />
+    </Window>;
+}
+
+// Show the file manager (single instance). Returns the window id.
+export i32 mount() {
+    if (g_win != 0) {
+        if (dom.node_exists(g_win) == 0) { g_win = 0; }
+    }
+    if (g_win == 0) {
+        g_win = build_ui();
+        dom.append_child(dom.desktop_id(), g_win);
+        g_list = dom.first_child(g_win);
+        i32 row = dom.next_sibling(g_list);
+        g_status = dom.next_sibling(row);
+        dom.set_test_id(g_list, "file-list");
+        dom.set_test_id(g_status, "files-status");
+    }
+    refresh();
+    dom.focus_window(g_win);
+    dom.set_focus(g_list);
+    return g_win;
+}

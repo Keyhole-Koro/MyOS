@@ -525,3 +525,24 @@ Automation snapshot は専用MMIO bridgeへJSONとして出力する。snapshot�
 `revision`、stableな`testId`、textboxの`value`、bounds、visible/enabled/focused/
 checked/hitTestableを含める。host側は`MyOS` / strict `Locator` / `expect`だけを
 公開し、shellの`dom`コマンドや行指向DSLには依存しない。
+
+## MYOS-015（2026-09-12）: 複数行テキスト・リスト・メニュー・WM 追加
+
+- 新ノード種別: `NODE_TEXT_AREA`(20)/`NODE_LIST`(21)/`NODE_MENU`(22)、role に
+  `textarea`/`list`/`menu`。`STATE_MAXIMIZED`(128)/`STATE_MINIMIZED`(256)、
+  `STYLE_READONLY`(8)。`Node` に `scroll/sel/sx/sy/sw/sh` を追加（sizeof=96）。
+- `TextArea(name,x,y,w,h,capacity,readonly,onChange)`: 改行区切りの複数行編集
+  ／読取専用コンソール。`append_text`/`append_bytes`（生アドレスから）/`clear_text_area`/
+  `scroll_by`。カーソル移動は ←→↑↓/Home/End/PageUp/PageDown。
+- `List(name,x,y,w,h,capacity,onChange,onActivate)`: `list_set_items`（改行区切り）、
+  `list_selected`/`list_item`/`list_select`/`list_click`。行クリックで選択、
+  同じ行の再クリックまたは Enter で activate。
+- `Menu`: `open_menu(x,y,items,handler,target)`/`close_menu`/`menu_click`/`menu_hover`。
+  常に最前面・最初にヒットテスト。`compositor.set_desktop_menu` で右クリックメニュー。
+- WM: `minimize_window`/`maximize_window`/`resize_window`、
+  `titlebar_button_hit`(1=閉じる/2=最小化/3=最大化)/`resize_grip_hit`、
+  `focus_next`(Tab)、`dispatch_wheel`。タスクバーの MyOS ボタンでアプリメニュー。
+- 描画時は行を共有バッファから **ローカルへコピー** してから描く（プロセスの
+  stdout 書き込みとの競合で以前は文字化けした）。TextArea を跨ぐ描画/追記は
+  コンポジタ側を割込み禁止で相互排他にする（プロセス側 syscall は元々割込み禁止）。
+- グローバル `char* = "リテラル"` は null になるため、メニュー文字列等は関数返り値で渡す。

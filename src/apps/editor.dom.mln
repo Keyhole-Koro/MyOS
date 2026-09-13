@@ -1,0 +1,123 @@
+package editor;
+
+import dom from "../ui/dom.mln";
+import graphics from "../ui/graphics.mln";
+import fs from "../fs/fs.mln";
+import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { FsError } from "../fs/fs.mln";
+
+// Text editor: a TextArea over one file on the MFS disk. Save rewrites the
+// file (MFS writes are append-only, so the file is removed and recreated).
+// Single instance: opening another file reuses the window.
+
+i32 CAP = 4096;
+
+i32 g_win = 0;
+i32 g_area = 0;
+i32 g_name = 0;     // filename TextInput
+i32 g_status = 0;   // Label
+char g_status_buf[64];
+
+void editor_status(char *s) {
+    dom.set_text(g_status, s);
+}
+
+void editor_noop(i32 id) { }
+
+// Load `path` into the text area (empty when the file does not exist).
+export void load(char *path) {
+    dom.set_input_text(g_name, path);
+    dom.clear_text_area(g_area);
+    i32 fd = case fs.open(path) of {
+        Ok(v) -> v;
+        Err(e) -> ({ editor_status("new file"); return; });
+    };
+    char chunk[128];
+    i32 total = 0;
+    while (1) {
+        i32 got = case fs.read(fd, (i32)(&chunk[0]), 127) of {
+            Ok(v) -> v;
+            Err(e) -> 0;
+        };
+        if (got <= 0) { break; }
+        chunk[got] = (char)0;
+        dom.append_text(g_area, &chunk[0]);
+        total = total + got;
+    }
+    fs.close(fd);
+    // append_text leaves the caret at the end; start at the top instead.
+    dom.dispatch_key_event(1, 0x105, 0); // Home of the last line
+    i32 k = strbuf.reset(&g_status_buf[0]);
+    k = strbuf.append(&g_status_buf[0], 64, k, "loaded ");
+    k = strbuf.append_i32(&g_status_buf[0], 64, k, total);
+    k = strbuf.append(&g_status_buf[0], 64, k, " bytes");
+    editor_status(&g_status_buf[0]);
+}
+
+void on_save(i32 id) {
+    char *path = dom.text_of(g_name);
+    if (path == 0) { return; }
+    if (path[0] == 0) { editor_status("enter a file name first"); return; }
+    char *text = dom.text_of(g_area);
+    i32 len = 0;
+    while (text[len] != 0) { len = len + 1; }
+    // Bind the Result: a discarded aggregate return has no out-pointer.
+    Result<_, FsError> removed = fs.remove(path);
+    case removed of { Ok(_) -> 0; Err(_) -> 0; };
+    i32 fd = case fs.create(path) of {
+        Ok(v) -> v;
+        Err(e) -> ({ editor_status("save failed: cannot create file"); return; });
+    };
+    i32 written = 0;
+    if (len > 0) {
+        written = case fs.write(fd, (i32)text, len) of {
+            Ok(v) -> v;
+            Err(e) -> 0;
+        };
+    }
+    fs.close(fd);
+    i32 k = strbuf.reset(&g_status_buf[0]);
+    k = strbuf.append(&g_status_buf[0], 64, k, "saved ");
+    k = strbuf.append_i32(&g_status_buf[0], 64, k, written);
+    k = strbuf.append(&g_status_buf[0], 64, k, " bytes");
+    editor_status(&g_status_buf[0]);
+}
+
+i32 build_ui() {
+    i32 muted = graphics.rgb(0x6B, 0x72, 0x80);
+    return <Window title="Editor" x={300} y={120} w={520} h={420}>
+        <Row x={12} y={12} w={496} h={34} padding={0} gap={8}>
+            <TextInput placeholder="file name" x={0} y={0} w={300} h={34} capacity={16} onChange={editor_noop} />
+            <PrimaryButton text="Save" x={0} y={0} w={90} h={34} onClick={on_save} />
+        </Row>
+        <TextArea name="Type here..." x={12} y={56} w={496} h={294} capacity={4096} readonly={0} onChange={editor_noop} />
+        <Label text="" x={12} y={360} color={muted} bold={0} />
+    </Window>;
+}
+
+// Show the editor with `path` loaded; returns the window id.
+export i32 open(char *path) {
+    if (g_win == 0) {
+        g_win = build_ui();
+        dom.append_child(dom.desktop_id(), g_win);
+        i32 row = dom.first_child(g_win);
+        g_name = dom.first_child(row);
+        g_area = dom.next_sibling(row);
+        g_status = dom.next_sibling(g_area);
+        dom.set_test_id(g_area, "editor-text");
+        dom.set_test_id(g_name, "editor-name");
+        dom.set_test_id(g_status, "editor-status");
+    }
+    dom.focus_window(g_win);
+    dom.set_focus(g_area);
+    load(path);
+    return g_win;
+}
+
+// The window was closed by the user: forget it so the next open rebuilds.
+export void forget_if_closed() {
+    if (g_win != 0) {
+        if (dom.node_exists(g_win) == 0) { g_win = 0; }
+    }
+}

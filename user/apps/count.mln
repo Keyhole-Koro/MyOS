@@ -1,0 +1,23 @@
+package app;
+
+import { sys_yield } from "../lib/sys.masm";
+import ulib from "../lib/ulib.mln";
+
+// Counts to ten, yielding between lines so the output interleaves with
+// whatever else the scheduler is running (and the terminal keeps repainting).
+export i32 main() {
+    i32 i = 1;
+    while (i <= 10) {
+        ulib.print("count ");
+        ulib.print_i32(i);
+        ulib.println("");
+        i32 spin = 0;
+        while (spin < 20) {
+            sys_yield();
+            spin = spin + 1;
+        }
+        i = i + 1;
+    }
+    ulib.println("done");
+    return 0;
+}

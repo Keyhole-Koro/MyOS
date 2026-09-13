@@ -1,0 +1,12 @@
+# Repro/diagnosis script for "clicking draws a rectangle somewhere unrelated".
+# Captures the DOM tree and a screenshot before and after one click so the
+# before/after pixels and node bounds can be compared offline.
+
+dump
+screenshot path=/tmp/click_before.ppm
+
+click role=button name="CLICK ME"
+wait_for text="clicks: 1"
+
+dump
+screenshot path=/tmp/click_after.ppm

@@ -1,15 +1,25 @@
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import dom from "../ui/dom.mln";
+import graphics from "../ui/graphics.mln";
 import fs from "../fs/fs.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+import { SchedulerError } from "../../../MyKernel/src/kernel/scheduler.mln";
 import irq_dispatch from "../../../MyKernel/src/kernel/irq_dispatch.mln";
 import irq from "../../../MyKernel/src/arch/irq.mln";
 import shell from "../apps/shell.mln";
 import automation_ui from "../meta/automation_ui.mln";
 import compositor from "../ui/compositor.mln";
+import console from "../proc/console.mln";
+import mmu from "../../../MyKernel/src/mm/mmu.mln";
+import { MmuError } from "../../../MyKernel/src/mm/mmu.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import counter from "../apps/counter.dom.mln";
 import notes from "../apps/notes.dom.mln";
+import terminal from "../apps/terminal.dom.mln";
+import files from "../apps/files.dom.mln";
+import editor from "../apps/editor.dom.mln";
 
 // System bring-up.
 //
@@ -32,10 +42,45 @@ void kernel_arch_init() {
     debug.println("kernel: heap ready");
 }
 
-// Taskbar launcher: every click opens another Notes window.
-void launch_notes() {
-    i32 win = notes.mount();
+// Paging for the kernel itself: an identity page directory covering RAM,
+// the kernel stack, MMIO and VRAM. User processes get their own directory
+// (with the same identity mapping) from the loader; keeping paging on from
+// here means the kernel runs the same way with or without processes.
+void enable_kernel_paging() {
+    i32 kpd = case mmu.create_page_directory() of {
+        Some(p) -> p;
+        None -> ({ debug.panic("kernel: no memory for the page directory"); 0; });
+    };
+    Result<_, MmuError> mapped = mmu.setup_identity_kernel_mapping(kpd);
+    case mapped of {
+        Ok(_) -> 0;
+        Err(e) -> ({ debug.panic("kernel: identity mapping failed"); });
+    };
+    mmu.enable_paging(kpd);
+}
+
+// The app menu, reached from the taskbar's MyOS button and by right-clicking
+// the desktop. Indexes match MENU_ITEMS line by line.
+// A global char* cannot be initialized with a string-literal address
+// (the compiler emits a null pointer), so the menu text comes from a
+// function returning the literal instead.
+char* menu_items() { return "Terminal\nFiles\nEditor\nNotes\nCounter"; }
+
+void open_app(i32 index) {
+    i32 win = 0;
+    if (index == 0) { win = terminal.mount(); }
+    if (index == 1) { win = files.mount(); }
+    if (index == 2) { editor.forget_if_closed(); win = editor.open("untitled.txt"); }
+    if (index == 3) { win = notes.mount(); }
+    if (index == 4) { win = counter.mount(); }
     if (win != 0) { dom.focus_window(win); }
+}
+
+// Taskbar launcher: pop the app menu up above the button.
+void launch_menu() {
+    i32 s = dom.ui_scale();
+    i32 y = graphics.display_height() - dom.taskbar_height() - 190 * s;
+    dom.open_menu(8 * s, y, menu_items(), open_app, 0);
 }
 
 // Once a second: redraw the taskbar so its uptime clock advances.
@@ -46,22 +91,26 @@ void on_clock(i32 id) {
 void kernel_init() {
     kernel_boot_banner();
     kernel_arch_init();
+    enable_kernel_paging();
 
     dom.init();
     dom.create_taskbar();
-    dom.set_launcher(launch_notes);
+    dom.set_launcher(launch_menu);
+    compositor.set_desktop_menu(menu_items(), open_app);
     dom.create_timer(1000, on_clock);
     debug.println("kernel: dom ready");
+
+    fs.init();
+    console.init();
 
     // Apps own their windows; the kernel only starts them. Each mount()
     // builds a tree and attaches it to the desktop; the last one mounted is
     // made the active window.
     counter.mount();
-    i32 notes_win = notes.mount();
-    dom.focus_window(notes_win);
+    notes.mount();
+    i32 term = terminal.mount();
+    dom.focus_window(term);
     dom.dump();
-
-    fs.init();
 
     // Paint the desktop once before interrupts are enabled. render_all()
     // walks the whole tree (DMA2D fills + glyph draws); once scheduler.init()
@@ -77,8 +126,12 @@ void kernel_init() {
     irq.enable();
 
     debug.println("kernel: spawning shell task");
-    scheduler.spawn_task(shell.run);
-    scheduler.spawn_task(automation_ui.run);
+    // spawn_task returns a Result; bind it so the callee has somewhere to
+    // write it (a bare aggregate-returning call passes no out-pointer).
+    Result<i32, SchedulerError> shell_task = scheduler.spawn_task(shell.run);
+    case shell_task of { Ok(_) -> 0; Err(_) -> ({ debug.println("kernel: no task slot for the shell"); }); };
+    Result<i32, SchedulerError> automation_task = scheduler.spawn_task(automation_ui.run);
+    case automation_task of { Ok(_) -> 0; Err(_) -> ({ debug.println("kernel: no task slot for automation"); }); };
 
     debug.println("ui: click the button (window must have focus)");
     compositor.run();

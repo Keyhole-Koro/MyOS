@@ -1,0 +1,12 @@
+package app;
+
+import ulib from "../lib/ulib.mln";
+
+// The smallest user program: runs in its own address space and talks to the
+// desktop only through write(1, ...).
+export i32 main() {
+    ulib.println("Hello from user space!");
+    ulib.print("This process runs at 0x40000000 with its own page tables");
+    ulib.println(" and exits with code 7.");
+    return 7;
+}

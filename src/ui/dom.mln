@@ -40,6 +40,9 @@ export u16 NODE_CHECKBOX  = 16;
 export u16 NODE_SEPARATOR = 17;
 export u16 NODE_PANEL     = 18;
 export u16 NODE_TASKBAR   = 19;
+export u16 NODE_TEXT_AREA = 20;
+export u16 NODE_LIST      = 21;
+export u16 NODE_MENU      = 22;
 
 // --- accessibility roles (MYOS-004 automation locators) ------------------------
 export u16 ROLE_NONE      = 0;
@@ -52,6 +55,9 @@ export u16 ROLE_TEXTBOX   = 6;
 export u16 ROLE_CHECKBOX  = 7;
 export u16 ROLE_TOOLBAR   = 8;
 export u16 ROLE_SEPARATOR = 9;
+export u16 ROLE_TEXTAREA  = 10;
+export u16 ROLE_LIST      = 11;
+export u16 ROLE_MENU      = 12;
 
 // --- state bitmask -------------------------------------------------------------
 export u16 STATE_VISIBLE      = 0b0000001;
@@ -61,18 +67,21 @@ export u16 STATE_PRESSED      = 0b0001000;
 export u16 STATE_FOCUSED      = 0b0010000; // keyboard focus, or the active window
 export u16 STATE_HIT_TESTABLE = 0b0100000; // find_at may return this node
 export u16 STATE_CHECKED      = 0b1000000; // Checkbox
+export u16 STATE_MAXIMIZED    = 128;       // Window fills the desktop; sx..sh hold the restore bounds
+export u16 STATE_MINIMIZED    = 256;       // Window hidden to the taskbar
 
 // --- style bits (Node.style) -----------------------------------------------------
 export u16 STYLE_BOLD    = 1; // Text: heavier face
 export u16 STYLE_PRIMARY = 2; // Button: accent-coloured call to action
 export u16 STYLE_CENTER  = 4; // Text: centre within w when w > 0
+export u16 STYLE_READONLY = 8; // TextArea: displays text, no editing (console output)
 
 // Node layout (offsets, bytes; measured u16=2B, pointers 4B-aligned, no tail
 // padding): id=0 kind=2 name=4 parent=8 first_child=10 next_sibling=12 role=14
 // text=16 x=20 y=22 w=24 h=26 state=28 style=30 on_click=32
 // background_color=36 border_color=40 padding=44 gap=46 color=48 on_key=52
 // on_change=56 cap=60 len=62 cursor=64 radius=66 on_tick=68 interval=72
-// next_due=76 test_id=80 -> sizeof = 84. Allocated as 84.
+// next_due=76 test_id=80 scroll=84 sel=86 sx=88 sy=90 sw=92 sh=94 -> sizeof = 96.
 //
 // Public because it is the payload type of get_node(). Mutation still goes
 // through the DOM setters by convention.
@@ -107,9 +116,15 @@ export typedef struct {
     i32 interval;         // Timer period in scheduler ticks
     i32 next_due;         // Timer: tick at which it next fires
     char *test_id;        // stable automation identity; 0 = none
+    u16 scroll;           // TextArea/List: first visible line/row
+    u16 sel;              // List: selected row + 1 (0 = none); Menu: hovered row + 1
+    u16 sx;               // Window: bounds saved by maximize_window
+    u16 sy;
+    u16 sw;
+    u16 sh;
 } Node;
 
-i32 NODE_SIZE = 84;
+i32 NODE_SIZE = 96;
 
 // Damage rectangles: the areas that changed since the last render, in
 // display coordinates. render_scene repaints each one under a clip. Keeping
@@ -142,6 +157,9 @@ i32 g_timers_node_id = 0;  // structural parent for Timer nodes
 i32 g_active_window = 0;   // window with STATE_FOCUSED (front-most, gets keys)
 i32 g_focus_id = 0;        // node with keyboard focus (a TextInput), or 0
 i32 g_launcher = 0;        // handler() for the taskbar's launcher button
+i32 g_menu_id = 0;         // the open popup menu, or 0
+i32 g_menu_handler = 0;    // handler(index) for the open menu
+i32 g_menu_target = 0;     // the window a window-menu acts on (0 for the desktop menu)
 
 // Up to 256 nodes for now to keep memory small
 // TODO: grow this table and Node.id to u32 when we need more than 256 nodes.
@@ -245,6 +263,12 @@ export i32 create_node(i32 kind, char *name) {
     n->interval = 0;
     n->next_due = 0;
     n->test_id = (char*)0;
+    n->scroll = 0;
+    n->sel = 0;
+    n->sx = 0;
+    n->sy = 0;
+    n->sw = 0;
+    n->sh = 0;
 
     g_node_table[id] = n;
     touch();
@@ -595,6 +619,9 @@ i32 state_is_visible(Node *n, i32 flag) {
     i32 kc = NODE_CHECKBOX;
     i32 ki = NODE_TEXT_INPUT;
     i32 kw = NODE_WINDOW;
+    i32 kta = NODE_TEXT_AREA;
+    i32 kl = NODE_LIST;
+    i32 km = NODE_MENU;
     i32 hovered = STATE_HOVERED;
     i32 pressed = STATE_PRESSED;
     i32 focused = STATE_FOCUSED;
@@ -602,7 +629,8 @@ i32 state_is_visible(Node *n, i32 flag) {
     if (flag == hovered) {
         if (kind == kb) { return 1; }
         if (kind == kc) { return 1; }
-        if (kind == kw) { return 1; } // close button highlight
+        if (kind == kw) { return 1; } // title-bar button highlight
+        if (kind == km) { return 1; }
         return 0;
     }
     if (flag == pressed) {
@@ -613,6 +641,10 @@ i32 state_is_visible(Node *n, i32 flag) {
     if (flag == focused) {
         if (kind == ki) { return 1; }
         if (kind == kw) { return 1; }
+        if (kind == kta) { return 1; }
+        if (kind == kl) { return 1; }
+        if (kind == kb) { return 1; }  // focus ring
+        if (kind == kc) { return 1; }
         return 0;
     }
     if (flag == hit_testable) { return 0; }
@@ -811,6 +843,21 @@ export void bring_to_front(i32 id) {
     touch();
 }
 
+// Nodes whose `text` is a heap buffer they allocated (TextInput/TextArea/
+// List/Menu); everyone else points at a string the caller owns.
+i32 owns_buffer(Node *n) {
+    i32 k = n->kind;
+    i32 ki = NODE_TEXT_INPUT;
+    i32 kta = NODE_TEXT_AREA;
+    i32 kl = NODE_LIST;
+    i32 km = NODE_MENU;
+    if (k == ki) { return 1; }
+    if (k == kta) { return 1; }
+    if (k == kl) { return 1; }
+    if (k == km) { return 1; }
+    return 0;
+}
+
 void free_subtree(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -834,10 +881,10 @@ void free_subtree(i32 id) {
             i = i + 1;
         }
     }
-    i32 ki = NODE_TEXT_INPUT;
-    if (n->kind == ki) {
+    if (owns_buffer(n) != 0) {
         if (n->text != 0) { heap.free((i32)n->text); }
     }
+    if (g_menu_id == id) { g_menu_id = 0; }
     g_node_table[id] = (Node*)0;
     heap.free((i32)n);
 }
@@ -891,6 +938,14 @@ export i32 window_of(i32 id) {
 
 // --- focus / window management -----------------------------------------------------------
 
+// Height of the taskbar in display pixels (0 if none), so callers can keep
+// windows above it.
+export i32 taskbar_height() {
+    Node *n = node_ptr(g_taskbar_id);
+    if (n == 0) { return 0; }
+    return n->h;
+}
+
 export i32 active_window() {
     return g_active_window;
 }
@@ -917,6 +972,11 @@ export void focus_window(i32 win) {
     if (n == 0) { return; }
     i32 kw = NODE_WINDOW;
     if (n->kind != kw) { return; }
+    i32 minimized = STATE_MINIMIZED;
+    if ((n->state & minimized) != 0) {
+        set_state_flag(win, STATE_MINIMIZED, 0);
+        set_state_flag(win, STATE_VISIBLE, 1);
+    }
     if (g_active_window != win) {
         if (g_active_window != 0) { set_state_flag(g_active_window, STATE_FOCUSED, 0); }
         g_active_window = win;
@@ -930,17 +990,21 @@ export void focus_window(i32 win) {
 // After a window goes away, activate the top-most remaining one.
 void activate_topmost() {
     i32 kw = NODE_WINDOW;
+    i32 minimized = STATE_MINIMIZED;
     i32 top = 0;
     i32 child_id = first_child(g_desktop_node_id);
     while (child_id != 0) {
         Node *c = node_ptr(child_id);
         if (c == 0) { child_id = 0; }
         else {
-            if (c->kind == kw) { top = child_id; }
+            if (c->kind == kw) {
+                if ((c->state & minimized) == 0) { top = child_id; }
+            }
             child_id = c->next_sibling;
         }
     }
     if (top != 0) { focus_window(top); }
+    else { g_active_window = 0; }
     damage_node(g_taskbar_id);
 }
 
@@ -949,11 +1013,90 @@ export void close_window(i32 win) {
     activate_topmost();
 }
 
-// Chrome geometry, in display pixels. The close button is a disc at the left
-// of the title bar; the whole bar (minus the button) is the drag handle.
+// Change a window's size in place (its children stay anchored top-left;
+// they are clipped to the window). Enforces a minimum so the chrome stays
+// usable.
+export void resize_window(i32 win, i32 w, i32 h) {
+    Node *n = node_ptr(win);
+    if (n == 0) { return; }
+    i32 s = ui_scale();
+    i32 min_w = 200 * s;
+    i32 min_h = 120 * s;
+    if (w < min_w) { w = min_w; }
+    if (h < min_h) { h = min_h; }
+    damage_node(win);
+    n->w = (u16)w;
+    n->h = (u16)h;
+    damage_node(win);
+    touch();
+}
+
+// Hide a window to the taskbar. Its entry stays; clicking it (or
+// focus_window) brings it back.
+export void minimize_window(i32 win) {
+    Node *n = node_ptr(win);
+    if (n == 0) { return; }
+    set_state_flag(win, STATE_MINIMIZED, 1);
+    set_state_flag(win, STATE_VISIBLE, 0);
+    if (window_of(g_focus_id) == win) { set_focus(0); }
+    if (g_active_window == win) {
+        set_state_flag(win, STATE_FOCUSED, 0);
+        g_active_window = 0;
+        activate_topmost();
+    }
+    damage_node(g_taskbar_id);
+    touch();
+}
+
+export i32 is_minimized(i32 win) {
+    return get_state_flag(win, STATE_MINIMIZED);
+}
+
+export i32 is_maximized(i32 win) {
+    return get_state_flag(win, STATE_MAXIMIZED);
+}
+
+// Fill the desktop (above the taskbar), remembering the old bounds; a second
+// call restores them. Children move with the window and keep their size.
+export void maximize_window(i32 win) {
+    Node *n = node_ptr(win);
+    if (n == 0) { return; }
+    i32 maximized = STATE_MAXIMIZED;
+    if ((n->state & maximized) != 0) {
+        i32 rx = n->sx;
+        i32 ry = n->sy;
+        move_node(win, rx - n->x, ry - n->y);
+        resize_window(win, n->sw, n->sh);
+        set_state_flag(win, STATE_MAXIMIZED, 0);
+        return;
+    }
+    n->sx = n->x;
+    n->sy = n->y;
+    n->sw = n->w;
+    n->sh = n->h;
+    i32 dw = graphics.display_width();
+    i32 dh = graphics.display_height() - taskbar_height();
+    move_node(win, 0 - n->x, 0 - n->y);
+    resize_window(win, dw, dh);
+    set_state_flag(win, STATE_MAXIMIZED, 1);
+}
+
+// Chrome geometry, in display pixels. Three discs sit at the left of the
+// title bar -- close, minimize, maximize -- and the rest of the bar is the
+// drag handle. A resize grip occupies the bottom-right corner.
+i32 TB_BUTTON_CLOSE = 1;
+i32 TB_BUTTON_MINIMIZE = 2;
+i32 TB_BUTTON_MAXIMIZE = 3;
+i32 GRIP_SIZE = 16; // logical px
+
 i32 close_button_cx(Node *w) {
     i32 s = ui_scale();
     return w->x + 16 * s;
+}
+
+i32 tb_button_cx(Node *w, i32 which) {
+    i32 s = ui_scale();
+    return w->x + (16 + 20 * (which - 1)) * s;
 }
 
 i32 close_button_cy(Node *w) {
@@ -966,22 +1109,45 @@ i32 close_button_r() {
     return 7 * ui_scale();
 }
 
-// True if (px, py) is on the window's close button.
-export i32 close_button_hit(i32 win, i32 px, i32 py) {
+// Which title-bar button (px, py) is on: 1 = close, 2 = minimize,
+// 3 = maximize, 0 = none.
+export i32 titlebar_button_hit(i32 win, i32 px, i32 py) {
     Node *w = node_ptr(win);
     if (w == 0) { return 0; }
-    i32 dx = px - close_button_cx(w);
     i32 dy = py - close_button_cy(w);
     i32 r = close_button_r() + 3 * ui_scale(); // a little slack
-    if (dx * dx + dy * dy <= r * r) { return 1; }
+    i32 which = 1;
+    while (which <= 3) {
+        i32 dx = px - tb_button_cx(w, which);
+        if (dx * dx + dy * dy <= r * r) { return which; }
+        which = which + 1;
+    }
     return 0;
 }
 
-// True if (px, py) is in the window's title bar (excluding the close button).
+// True if (px, py) is on the window's close button.
+export i32 close_button_hit(i32 win, i32 px, i32 py) {
+    if (titlebar_button_hit(win, px, py) == 1) { return 1; }
+    return 0;
+}
+
+// True if (px, py) is on the resize grip in the window's bottom-right corner.
+export i32 resize_grip_hit(i32 win, i32 px, i32 py) {
+    Node *w = node_ptr(win);
+    if (w == 0) { return 0; }
+    i32 g = GRIP_SIZE * ui_scale();
+    if (px < w->x + w->w - g) { return 0; }
+    if (py < w->y + w->h - g) { return 0; }
+    if (px >= w->x + w->w) { return 0; }
+    if (py >= w->y + w->h) { return 0; }
+    return 1;
+}
+
+// True if (px, py) is in the window's title bar (excluding its buttons).
 export i32 titlebar_hit(i32 win, i32 px, i32 py) {
     Node *w = node_ptr(win);
     if (w == 0) { return 0; }
-    if (close_button_hit(win, px, py) != 0) { return 0; }
+    if (titlebar_button_hit(win, px, py) != 0) { return 0; }
     i32 tb = theme.titlebar_h() * ui_scale();
     if (px < w->x) { return 0; }
     if (px >= w->x + w->w) { return 0; }
@@ -993,12 +1159,20 @@ export i32 titlebar_hit(i32 win, i32 px, i32 py) {
 // --- keyboard --------------------------------------------------------------------------------
 
 i32 KEY_BACKSPACE = 8;
+i32 KEY_TAB = 9;
 i32 KEY_ENTER = 13;
+i32 KEY_ESCAPE = 27;
+i32 KEY_SPACE = 32;
 i32 KEY_DELETE = 127;
 i32 KEY_LEFT = 0x101;
 i32 KEY_RIGHT = 0x102;
+i32 KEY_UP = 0x103;
+i32 KEY_DOWN = 0x104;
 i32 KEY_HOME = 0x105;
 i32 KEY_END = 0x106;
+i32 KEY_PAGE_UP = 0x107;
+i32 KEY_PAGE_DOWN = 0x108;
+i32 MOD_SHIFT = 1;
 i32 EVT_DOWN = 1;
 i32 EVT_CHAR = 3;
 
@@ -1077,7 +1251,634 @@ i32 input_handle(Node *n, i32 type, i32 code) {
 // character) to the focused node. A node's on_key handler, if set, sees DOWN
 // events first and can claim them by returning non-zero; otherwise text
 // inputs get their default editing behaviour.
+// --- multi-line text (TextArea) ---
+// The buffer holds the whole document with '\n' separators; `cursor` is a
+// byte index, `scroll` the first visible line. Editing shares the insert/
+// delete helpers with TextInput and adds newline, vertical movement and
+// keeping the caret's line in view.
+
+i32 is_readonly(Node *n) {
+    i32 st = n->style;
+    i32 ro = STYLE_READONLY;
+    if ((st & ro) != 0) { return 1; }
+    return 0;
+}
+
+// Line index containing byte offset `at`.
+i32 line_of(Node *n, i32 at) {
+    char *buf = (char*)n->text;
+    i32 line = 0;
+    i32 i = 0;
+    while (i < at) {
+        if (buf[i] == 10) { line = line + 1; }
+        i = i + 1;
+    }
+    return line;
+}
+
+// Byte offset of the start of `line` (len if past the end).
+i32 line_start(Node *n, i32 line) {
+    char *buf = (char*)n->text;
+    i32 len = n->len;
+    i32 i = 0;
+    i32 cur = 0;
+    while (cur < line) {
+        if (i >= len) { return len; }
+        if (buf[i] == 10) { cur = cur + 1; }
+        i = i + 1;
+    }
+    return i;
+}
+
+// Length of the line starting at `start` (up to the newline or the end).
+i32 line_len_at(Node *n, i32 start) {
+    char *buf = (char*)n->text;
+    i32 len = n->len;
+    i32 i = start;
+    while (i < len) {
+        if (buf[i] == 10) { return i - start; }
+        i = i + 1;
+    }
+    return len - start;
+}
+
+export i32 text_area_line_count(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return 0; }
+    return line_of(n, n->len) + 1;
+}
+
+// How many lines fit in the node's box.
+i32 visible_lines(Node *n) {
+    i32 s = ui_scale();
+    i32 pad = 8 * s;
+    i32 lh = graphics.text_height(0, s);
+    i32 rows = (n->h - 2 * pad) / lh;
+    if (rows < 1) { rows = 1; }
+    return rows;
+}
+
+// Scroll so the caret's line is visible.
+void text_area_reveal_cursor(Node *n) {
+    i32 line = line_of(n, n->cursor);
+    i32 rows = visible_lines(n);
+    i32 scroll = n->scroll;
+    if (line < scroll) { scroll = line; }
+    if (line >= scroll + rows) { scroll = line - rows + 1; }
+    n->scroll = (u16)scroll;
+}
+
+// Move the caret to the same column on line `line`.
+void text_area_goto_line(Node *n, i32 line) {
+    i32 total = line_of(n, n->len) + 1;
+    if (line < 0) { line = 0; }
+    if (line >= total) { line = total - 1; }
+    i32 cur_start = line_start(n, line_of(n, n->cursor));
+    i32 col = n->cursor - cur_start;
+    i32 start = line_start(n, line);
+    i32 llen = line_len_at(n, start);
+    if (col > llen) { col = llen; }
+    n->cursor = (u16)(start + col);
+}
+
+// Editing for a TextArea: 1 = text changed, 2 = caret/scroll moved, 0 = nothing.
+i32 text_area_handle(Node *n, i32 type, i32 code, i32 mods) {
+    i32 ro = is_readonly(n);
+    i32 cur = n->cursor;
+    i32 len = n->len;
+    if (type == EVT_CHAR) {
+        if (ro != 0) { return 0; }
+        if (code >= 0x20) {
+            if (code <= 0x7E) {
+                input_insert(n, code);
+                text_area_reveal_cursor(n);
+                return 1;
+            }
+        }
+        return 0;
+    }
+    if (type != EVT_DOWN) { return 0; }
+    if (code == KEY_ENTER) {
+        if (ro != 0) { return 0; }
+        input_insert(n, 10);
+        text_area_reveal_cursor(n);
+        return 1;
+    }
+    if (code == KEY_BACKSPACE) {
+        if (ro != 0) { return 0; }
+        if (cur > 0) {
+            input_delete_at(n, cur - 1);
+            n->cursor = (u16)(cur - 1);
+            text_area_reveal_cursor(n);
+            return 1;
+        }
+        return 0;
+    }
+    if (code == KEY_DELETE) {
+        if (ro != 0) { return 0; }
+        if (cur < len) { input_delete_at(n, cur); return 1; }
+        return 0;
+    }
+    if (code == KEY_LEFT) {
+        if (cur > 0) { n->cursor = (u16)(cur - 1); }
+        text_area_reveal_cursor(n);
+        return 2;
+    }
+    if (code == KEY_RIGHT) {
+        if (cur < len) { n->cursor = (u16)(cur + 1); }
+        text_area_reveal_cursor(n);
+        return 2;
+    }
+    if (code == KEY_UP) {
+        text_area_goto_line(n, line_of(n, cur) - 1);
+        text_area_reveal_cursor(n);
+        return 2;
+    }
+    if (code == KEY_DOWN) {
+        text_area_goto_line(n, line_of(n, cur) + 1);
+        text_area_reveal_cursor(n);
+        return 2;
+    }
+    if (code == KEY_PAGE_UP) {
+        text_area_goto_line(n, line_of(n, cur) - visible_lines(n));
+        text_area_reveal_cursor(n);
+        return 2;
+    }
+    if (code == KEY_PAGE_DOWN) {
+        text_area_goto_line(n, line_of(n, cur) + visible_lines(n));
+        text_area_reveal_cursor(n);
+        return 2;
+    }
+    if (code == KEY_HOME) {
+        n->cursor = (u16)line_start(n, line_of(n, cur));
+        return 2;
+    }
+    if (code == KEY_END) {
+        i32 start = line_start(n, line_of(n, cur));
+        n->cursor = (u16)(start + line_len_at(n, start));
+        return 2;
+    }
+    return 0;
+}
+
+// Append text to a TextArea (console output). When the buffer is full the
+// oldest lines are dropped. The view follows the end of the text.
+export void append_text(i32 id, char *s) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    i32 kta = NODE_TEXT_AREA;
+    if (n->kind != kta) { return; }
+    char *buf = (char*)n->text;
+    i32 cap = n->cap;
+    i32 add = 0;
+    while (s[add] != 0) { add = add + 1; }
+    i32 len = n->len;
+    if (len + add + 1 > cap) {
+        // Drop whole lines from the front until it fits (or everything).
+        i32 need = len + add + 1 - cap;
+        i32 drop = 0;
+        while (drop < len) {
+            if (drop >= need) {
+                if (buf[drop - 1] == 10) { break; }
+            }
+            drop = drop + 1;
+        }
+        i32 i = 0;
+        while (drop + i < len) {
+            buf[i] = buf[drop + i];
+            i = i + 1;
+        }
+        len = len - drop;
+        if (len < 0) { len = 0; }
+    }
+    i32 i = 0;
+    while (i < add) {
+        if (len + 1 >= cap) { break; }
+        buf[len] = s[i];
+        len = len + 1;
+        i = i + 1;
+    }
+    buf[len] = (char)0;
+    n->len = (u16)len;
+    n->cursor = (u16)len;
+    text_area_reveal_cursor(n);
+    damage_node(id);
+    touch();
+}
+
+// Append `count` raw bytes (from any address, e.g. a user process buffer
+// read by the kernel) to a TextArea. Bytes outside printable ASCII other
+// than newline are dropped.
+export void append_bytes(i32 id, i32 addr, i32 count) {
+    char tmp[64];
+    i32 n = 0;
+    i32 i = 0;
+    while (i < count) {
+        char *p = (char*)(addr + i);
+        i32 c = (i32)(*p) & 0xFF;
+        i32 keep = 0;
+        if (c == 10) { keep = 1; }
+        if (c >= 0x20) { if (c <= 0x7E) { keep = 1; } }
+        if (keep != 0) {
+            tmp[n] = (char)c;
+            n = n + 1;
+            if (n == 63) {
+                tmp[n] = (char)0;
+                append_text(id, &tmp[0]);
+                n = 0;
+            }
+        }
+        i = i + 1;
+    }
+    tmp[n] = (char)0;
+    if (n > 0) { append_text(id, &tmp[0]); }
+}
+
+export void clear_text_area(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    if (owns_buffer(n) == 0) { return; }
+    char *buf = (char*)n->text;
+    buf[0] = (char)0;
+    n->len = 0;
+    n->cursor = 0;
+    n->scroll = 0;
+    n->sel = 0;
+    damage_node(id);
+    touch();
+}
+
+// Scroll a TextArea or List by `lines` (negative = up), clamped.
+export void scroll_by(i32 id, i32 lines) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    i32 kta = NODE_TEXT_AREA;
+    i32 kl = NODE_LIST;
+    if (n->kind != kta) { if (n->kind != kl) { return; } }
+    i32 total = line_of(n, n->len) + 1;
+    i32 rows = visible_lines(n);
+    i32 max_scroll = total - rows;
+    if (max_scroll < 0) { max_scroll = 0; }
+    i32 scroll = n->scroll + lines;
+    if (scroll < 0) { scroll = 0; }
+    if (scroll > max_scroll) { scroll = max_scroll; }
+    if (scroll != n->scroll) {
+        n->scroll = (u16)scroll;
+        damage_node(id);
+    }
+}
+
+// Mouse wheel over a node: scroll whatever under the pointer scrolls.
+export void dispatch_wheel(i32 id, i32 steps) {
+    if (steps == 0) { return; }
+    scroll_by(id, 0 - steps * 3);
+}
+
+// --- List ---
+// Items are newline-separated in the node's buffer; `sel` is the selected
+// row + 1. A click selects a row (on_change); clicking the selected row again
+// or pressing Enter activates it (on_click).
+
+export void list_set_items(i32 id, char *items) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    i32 kl = NODE_LIST;
+    if (n->kind != kl) { return; }
+    char *buf = (char*)n->text;
+    i32 cap = n->cap;
+    i32 i = 0;
+    while (items[i] != 0) {
+        if (i + 1 >= cap) { break; }
+        buf[i] = items[i];
+        i = i + 1;
+    }
+    buf[i] = (char)0;
+    n->len = (u16)i;
+    n->sel = 0;
+    n->scroll = 0;
+    damage_node(id);
+    touch();
+}
+
+// Selected row (0-based), or -1.
+export i32 list_selected(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return 0 - 1; }
+    return n->sel - 1;
+}
+
+export i32 list_count(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return 0; }
+    if (n->len == 0) { return 0; }
+    return line_of(n, n->len) + 1;
+}
+
+// Copy item `index` into out (at most cap-1 bytes). Returns its length or -1.
+export i32 list_item(i32 id, i32 index, char *out, i32 cap) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return 0 - 1; }
+    if (index < 0) { return 0 - 1; }
+    if (index >= list_count(id)) { return 0 - 1; }
+    i32 start = line_start(n, index);
+    i32 llen = line_len_at(n, start);
+    char *buf = (char*)n->text;
+    i32 i = 0;
+    while (i < llen) {
+        if (i + 1 >= cap) { break; }
+        out[i] = buf[start + i];
+        i = i + 1;
+    }
+    out[i] = (char)0;
+    return i;
+}
+
+export void list_select(i32 id, i32 index) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    i32 count = list_count(id);
+    if (index < 0) { n->sel = 0; }
+    else if (index >= count) { n->sel = 0; }
+    else {
+        n->sel = (u16)(index + 1);
+        // keep it in view
+        i32 rows = visible_lines(n);
+        i32 scroll = n->scroll;
+        if (index < scroll) { scroll = index; }
+        if (index >= scroll + rows) { scroll = index - rows + 1; }
+        n->scroll = (u16)scroll;
+    }
+    damage_node(id);
+    touch();
+}
+
+// Row under (px, py), or -1.
+export i32 list_row_at(i32 id, i32 px, i32 py) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return 0 - 1; }
+    i32 s = ui_scale();
+    i32 pad = 8 * s;
+    i32 lh = graphics.text_height(0, s);
+    i32 rel = py - n->y - pad;
+    if (rel < 0) { return 0 - 1; }
+    i32 row = rel / lh + n->scroll;
+    if (row >= list_count(id)) { return 0 - 1; }
+    return row;
+}
+
+// A click on a List at (px, py): select the row; a click on the already
+// selected row activates it. Menus use the same geometry.
+export void list_click(i32 id, i32 px, i32 py) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    i32 row = list_row_at(id, px, py);
+    if (row < 0) { return; }
+    i32 was = n->sel - 1;
+    list_select(id, row);
+    if (row == was) {
+        i32 handler = n->on_click;
+        if (handler != 0) { handler(id); }
+    } else {
+        fire_change(n);
+    }
+}
+
+// Keyboard on a focused List: arrows move the selection, Enter activates.
+i32 list_handle(Node *n, i32 type, i32 code) {
+    if (type != EVT_DOWN) { return 0; }
+    i32 id = n->id;
+    i32 sel = n->sel - 1;
+    i32 count = list_count(id);
+    if (count == 0) { return 0; }
+    if (code == KEY_UP) {
+        if (sel > 0) { list_select(id, sel - 1); } else { list_select(id, 0); }
+        fire_change(n);
+        return 2;
+    }
+    if (code == KEY_DOWN) {
+        if (sel + 1 < count) { list_select(id, sel + 1); }
+        fire_change(n);
+        return 2;
+    }
+    if (code == KEY_HOME) { list_select(id, 0); fire_change(n); return 2; }
+    if (code == KEY_END) { list_select(id, count - 1); fire_change(n); return 2; }
+    if (code == KEY_ENTER) {
+        if (sel >= 0) {
+            i32 handler = n->on_click;
+            if (handler != 0) { handler(id); }
+        }
+        return 2;
+    }
+    return 0;
+}
+
+// --- popup menu ---
+// One menu at a time, a top-level node on the desktop drawn above everything.
+// Items are newline-separated; hovering highlights a row, clicking one calls
+// handler(index) after closing. Escape or a click elsewhere closes it.
+
+export void close_menu() {
+    if (g_menu_id == 0) { return; }
+    i32 id = g_menu_id;
+    g_menu_id = 0;
+    g_menu_handler = 0;
+    remove_node(id);
+    touch();
+}
+
+export i32 menu_id() {
+    return g_menu_id;
+}
+
+export i32 menu_target() {
+    return g_menu_target;
+}
+
+// Open a menu with its top-left at display (x, y). `target` is remembered
+// for the handler (menu_target()); a menu that would run off the display is
+// shifted back in.
+export i32 open_menu(i32 x, i32 y, char *items, i32 handler, i32 target) {
+    close_menu();
+    i32 s = ui_scale();
+    i32 count = 1;
+    i32 i = 0;
+    i32 widest = 0;
+    i32 line_w = 0;
+    while (items[i] != 0) {
+        if (items[i] == 10) {
+            count = count + 1;
+            line_w = 0;
+        } else {
+            line_w = line_w + 1;
+        }
+        i = i + 1;
+    }
+    i32 lh = graphics.text_height(0, s);
+    i32 pad = 8 * s;
+    i32 h = count * lh + 2 * pad;
+    i32 w = graphics.text_width(items, 0, s);
+    // text_width measures the whole string; a rough width from the longest
+    // item is enough for a menu, so measure per line instead.
+    w = 0;
+    i32 start = 0;
+    i32 j = 0;
+    while (1) {
+        if (items[j] == 10) {
+            items[j] = (char)0;
+            i32 lw = graphics.text_width(&items[start], 0, s);
+            items[j] = (char)10;
+            if (lw > w) { w = lw; }
+            start = j + 1;
+        } else if (items[j] == 0) {
+            i32 lw = graphics.text_width(&items[start], 0, s);
+            if (lw > w) { w = lw; }
+            break;
+        }
+        j = j + 1;
+    }
+    w = w + 4 * pad;
+    if (w < 140 * s) { w = 140 * s; }
+    i32 dw = graphics.display_width();
+    i32 dh = graphics.display_height();
+    if (x + w > dw) { x = dw - w; }
+    if (y + h > dh) { y = dh - h; }
+    if (x < 0) { x = 0; }
+    if (y < 0) { y = 0; }
+
+    i32 id = create_node(NODE_MENU, "menu");
+    set_role(id, ROLE_MENU);
+    Node *n = node_ptr(id);
+    i32 cap = i + 2;
+    char *buf = (char*)heap.alloc(cap);
+    i32 k = 0;
+    while (k < i) { buf[k] = items[k]; k = k + 1; }
+    buf[i] = (char)0;
+    n->text = buf;
+    n->cap = (u16)cap;
+    n->len = (u16)i;
+    n->x = (u16)x;
+    n->y = (u16)y;
+    n->w = (u16)w;
+    n->h = (u16)h;
+    n->sel = 0;
+    n->on_change = 0;
+    set_state_flag(id, STATE_VISIBLE, 1);
+    set_state_flag(id, STATE_HIT_TESTABLE, 1);
+    // Appended to the desktop like a window, but painted last (see
+    // paint_desktop) and hit-tested first (see find_at).
+    append_child(g_desktop_node_id, id);
+    // append_child translated by the desktop origin (0,0): bounds stand.
+    g_menu_id = id;
+    g_menu_handler = handler;
+    g_menu_target = target;
+    touch();
+    return id;
+}
+
+// Hover moves the highlight; a click picks the row.
+export void menu_hover(i32 px, i32 py) {
+    i32 id = g_menu_id;
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    i32 row = list_row_at(id, px, py);
+    i32 next = row + 1;
+    if (row < 0) { next = 0; }
+    if (next != n->sel) {
+        n->sel = (u16)next;
+        damage_node(id);
+    }
+}
+
+export void menu_click(i32 px, i32 py) {
+    i32 id = g_menu_id;
+    if (id == 0) { return; }
+    i32 row = list_row_at(id, px, py);
+    i32 handler = g_menu_handler;
+    close_menu();
+    if (row >= 0) {
+        if (handler != 0) { handler(row); }
+    }
+}
+
+// --- Tab focus ---
+// Focusable controls are visited in tree order within the active window.
+
+i32 is_focusable(Node *n) {
+    i32 k = n->kind;
+    i32 ki = NODE_TEXT_INPUT;
+    i32 kta = NODE_TEXT_AREA;
+    i32 kb = NODE_BUTTON;
+    i32 kc = NODE_CHECKBOX;
+    i32 kl = NODE_LIST;
+    i32 visible = STATE_VISIBLE;
+    if ((n->state & visible) == 0) { return 0; }
+    if (k == ki) { return 1; }
+    if (k == kta) { return 1; }
+    if (k == kb) { return 1; }
+    if (k == kc) { return 1; }
+    if (k == kl) { return 1; }
+    return 0;
+}
+
+// Depth-first walk collecting focusable ids into g_focus_ring.
+i32 FOCUS_MAX = 64;
+i32 g_focus_ring[64];
+i32 g_focus_ring_count = 0;
+
+void collect_focusable(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    if (is_focusable(n) != 0) {
+        if (g_focus_ring_count < FOCUS_MAX) {
+            g_focus_ring[g_focus_ring_count] = id;
+            g_focus_ring_count = g_focus_ring_count + 1;
+        }
+    }
+    i32 child = n->first_child;
+    while (child != 0) {
+        collect_focusable(child);
+        child = next_sibling(child);
+    }
+}
+
+// Move keyboard focus to the next (or previous) control in the active window.
+export void focus_next(i32 backwards) {
+    i32 win = g_active_window;
+    if (win == 0) { return; }
+    g_focus_ring_count = 0;
+    collect_focusable(win);
+    if (g_focus_ring_count == 0) { return; }
+    i32 idx = 0 - 1;
+    i32 i = 0;
+    while (i < g_focus_ring_count) {
+        if (g_focus_ring[i] == g_focus_id) { idx = i; }
+        i = i + 1;
+    }
+    if (backwards != 0) {
+        idx = idx - 1;
+        if (idx < 0) { idx = g_focus_ring_count - 1; }
+    } else {
+        idx = idx + 1;
+        if (idx >= g_focus_ring_count) { idx = 0; }
+    }
+    set_focus(g_focus_ring[idx]);
+}
+
+// Route one keyboard event (type = keyboard.EVT_*, code = key code or
+// character) to the focused node. Escape closes an open menu; Tab moves
+// focus. A node's on_key handler, if set, sees DOWN events first and can
+// claim them by returning non-zero; otherwise the control's default
+// behaviour runs (text editing, list navigation, Enter/Space on buttons).
 export void dispatch_key_event(i32 type, i32 code, i32 mods) {
+    if (type == EVT_DOWN) {
+        if (code == KEY_ESCAPE) {
+            if (g_menu_id != 0) { close_menu(); return; }
+        }
+        if (code == KEY_TAB) {
+            focus_next(mods & MOD_SHIFT);
+            return;
+        }
+    }
     Node *n = node_ptr(g_focus_id);
     if (n == 0) { return; }
     i32 id = g_focus_id;
@@ -1088,11 +1889,36 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
             if (claimed != 0) { return; }
         }
     }
+    i32 kind = n->kind;
     i32 ki = NODE_TEXT_INPUT;
-    if (n->kind == ki) {
+    i32 kta = NODE_TEXT_AREA;
+    i32 kl = NODE_LIST;
+    i32 kb = NODE_BUTTON;
+    i32 kc = NODE_CHECKBOX;
+    if (kind == ki) {
         i32 r = input_handle(n, type, code);
         if (r != 0) { damage_node(id); touch(); }
         if (r == 1) { fire_change(n); }
+        return;
+    }
+    if (kind == kta) {
+        i32 r = text_area_handle(n, type, code, mods);
+        if (r != 0) { damage_node(id); touch(); }
+        if (r == 1) { fire_change(n); }
+        return;
+    }
+    if (kind == kl) {
+        list_handle(n, type, code);
+        return;
+    }
+    if (type == EVT_DOWN) {
+        if (kind == kb) {
+            if (code == KEY_ENTER) { dispatch_click(id); return; }
+            if (code == KEY_SPACE) { dispatch_click(id); return; }
+        }
+        if (kind == kc) {
+            if (code == KEY_SPACE) { dispatch_click(id); return; }
+        }
     }
 }
 
@@ -1278,6 +2104,48 @@ export i32 create_separator(i32 x, i32 y, i32 w) {
     return id;
 }
 
+// Multi-line text. `capacity` bytes of heap (including the terminator);
+// readonly != 0 makes it a display-only console that append_text feeds.
+export i32 create_text_area(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 readonly) {
+    if (capacity < 2) { capacity = 2; }
+    i32 id = create_node(NODE_TEXT_AREA, name);
+    set_role(id, ROLE_TEXTAREA);
+    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
+    Node *n = node_ptr(id);
+    char *buf = (char*)heap.alloc(capacity);
+    buf[0] = (char)0;
+    n->text = buf;
+    n->cap = (u16)capacity;
+    n->len = 0;
+    n->cursor = 0;
+    n->scroll = 0;
+    if (readonly != 0) { set_style(id, STYLE_READONLY); }
+    set_state_flag(id, STATE_VISIBLE, 1);
+    set_state_flag(id, STATE_ENABLED, 1);
+    set_state_flag(id, STATE_HIT_TESTABLE, 1);
+    return id;
+}
+
+// A selectable list of rows (see list_set_items).
+export i32 create_list(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
+    if (capacity < 2) { capacity = 2; }
+    i32 id = create_node(NODE_LIST, name);
+    set_role(id, ROLE_LIST);
+    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
+    Node *n = node_ptr(id);
+    char *buf = (char*)heap.alloc(capacity);
+    buf[0] = (char)0;
+    n->text = buf;
+    n->cap = (u16)capacity;
+    n->len = 0;
+    n->sel = 0;
+    n->scroll = 0;
+    set_state_flag(id, STATE_VISIBLE, 1);
+    set_state_flag(id, STATE_ENABLED, 1);
+    set_state_flag(id, STATE_HIT_TESTABLE, 1);
+    return id;
+}
+
 // ---------------------------------------------------------------------------
 // DOM syntax elements.
 //
@@ -1355,6 +2223,21 @@ export i32 Separator(i32 x, i32 y, i32 w) {
 
 export i32 Timer(i32 interval, i32 onTick) {
     return create_timer(interval, onTick);
+}
+
+export i32 TextArea(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 readonly, i32 onChange) {
+    i32 id = create_text_area(name, x, y, w, h, capacity, readonly);
+    set_on_change(id, onChange);
+    return id;
+}
+
+// onChange fires when the selection moves, onActivate (stored as the click
+// handler) when a row is clicked again or Enter is pressed.
+export i32 List(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 onChange, i32 onActivate) {
+    i32 id = create_list(name, x, y, w, h, capacity);
+    set_on_change(id, onChange);
+    set_on_click(id, onActivate);
+    return id;
 }
 
 // --- human-readable dump ---------------------------------------------------------------------
@@ -1435,6 +2318,12 @@ char* role_name(i32 role) {
     i32 r_checkbox = ROLE_CHECKBOX;
     i32 r_toolbar = ROLE_TOOLBAR;
     i32 r_separator = ROLE_SEPARATOR;
+    i32 r_textarea = ROLE_TEXTAREA;
+    i32 r_list = ROLE_LIST;
+    i32 r_menu = ROLE_MENU;
+    if (role == r_textarea) { return "textarea"; }
+    if (role == r_list) { return "list"; }
+    if (role == r_menu) { return "menu"; }
     if (role == r_root) { return "root"; }
     if (role == r_desktop) { return "desktop"; }
     if (role == r_window) { return "window"; }
@@ -1516,7 +2405,9 @@ void automation_node(i32 node_id) {
     automation_raw(",\"testId\":"); automation_json_string((char*)n->test_id);
     automation_raw(",\"value\":");
     i32 textbox = ROLE_TEXTBOX;
+    i32 textarea = ROLE_TEXTAREA;
     if (n->role == textbox) { automation_json_string((char*)n->text); }
+    else if (n->role == textarea) { automation_json_string((char*)n->text); }
     else { automation_json_string(""); }
     automation_raw(",\"bounds\":{\"x\":"); automation_i32(n->x);
     automation_raw(",\"y\":"); automation_i32(n->y);
@@ -1606,32 +2497,57 @@ void draw_window(Node *n) {
     i32 divider = theme.titlebar_divider();
     graphics.blend_rect(x, y + tb - s, w, s, divider);
 
-    // Close button: a disc at the left of the bar.
+    // Title-bar buttons: close, minimize, maximize discs; their glyphs
+    // (x, -, +) appear while the pointer is over the window.
     i32 cx = close_button_cx(n);
     i32 cy = close_button_cy(n);
     i32 cr = close_button_r();
-    i32 close = theme.close_button();
-    if (active == 0) { close = theme.close_button_inactive(); }
-    if (hovered != 0) { close = theme.close_button_hover(); }
-    graphics.fill_disc(cx, cy, cr, close);
     i32 ring = theme.close_button_ring();
-    graphics.draw_round_rect(cx - cr, cy - cr, 2 * cr, 2 * cr, cr, s, ring);
-    if (hovered != 0) {
-        // An x glyph appears on hover.
-        i32 g = theme.close_glyph();
-        i32 k = cr / 2;
-        graphics.draw_line(cx - k, cy - k, cx + k, cy + k, g);
-        graphics.draw_line(cx + k, cy - k, cx - k, cy + k, g);
-        graphics.draw_line(cx - k + 1, cy - k, cx + k + 1, cy + k, g);
-        graphics.draw_line(cx + k + 1, cy - k, cx - k + 1, cy + k, g);
+    i32 g = theme.close_glyph();
+    i32 k = cr / 2;
+    i32 which = 1;
+    while (which <= 3) {
+        i32 bx = tb_button_cx(n, which);
+        i32 face = theme.close_button();
+        if (which == 2) { face = theme.minimize_button(); }
+        if (which == 3) { face = theme.maximize_button(); }
+        if (active == 0) { face = theme.close_button_inactive(); }
+        graphics.fill_disc(bx, cy, cr, face);
+        graphics.draw_round_rect(bx - cr, cy - cr, 2 * cr, 2 * cr, cr, s, ring);
+        if (hovered != 0) {
+            if (which == 1) {
+                graphics.draw_line(bx - k, cy - k, bx + k, cy + k, g);
+                graphics.draw_line(bx + k, cy - k, bx - k, cy + k, g);
+                graphics.draw_line(bx - k + 1, cy - k, bx + k + 1, cy + k, g);
+                graphics.draw_line(bx + k + 1, cy - k, bx - k + 1, cy + k, g);
+            }
+            if (which == 2) {
+                graphics.fill_rect(bx - k, cy - s / 2, 2 * k + 1, s + 1, g);
+            }
+            if (which == 3) {
+                graphics.fill_rect(bx - k, cy - s / 2, 2 * k + 1, s + 1, g);
+                graphics.fill_rect(bx - s / 2, cy - k, s + 1, 2 * k + 1, g);
+            }
+        }
+        which = which + 1;
     }
 
-    // Title, centred, kept clear of the close button.
+    // Resize grip: three short diagonal lines in the bottom-right corner.
+    i32 grip = theme.text_disabled();
+    i32 gx = x + w - 4 * s;
+    i32 gy = y + h - 4 * s;
+    i32 d = 4 * s;
+    while (d <= 12 * s) {
+        graphics.draw_line(gx - d, gy, gx, gy - d, grip);
+        d = d + 4 * s;
+    }
+
+    // Title, centred, kept clear of the buttons.
     if (n->text != 0) {
         i32 title_color = theme.text_primary();
         if (active == 0) { title_color = theme.text_secondary(); }
         i32 th = graphics.text_height(1, s);
-        i32 inset = 2 * (cx - x);
+        i32 inset = 2 * (tb_button_cx(n, 3) - x);
         graphics.push_clip(x + inset, y, w - 2 * inset, tb);
         graphics.draw_label_centered(x, y + (tb - th) / 2, w, (char*)n->text, title_color, 1, s);
         graphics.pop_clip();
@@ -1673,12 +2589,177 @@ void draw_button(Node *n) {
 
     graphics.fill_round_rect(x, y, w, h, r, face);
     graphics.draw_round_rect(x, y, w, h, r, s, border);
+    i32 focused_bit = STATE_FOCUSED;
+    if ((state & focused_bit) != 0) {
+        // Keyboard focus ring just outside the button.
+        i32 ring = theme.accent();
+        graphics.draw_round_rect(x - 2 * s, y - 2 * s, w + 4 * s, h + 4 * s, r + 2 * s, s, ring);
+    }
     if (n->text != 0) {
         i32 th = graphics.text_height(0, s);
         graphics.push_clip(x, y, w, h);
         graphics.draw_label_centered(x, y + (h - th) / 2, w, (char*)n->text, label, 0, s);
         graphics.pop_clip();
     }
+}
+
+// --- TextArea / List / Menu rendering ---
+// All three are rows of text inside a rounded box; the list and menu add a
+// selection/hover highlight, the text area a caret.
+
+// Copy line bytes [start, start+llen) into out (bounded, NUL-terminated).
+// The renderer runs on the compositor task while append_text can run from a
+// syscall on the kernel task; terminating the shared buffer in place to draw
+// a line raced with those writes and corrupted the text, so drawing copies.
+void copy_line(char *buf, i32 start, i32 llen, char *out, i32 cap) {
+    i32 i = 0;
+    while (i < llen) {
+        if (i + 1 >= cap) { break; }
+        out[i] = buf[start + i];
+        i = i + 1;
+    }
+    out[i] = (char)0;
+}
+
+void draw_rows_box(Node *n, i32 focused) {
+    i32 s = ui_scale();
+    i32 r = theme.input_radius() * s;
+    i32 bg = theme.input_bg();
+    graphics.fill_round_rect(n->x, n->y, n->w, n->h, r, bg);
+    i32 border = theme.input_border();
+    i32 bw = s;
+    if (focused != 0) {
+        border = theme.input_border_focus();
+        bw = 2 * s;
+    }
+    graphics.draw_round_rect(n->x, n->y, n->w, n->h, r, bw, border);
+}
+
+void draw_text_area(Node *n) {
+    i32 s = ui_scale();
+    i32 state = n->state;
+    i32 focused_bit = STATE_FOCUSED;
+    i32 focused = state & focused_bit;
+    i32 x = n->x;
+    i32 y = n->y;
+    i32 w = n->w;
+    i32 h = n->h;
+    i32 pad = 8 * s;
+    i32 lh = graphics.text_height(0, s);
+    draw_rows_box(n, focused);
+
+    i32 fg = theme.text_primary();
+    fg = node_fg(n, fg);
+    i32 ro = is_readonly(n);
+    char *buf = (char*)n->text;
+    i32 len = n->len;
+    graphics.push_clip(x + s, y + s, w - 2 * s, h - 2 * s);
+    i32 rows = visible_lines(n);
+    i32 first = n->scroll;
+    i32 start = line_start(n, first);
+    i32 row = 0;
+    i32 caret_x = 0 - 1;
+    i32 caret_y = 0;
+    while (row < rows) {
+        if (start > len) { break; }
+        i32 llen = line_len_at(n, start);
+        i32 ty = y + pad + row * lh;
+        char line[160];
+        copy_line(buf, start, llen, &line[0], 160);
+        graphics.draw_label(x + pad, ty, &line[0], fg, 0, s);
+        i32 cur = n->cursor;
+        if (cur >= start) {
+            if (cur <= start + llen) {
+                caret_x = x + pad + graphics.text_width_n(&line[0], cur - start, 0, s);
+                caret_y = ty;
+            }
+        }
+        start = start + llen + 1;
+        row = row + 1;
+    }
+    if (focused != 0) {
+        if (ro == 0) {
+            if (caret_x >= 0) {
+                i32 caret = theme.caret();
+                graphics.fill_rect(caret_x, caret_y + s, s, lh - 2 * s, caret);
+            }
+        }
+    }
+    graphics.pop_clip();
+    // Empty editable area: placeholder from the node name.
+    if (len == 0) {
+        if (ro == 0) {
+            if (n->name != 0) {
+                i32 ph = theme.input_placeholder();
+                graphics.draw_label(x + pad, y + pad, (char*)n->name, ph, 0, s);
+            }
+        }
+    }
+}
+
+// Rows with an optional highlighted one (`hl` = row index or -1).
+void draw_rows(Node *n, i32 hl, i32 hl_color, i32 hl_fg) {
+    i32 s = ui_scale();
+    i32 x = n->x;
+    i32 y = n->y;
+    i32 w = n->w;
+    i32 h = n->h;
+    i32 pad = 8 * s;
+    i32 lh = graphics.text_height(0, s);
+    i32 fg = theme.text_primary();
+    fg = node_fg(n, fg);
+    char *buf = (char*)n->text;
+    i32 len = n->len;
+    i32 r = theme.button_radius() * s;
+    graphics.push_clip(x + s, y + s, w - 2 * s, h - 2 * s);
+    i32 rows = visible_lines(n);
+    i32 first = n->scroll;
+    i32 start = line_start(n, first);
+    i32 row = 0;
+    while (row < rows) {
+        if (start >= len) { break; }
+        i32 llen = line_len_at(n, start);
+        i32 ty = y + pad + row * lh;
+        i32 color = fg;
+        if (first + row == hl) {
+            graphics.fill_round_rect(x + 4 * s, ty - s, w - 8 * s, lh + 2 * s, r, hl_color);
+            color = hl_fg;
+        }
+        char line[160];
+        copy_line(buf, start, llen, &line[0], 160);
+        graphics.draw_label(x + pad + 4 * s, ty, &line[0], color, 0, s);
+        start = start + llen + 1;
+        row = row + 1;
+    }
+    graphics.pop_clip();
+}
+
+void draw_list(Node *n) {
+    i32 state = n->state;
+    i32 focused_bit = STATE_FOCUSED;
+    i32 focused = state & focused_bit;
+    draw_rows_box(n, focused);
+    i32 sel = n->sel - 1;
+    i32 hl = theme.accent();
+    i32 hl_fg = theme.on_accent();
+    if (focused == 0) {
+        hl = theme.button_face_pressed();
+        hl_fg = theme.text_primary();
+    }
+    draw_rows(n, sel, hl, hl_fg);
+}
+
+void draw_menu(Node *n) {
+    i32 s = ui_scale();
+    i32 r = theme.button_radius() * s;
+    graphics.draw_shadow(n->x, n->y, n->w, n->h, r, 8 * s, 3 * s, 70);
+    i32 bg = theme.panel_bg();
+    graphics.fill_round_rect(n->x, n->y, n->w, n->h, r, bg);
+    i32 border = theme.window_border();
+    graphics.draw_round_rect(n->x, n->y, n->w, n->h, r, s, border);
+    i32 hl = theme.accent();
+    i32 hl_fg = theme.on_accent();
+    draw_rows(n, n->sel - 1, hl, hl_fg);
 }
 
 void draw_text_node(Node *n) {
@@ -1767,6 +2848,11 @@ void draw_checkbox(Node *n) {
     }
     graphics.fill_round_rect(x, by, box, box, r, face);
     graphics.draw_round_rect(x, by, box, box, r, s, border);
+    i32 focused_bit = STATE_FOCUSED;
+    if ((state & focused_bit) != 0) {
+        i32 ring = theme.accent();
+        graphics.draw_round_rect(x - 2 * s, by - 2 * s, box + 4 * s, box + 4 * s, r + 2 * s, s, ring);
+    }
     if (checked != 0) {
         // Check mark: two strokes, drawn s+1 times side by side for weight.
         i32 white = theme.on_accent();
@@ -1978,8 +3064,17 @@ void draw_node(Node *n) {
     i32 ks = NODE_SEPARATOR;
     i32 kp = NODE_PANEL;
     i32 ktb = NODE_TASKBAR;
+    i32 kta = NODE_TEXT_AREA;
+    i32 kl = NODE_LIST;
+    i32 km = NODE_MENU;
 
-    if (kind == kbox) {
+    if (kind == kta) {
+        draw_text_area(n);
+    } else if (kind == kl) {
+        draw_list(n);
+    } else if (kind == km) {
+        draw_menu(n);
+    } else if (kind == kbox) {
         graphics.fill_rect(x, y, w, h, n->background_color);
         graphics.draw_rect_scaled(x, y, w, h, n->border_color, scale);
     } else if (kind == kw) {
@@ -2065,10 +3160,13 @@ void paint_desktop() {
 
     i32 child_id = first_child(g_desktop_node_id);
     while (child_id != 0) {
-        if (child_id != g_taskbar_id) { render(child_id); }
+        if (child_id != g_taskbar_id) {
+            if (child_id != g_menu_id) { render(child_id); }
+        }
         child_id = next_sibling(child_id);
     }
     if (g_taskbar_id != 0) { render(g_taskbar_id); }
+    if (g_menu_id != 0) { render(g_menu_id); }
 }
 
 // Repaint every node, ignoring the damage region. Used for the first frame and
@@ -2169,6 +3267,10 @@ i32 hit_test(i32 node_id, i32 px, i32 py) {
 // Return the topmost UI node under (x, y), searching the whole desktop. 0 if
 // none. The taskbar is always on top.
 export i32 find_at(i32 x, i32 y) {
+    if (g_menu_id != 0) {
+        i32 m = hit_test(g_menu_id, x, y);
+        if (m != 0) { return m; }
+    }
     if (g_taskbar_id != 0) {
         i32 tb = hit_test(g_taskbar_id, x, y);
         if (tb != 0) { return tb; }
@@ -2177,9 +3279,11 @@ export i32 find_at(i32 x, i32 y) {
     i32 found = 0;
     while (child_id != 0) {
         if (child_id != g_taskbar_id) {
-            i32 hit = hit_test(child_id, x, y);
-            if (hit != 0) {
-                found = hit;
+            if (child_id != g_menu_id) {
+                i32 hit = hit_test(child_id, x, y);
+                if (hit != 0) {
+                    found = hit;
+                }
             }
         }
         child_id = next_sibling(child_id);
@@ -2242,12 +3346,4 @@ export i32 create_taskbar() {
     append_child(g_desktop_node_id, id);
     g_taskbar_id = id;
     return id;
-}
-
-// Height of the taskbar in display pixels (0 if none), so callers can keep
-// windows above it.
-export i32 taskbar_height() {
-    Node *n = node_ptr(g_taskbar_id);
-    if (n == 0) { return 0; }
-    return n->h;
 }

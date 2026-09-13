@@ -1,0 +1,9 @@
+; Entry stub linked into every user program: call the program's exported
+; `main` (package app -> app_main), then exit with its return value.
+import app_main
+
+__START__:
+  call app_main
+  mov r5, r1
+  movi r1, 1
+  syscall

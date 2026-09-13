@@ -1,0 +1,252 @@
+package terminal;
+
+import dom from "../ui/dom.mln";
+import console from "../proc/console.mln";
+import fs from "../fs/fs.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import irq from "../../../MyKernel/src/arch/irq.mln";
+import str from "../../../../toolchain/MyStdLib/str.mln";
+import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { FsError } from "../fs/fs.mln";
+
+// Terminal: a read-only TextArea for output and a command line. Lines typed
+// while a user process is attached go to its stdin; otherwise they are
+// built-in commands (help, ls, cat, clear, run). `run hello` (or just
+// `hello`) loads the executable from the disk image and starts it as a
+// separate process whose stdout lands in this window (see proc/console.mln).
+// A timer polls the process and prints its exit code.
+
+i32 INSTANCES = 4;
+i32 g_out[4];      // output TextArea per instance
+i32 g_in[4];       // command TextInput per instance
+i32 g_win[4];
+i32 g_pid[4];      // attached process, 0 = none
+i32 g_count = 0;
+i32 g_timer = 0;
+
+i32 slot_of_input(i32 input_id) {
+    i32 i = 0;
+    while (i < g_count) {
+        if (g_in[i] == input_id) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+i32 slot_of_window(i32 win) {
+    i32 i = 0;
+    while (i < g_count) {
+        if (g_win[i] == win) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// A user process writes to the same TextArea from its stdout syscall, which
+// runs with interrupts off; the terminal's own writes run on the compositor
+// task with interrupts on. Disable interrupts around the compositor-side
+// append so a timer tick cannot switch to the process mid-append and let the
+// two interleave into the shared buffer.
+void say(i32 slot, char *s) {
+    irq.disable();
+    dom.append_text(g_out[slot], s);
+    irq.enable();
+}
+
+void say_line(i32 slot, char *s) {
+    dom.append_text(g_out[slot], s);
+    dom.append_text(g_out[slot], "\n");
+}
+
+char g_line_buf[96];
+
+void cmd_ls(i32 slot) {
+    char name[16];
+    i32 idx = fs.dir_next(0, &name[0], 16);
+    i32 n = 0;
+    while (idx >= 0) {
+        i32 size = fs.entry_size(idx);
+        i32 k = strbuf.reset(&g_line_buf[0]);
+        k = strbuf.append(&g_line_buf[0], 96, k, "  ");
+        k = strbuf.append(&g_line_buf[0], 96, k, &name[0]);
+        k = strbuf.append(&g_line_buf[0], 96, k, "  ");
+        k = strbuf.append_i32(&g_line_buf[0], 96, k, size);
+        k = strbuf.append(&g_line_buf[0], 96, k, " bytes\n");
+        say(slot, &g_line_buf[0]);
+        n = n + 1;
+        idx = fs.dir_next(idx + 1, &name[0], 16);
+    }
+    if (n == 0) { say_line(slot, "  (no files)"); }
+}
+
+void cmd_cat(i32 slot, char *path) {
+    i32 fd = case fs.open(path) of {
+        Ok(v) -> v;
+        Err(e) -> ({ say_line(slot, "cat: no such file"); return; });
+    };
+    char chunk[64];
+    while (1) {
+        i32 got = case fs.read(fd, (i32)(&chunk[0]), 63) of {
+            Ok(v) -> v;
+            Err(e) -> 0;
+        };
+        if (got <= 0) { break; }
+        chunk[got] = (char)0;
+        say(slot, &chunk[0]);
+    }
+    fs.close(fd);
+    say(slot, "\n");
+}
+
+void cmd_run(i32 slot, char *path) {
+    if (g_pid[slot] != 0) {
+        say_line(slot, "a process is still running here");
+        return;
+    }
+    i32 pid = console.spawn_file(path);
+    if (pid <= 0) {
+        say_line(slot, "run: cannot start that (no such file, or not an executable)");
+        return;
+    }
+    console.bind(pid, g_out[slot]);
+    g_pid[slot] = pid;
+    i32 k = strbuf.reset(&g_line_buf[0]);
+    k = strbuf.append(&g_line_buf[0], 96, k, "[pid ");
+    k = strbuf.append_i32(&g_line_buf[0], 96, k, pid);
+    k = strbuf.append(&g_line_buf[0], 96, k, "] ");
+    k = strbuf.append(&g_line_buf[0], 96, k, path);
+    k = strbuf.append(&g_line_buf[0], 96, k, "\n");
+    say(slot, &g_line_buf[0]);
+}
+
+// Split "cmd arg" at the first space (in place) and return the argument.
+char* split_arg(char *line) {
+    i32 i = 0;
+    while (line[i] != 0) {
+        if (line[i] == ' ') {
+            line[i] = (char)0;
+            i = i + 1;
+            while (line[i] == ' ') { i = i + 1; }
+            return &line[i];
+        }
+        i = i + 1;
+    }
+    return &line[i];
+}
+
+char g_cmd[96];
+
+void run_line(i32 slot, char *line) {
+    // Echo the command line into the transcript.
+    say(slot, "$ ");
+    say_line(slot, line);
+
+    if (g_pid[slot] != 0) {
+        console.feed_line(g_pid[slot], line);
+        return;
+    }
+    // Work on a copy: split_arg edits in place.
+    i32 k = strbuf.reset(&g_cmd[0]);
+    k = strbuf.append(&g_cmd[0], 96, k, line);
+    char *arg = split_arg(&g_cmd[0]);
+    char *cmd = &g_cmd[0];
+    if (cmd[0] == 0) { return; }
+    if (str.eq(cmd, "help") != 0) {
+        say_line(slot, "help          this text");
+        say_line(slot, "ls            list files on the disk");
+        say_line(slot, "cat <file>    print a file");
+        say_line(slot, "run <file>    start a user program (or just type its name)");
+        say_line(slot, "clear         clear the screen");
+        return;
+    }
+    if (str.eq(cmd, "ls") != 0) { cmd_ls(slot); return; }
+    if (str.eq(cmd, "clear") != 0) { dom.clear_text_area(g_out[slot]); return; }
+    if (str.eq(cmd, "cat") != 0) { cmd_cat(slot, arg); return; }
+    if (str.eq(cmd, "run") != 0) { cmd_run(slot, arg); return; }
+    cmd_run(slot, cmd);
+}
+
+// Enter in the command line submits it.
+i32 on_key(i32 id, i32 code, i32 mods) {
+    if (code != 13) { return 0; }
+    i32 slot = slot_of_input(id);
+    if (slot < 0) { return 0; }
+    char *text = dom.text_of(id);
+    i32 k = strbuf.reset(&g_line_buf[0]);
+    k = strbuf.append(&g_line_buf[0], 96, k, text);
+    dom.set_input_text(id, "");
+    run_line(slot, &g_line_buf[0]);
+    return 1;
+}
+
+void on_run_button(i32 id) {
+    i32 win = dom.window_of(id);
+    i32 slot = slot_of_window(win);
+    if (slot < 0) { return; }
+    on_key(g_in[slot], 13, 0);
+    dom.set_focus(g_in[slot]);
+}
+
+void terminal_noop(i32 id) { }
+
+// Poll attached processes; report and reap the ones that exited.
+void on_poll(i32 id) {
+    i32 i = 0;
+    while (i < g_count) {
+        i32 pid = g_pid[i];
+        if (pid != 0) {
+            if (console.has_exited(pid) != 0) {
+                i32 code = console.reap(pid);
+                g_pid[i] = 0;
+                i32 k = strbuf.reset(&g_line_buf[0]);
+                k = strbuf.append(&g_line_buf[0], 96, k, "[pid ");
+                k = strbuf.append_i32(&g_line_buf[0], 96, k, pid);
+                k = strbuf.append(&g_line_buf[0], 96, k, " exited with ");
+                k = strbuf.append_i32(&g_line_buf[0], 96, k, code);
+                k = strbuf.append(&g_line_buf[0], 96, k, "]\n");
+                say(i, &g_line_buf[0]);
+            }
+        }
+        i = i + 1;
+    }
+}
+
+i32 build_ui(i32 x, i32 y) {
+    return <Window title="Terminal" x={x} y={y} w={560} h={400}>
+        <TextArea name="output" x={12} y={12} w={536} h={296} capacity={6144} readonly={1} onChange={terminal_noop} />
+        <Row x={12} y={320} w={536} h={34} padding={0} gap={8}>
+            <TextInput placeholder="type a command, e.g. help" x={0} y={0} w={440} h={34} capacity={96} onChange={terminal_noop} />
+            <PrimaryButton text="Run" x={0} y={0} w={88} h={34} onClick={on_run_button} />
+        </Row>
+    </Window>;
+}
+
+// Open a terminal window (cascaded per instance). Returns the window id, or
+// 0 when the instance table is full.
+export i32 mount() {
+    if (g_count >= INSTANCES) { return 0; }
+    i32 off = 24 * g_count;
+    i32 win = build_ui(220 + off, 40 + off);
+    dom.append_child(dom.desktop_id(), win);
+
+    i32 out = dom.first_child(win);
+    i32 row = dom.next_sibling(out);
+    i32 input = dom.first_child(row);
+    dom.set_on_key(input, on_key);
+    dom.set_test_id(out, "terminal-output");
+    dom.set_test_id(input, "terminal-input");
+
+    i32 slot = g_count;
+    g_out[slot] = out;
+    g_in[slot] = input;
+    g_win[slot] = win;
+    g_pid[slot] = 0;
+    g_count = g_count + 1;
+
+    if (g_timer == 0) { g_timer = dom.create_timer(100, on_poll); }
+
+    say_line(slot, "MyOS terminal. Type help, ls, or the name of a program (hello, echo, count).");
+    dom.set_focus(input);
+    return win;
+}

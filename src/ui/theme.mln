@@ -42,6 +42,8 @@ export i32 close_button()           { return graphics.rgb(0xFF, 0x5F, 0x57); }
 export i32 close_button_ring()      { return graphics.rgba(0x00, 0x00, 0x00, 45); }
 export i32 close_button_inactive()  { return graphics.rgb(0xC8, 0xCB, 0xD1); }
 export i32 close_button_hover()     { return graphics.rgb(0xE0, 0x44, 0x3E); }
+export i32 minimize_button()        { return graphics.rgb(0xFE, 0xBC, 0x2E); }
+export i32 maximize_button()        { return graphics.rgb(0x28, 0xC8, 0x40); }
 export i32 close_glyph()            { return graphics.rgb(0x4A, 0x00, 0x00); }
 
 export i32 titlebar_h()        { return 32; }

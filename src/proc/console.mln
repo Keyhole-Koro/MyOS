@@ -1,0 +1,228 @@
+package console;
+
+import debug from "../../../MyKernel/src/debug/debug.mln";
+import serial from "../../../MyKernel/src/io/serial.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import mem from "../../../MyKernel/src/mm/mem.mln";
+import syscall from "../../../MyKernel/src/kernel/syscall.mln";
+import loader from "../../../MyKernel/src/kernel/loader.mln";
+import process from "../../../MyKernel/src/kernel/process.mln";
+import { ProcessState, ProcessError } from "../../../MyKernel/src/kernel/process.mln";
+import { LoaderError } from "../../../MyKernel/src/kernel/loader.mln";
+import { MmuError } from "../../../MyKernel/src/mm/mmu.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+import { FsError } from "../fs/fs.mln";
+import fs from "../fs/fs.mln";
+import dom from "../ui/dom.mln";
+
+// Process consoles (MYOS-015): the glue between user-space processes and
+// terminal windows.
+//
+// The kernel's syscall layer does not know about the desktop; it calls the
+// write/read handlers registered here (syscall.set_console) and the spawn
+// handler (syscall.set_spawn_handler). Each running process is bound to a
+// console slot that names the TextArea its stdout goes to and holds a small
+// stdin queue the terminal fills one line at a time. Output written from a
+// syscall lands in the DOM directly (append_bytes reads the user buffer
+// through the process's own page tables, which are active during the
+// syscall); the compositor repaints it on its next pass.
+
+i32 SLOTS = 8;
+i32 STDIN_CAP = 256;
+
+i32 g_pid[8];        // 0 = free slot
+i32 g_output[8];     // TextArea node id receiving stdout
+i32 g_stdin[8];      // heap ring buffer of STDIN_CAP bytes
+i32 g_in_head[8];
+i32 g_in_tail[8];
+
+i32 g_ready = 0;
+
+i32 slot_of(i32 pid) {
+    if (pid <= 0) { return 0 - 1; }
+    i32 i = 0;
+    while (i < SLOTS) {
+        if (g_pid[i] == pid) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// Attach a process's stdio to a TextArea. Returns 0 when every slot is taken.
+export i32 bind(i32 pid, i32 output_id) {
+    i32 i = 0;
+    while (i < SLOTS) {
+        if (g_pid[i] == 0) {
+            g_pid[i] = pid;
+            g_output[i] = output_id;
+            if (g_stdin[i] == 0) { g_stdin[i] = heap.alloc(STDIN_CAP); }
+            g_in_head[i] = 0;
+            g_in_tail[i] = 0;
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+export void unbind(i32 pid) {
+    i32 i = slot_of(pid);
+    if (i < 0) { return; }
+    g_pid[i] = 0;
+    g_output[i] = 0;
+}
+
+// The TextArea a process writes to, or 0.
+export i32 output_of(i32 pid) {
+    i32 i = slot_of(pid);
+    if (i < 0) { return 0; }
+    return g_output[i];
+}
+
+// Queue one line (plus a newline) as the process's stdin. Bytes that do not
+// fit are dropped.
+export void feed_line(i32 pid, char *line) {
+    i32 i = slot_of(pid);
+    if (i < 0) { return; }
+    i32 base = g_stdin[i];
+    i32 k = 0;
+    while (1) {
+        i32 c = 10;
+        if (line[k] != 0) { c = (i32)line[k] & 0xFF; }
+        i32 next = (g_in_tail[i] + 1) % STDIN_CAP;
+        if (next == g_in_head[i]) { return; } // full
+        mem.write_byte(base + g_in_tail[i], c);
+        g_in_tail[i] = next;
+        if (line[k] == 0) { return; }
+        k = k + 1;
+    }
+}
+
+// --- syscall handlers (run in the calling process's context) ---
+
+i32 on_write(i32 pid, i32 buf, i32 count) {
+    i32 out = output_of(pid);
+    if (out == 0) {
+        // No console: fall back to the serial log so nothing is lost.
+        i32 k = 0;
+        while (k < count) {
+            i32 c = mem.read_byte(buf + k);
+            serial.putc(c);
+            k = k + 1;
+        }
+        return count;
+    }
+    dom.append_bytes(out, buf, count);
+    return count;
+}
+
+i32 on_read(i32 pid, i32 buf, i32 count) {
+    i32 i = slot_of(pid);
+    if (i < 0) { return 0; }
+    i32 base = g_stdin[i];
+    i32 got = 0;
+    while (got < count) {
+        if (g_in_head[i] == g_in_tail[i]) { break; }
+        i32 c = mem.read_byte(base + g_in_head[i]);
+        g_in_head[i] = (g_in_head[i] + 1) % STDIN_CAP;
+        mem.write_byte(buf + got, c);
+        got = got + 1;
+    }
+    return got;
+}
+
+// Load `path` from the filesystem and start it as a process. Returns the
+// pid, or 0 (with the reason on the serial log) when the file is missing or
+// the loader refuses it.
+export i32 spawn_file(char *path) {
+    i32 fd = case fs.open(path) of {
+        Ok(v) -> v;
+        Err(e) -> ({ return 0; });
+    };
+    i32 size = case fs.seek(fd, 0, 2) of {
+        Ok(v) -> v;
+        Err(e) -> ({ fs.close(fd); return 0; });
+    };
+    if (size <= 0) { fs.close(fd); return 0; }
+    Result<i32, FsError> rewound = fs.seek(fd, 0, 0);
+    case rewound of { Ok(_) -> 0; Err(_) -> 0; };
+    i32 buf = heap.alloc(size);
+    if (buf == 0) { fs.close(fd); return 0; }
+    i32 got = case fs.read(fd, buf, size) of {
+        Ok(v) -> v;
+        Err(e) -> 0;
+    };
+    fs.close(fd);
+    if (got != size) {
+        heap.free(buf);
+        return 0;
+    }
+    i32 pid = case loader.spawn_from_buffer(buf, size) of {
+        Ok(p) -> p;
+        Err(e) -> ({ debug.println("console: loader rejected the image"); 0; });
+    };
+    heap.free(buf); // the loader copied the segments into fresh frames
+    return pid;
+}
+
+// SYS_SPAWN from a user program: the path is a user-space string. Copy it
+// out, spawn, and let the child share its parent's console.
+i32 on_spawn(i32 user_path) {
+    char path[32];
+    i32 k = 0;
+    while (k < 31) {
+        i32 c = mem.read_byte(user_path + k);
+        path[k] = (char)c;
+        if (c == 0) { break; }
+        k = k + 1;
+    }
+    path[31] = (char)0;
+    i32 parent = case process.get_current_pid() of {
+        Some(v) -> v;
+        None -> 0;
+    };
+    i32 pid = spawn_file(&path[0]);
+    if (pid > 0) {
+        i32 out = output_of(parent);
+        if (out != 0) { bind(pid, out); }
+    }
+    return pid;
+}
+
+// True once the process has exited (Zombie) or no longer exists.
+export i32 has_exited(i32 pid) {
+    Option<ProcessState> state = process.get_state(pid);
+    return case state of {
+        Some(s) -> case s of { Zombie -> 1; _ -> 0; };
+        None -> 1;
+    };
+}
+
+// Exit code of a zombie process (0 if unknown), then release its slot.
+export i32 reap(i32 pid) {
+    i32 code = case process.get_exit_code(pid) of {
+        Some(v) -> v;
+        None -> 0;
+    };
+    // A discarded aggregate-returning call passes no out-pointer (the
+    // callee would write through a stale register), so bind every Result.
+    Result<_, ProcessError> freed = process.free_proc(pid);
+    case freed of { Ok(_) -> 0; Err(_) -> 0; };
+    unbind(pid);
+    return code;
+}
+
+export void init() {
+    if (g_ready != 0) { return; }
+    i32 i = 0;
+    while (i < SLOTS) {
+        g_pid[i] = 0;
+        g_output[i] = 0;
+        g_stdin[i] = 0;
+        i = i + 1;
+    }
+    syscall.set_console(on_write, on_read);
+    syscall.set_spawn_handler(on_spawn);
+    g_ready = 1;
+}

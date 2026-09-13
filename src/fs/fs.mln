@@ -790,3 +790,44 @@ export void list() {
         idx++;
     }
 }
+
+// =========================================================================
+// 8. Directory enumeration (MYOS-015: file manager)
+// =========================================================================
+
+// Find the first used entry at index >= start. Copies its name into out
+// (at most cap-1 bytes, NUL-terminated) and returns the entry index, or -1
+// when there are no more files. Iterate with start = index + 1.
+export i32 dir_next(i32 start, char* out, i32 cap) {
+    if (g_enabled == 0) { return 0 - 1; }
+    if (start < 0) { start = 0; }
+    ssd.read_block(ENTRY_BLOCK, g_buf);
+    i32 idx = start;
+    while (idx < MAX_FILES) {
+        i32 off = idx * ENTRY_SIZE;
+        if (buf_word(off + 16) != 0) {
+            i32 i = 0;
+            while (i < NAME_MAX) {
+                i32 c = buf_byte(off + i);
+                if (c == 0) { break; }
+                if (i + 1 >= cap) { break; }
+                out[i] = (char)c;
+                i = i + 1;
+            }
+            out[i] = (char)0;
+            return idx;
+        }
+        idx++;
+    }
+    return 0 - 1;
+}
+
+// Size in bytes of the file at entry index idx (0 for a free entry).
+export i32 entry_size(i32 idx) {
+    if (g_enabled == 0) { return 0; }
+    if (idx < 0 || idx >= MAX_FILES) { return 0; }
+    ssd.read_block(ENTRY_BLOCK, g_buf);
+    i32 off = idx * ENTRY_SIZE;
+    if (buf_word(off + 16) == 0) { return 0; }
+    return buf_word(off + 20);
+}

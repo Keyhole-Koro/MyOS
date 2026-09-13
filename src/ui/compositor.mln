@@ -38,9 +38,11 @@ export void paint_first_frame() {
     graphics.present();
 }
 
-// Drag state: the window being moved by its title bar, and where the pointer
-// was at the last event so each motion event applies only its own delta.
+// Drag state: the window being moved by its title bar (or resized by its
+// grip), and where the pointer was at the last event so each motion event
+// applies only its own delta.
 i32 g_drag_win = 0;
+i32 g_resize_win = 0;
 i32 g_drag_last_x = 0;
 i32 g_drag_last_y = 0;
 
@@ -50,7 +52,43 @@ i32 g_drag_last_y = 0;
 i32 g_pressed_id = 0;
 i32 g_hot_id = 0;
 
+// Desktop context menu (right-click on the wallpaper), registered by main.
+char *g_desktop_menu_items = (char*)0;
+i32 g_desktop_menu_handler = 0;
+
+export void set_desktop_menu(char *items, i32 handler) {
+    g_desktop_menu_items = items;
+    g_desktop_menu_handler = handler;
+}
+
+// Window context menu: the same three actions as the title-bar buttons.
+void on_window_menu(i32 index) {
+    i32 win = dom.menu_target();
+    if (win == 0) { return; }
+    if (index == 0) { dom.minimize_window(win); }
+    if (index == 1) { dom.maximize_window(win); }
+    if (index == 2) { g_hot_id = 0; dom.close_window(win); }
+}
+
+// Node kinds the compositor treats specially. dom's NODE_* are u16 exports,
+// which cannot be passed around as values from another package.
+i32 KIND_TEXT_INPUT = 15;
+i32 KIND_TEXT_AREA = 20;
+i32 KIND_LIST = 21;
+
 void on_press(i32 ex, i32 ey) {
+    // A click while a menu is open either picks an item or dismisses the
+    // menu; either way it goes no further.
+    if (dom.menu_id() != 0) {
+        i32 mhit = dom.find_at(ex, ey);
+        if (mhit == dom.menu_id()) {
+            dom.menu_click(ex, ey);
+        } else {
+            dom.close_menu();
+        }
+        return;
+    }
+
     i32 hit = dom.find_at(ex, ey);
     if (hit == 0) {
         dom.set_focus(0);
@@ -69,10 +107,20 @@ void on_press(i32 ex, i32 ey) {
     }
 
     if (hit == win) {
-        // The window itself: close button, title-bar drag, or just focus.
-        if (dom.close_button_hit(win, ex, ey) != 0) {
+        // The window itself: title-bar buttons, drag handle, resize grip,
+        // or just focus.
+        i32 button = dom.titlebar_button_hit(win, ex, ey);
+        if (button == 1) {
             g_hot_id = 0;
             dom.close_window(win);
+            return;
+        }
+        if (button == 2) { dom.minimize_window(win); return; }
+        if (button == 3) { dom.maximize_window(win); return; }
+        if (dom.resize_grip_hit(win, ex, ey) != 0) {
+            g_resize_win = win;
+            g_drag_last_x = ex;
+            g_drag_last_y = ey;
             return;
         }
         if (dom.titlebar_hit(win, ex, ey) != 0) {
@@ -83,21 +131,57 @@ void on_press(i32 ex, i32 ey) {
         return;
     }
 
-    // A control. Text fields take keyboard focus; everything else is a
-    // press-and-release click target.
+    // A control. Text fields and lists take keyboard focus; lists also
+    // select on press. Everything else is a press-and-release click target.
     i32 kind = dom.kind_of(hit);
-    i32 k_input = 15; // dom.NODE_TEXT_INPUT (u16 exports are not callable values)
-    if (kind == k_input) {
+    if (kind == KIND_TEXT_INPUT) {
         dom.set_focus(hit);
+        return;
+    }
+    if (kind == KIND_TEXT_AREA) {
+        dom.set_focus(hit);
+        return;
+    }
+    if (kind == KIND_LIST) {
+        dom.set_focus(hit);
+        dom.list_click(hit, ex, ey);
         return;
     }
     dom.set_pressed(hit, 1);
     g_pressed_id = hit;
 }
 
+void on_right_press(i32 ex, i32 ey) {
+    if (dom.menu_id() != 0) {
+        dom.close_menu();
+        return;
+    }
+    i32 hit = dom.find_at(ex, ey);
+    if (hit == dom.taskbar_id()) { return; }
+    i32 win = dom.window_of(hit);
+    if (win != 0) {
+        dom.focus_window(win);
+        if (dom.is_maximized(win) != 0) {
+            dom.open_menu(ex, ey, "Minimize\nRestore\nClose", on_window_menu, win);
+        } else {
+            dom.open_menu(ex, ey, "Minimize\nMaximize\nClose", on_window_menu, win);
+        }
+        return;
+    }
+    if (hit == 0) {
+        if (g_desktop_menu_items != 0) {
+            dom.open_menu(ex, ey, g_desktop_menu_items, g_desktop_menu_handler, 0);
+        }
+    }
+}
+
 void on_release(i32 ex, i32 ey) {
     if (g_drag_win != 0) {
         g_drag_win = 0;
+        return;
+    }
+    if (g_resize_win != 0) {
+        g_resize_win = 0;
         return;
     }
     if (g_pressed_id != 0) {
@@ -113,14 +197,19 @@ void on_release(i32 ex, i32 ey) {
 }
 
 void on_motion(i32 ex, i32 ey) {
+    i32 dx = ex - g_drag_last_x;
+    i32 dy = ey - g_drag_last_y;
     if (g_drag_win != 0) {
-        i32 dx = ex - g_drag_last_x;
-        i32 dy = ey - g_drag_last_y;
         if (dx != 0) { dom.move_node(g_drag_win, dx, dy); }
         else if (dy != 0) { dom.move_node(g_drag_win, dx, dy); }
-        g_drag_last_x = ex;
-        g_drag_last_y = ey;
     }
+    if (g_resize_win != 0) {
+        i32 w = dom.node_w(g_resize_win) + dx;
+        i32 h = dom.node_h(g_resize_win) + dy;
+        dom.resize_window(g_resize_win, w, h);
+    }
+    g_drag_last_x = ex;
+    g_drag_last_y = ey;
 }
 
 // Interactive loop, event-driven. The mouse and keyboard IRQ handlers drain
@@ -132,6 +221,7 @@ void on_motion(i32 ex, i32 ey) {
 // hovered state.
 export void run() {
     i32 prev_left = 0;
+    i32 prev_right = 0;
 
     // paint_first_frame() already painted the desktop (called from main.mln
     // before interrupts were enabled, so that paint could not be preempted).
@@ -144,8 +234,11 @@ export void run() {
         while (mouse.has_event() != 0) {
             i32 ex = mouse.event_x();
             i32 ey = mouse.event_y();
-            i32 eb = mouse.event_btn() & 1;
+            i32 btn = mouse.event_btn();
+            i32 wheel = mouse.event_wheel();
             mouse.pop_event();
+            i32 eb = btn & 1;
+            i32 er = btn & 2;
 
             if (eb != 0) {
                 if (prev_left == 0) {
@@ -159,6 +252,15 @@ export void run() {
                 }
             }
             prev_left = eb;
+
+            if (er != 0) {
+                if (prev_right == 0) { on_right_press(ex, ey); }
+            }
+            prev_right = er;
+
+            if (wheel != 0) {
+                dom.dispatch_wheel(dom.find_at(ex, ey), wheel);
+            }
         }
 
         // Keyboard events go to whichever node holds focus.
@@ -183,6 +285,7 @@ export void run() {
             if (hit != 0) { dom.set_hovered(hit, 1); }
             g_hot_id = hit;
         }
+        if (dom.menu_id() != 0) { dom.menu_hover(mx, my); }
 
         // Timers (clock, animations) run on this task between events.
         dom.tick();
