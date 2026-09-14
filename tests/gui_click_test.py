@@ -27,15 +27,15 @@ REPO = Path(__file__).resolve().parents[3]
 OUT = Path(__file__).resolve().parents[3] / "build" / "gui-test"
 OUT.mkdir(parents=True, exist_ok=True)
 
-DISPLAY_CONFIG = REPO / "system/MyOS/src/ui/display_config.mln"
+DISPLAY_CONFIG = REPO / "runtime/MyEmulator/config/hardware.conf"
 
 
 def display_dimension(function):
     source = DISPLAY_CONFIG.read_text(encoding="utf-8")
-    marker = f"export i32 {function}()"
-    body = source[source.index(marker):]
-    value = body.split("return", 1)[1].lstrip().split(";", 1)[0]
-    return int(value)
+    values = dict(line.split("#", 1)[0].strip().split("=", 1)
+                  for line in source.splitlines()
+                  if line.split("#", 1)[0].strip())
+    return int(values[f"display_{function}"])
 
 
 FB_W, FB_H = display_dimension("width"), display_dimension("height")

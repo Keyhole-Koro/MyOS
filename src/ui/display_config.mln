@@ -1,14 +1,13 @@
-// Single source of truth for the emulated display geometry.
-//
-// Change these two values to change MyOS's framebuffer resolution. The
-// emulator reads this file at build time, so `make run system` rebuilds both
-// sides with the same dimensions.
+// Geometry is supplied by the display device. Board defaults are configured
+// in runtime/MyEmulator/config/hardware.conf; no emulator dependency on MyOS.
 package display_config;
 
+import mem from "../../../MyKernel/src/mm/mem.mln";
+
 export i32 width() {
-    return 2048;
+    return mem.read_word(0x240000D0);
 }
 
 export i32 height() {
-    return 1536;
+    return mem.read_word(0x240000D4);
 }

@@ -133,7 +133,7 @@ void on_press(i32 ex, i32 ey) {
 
     // A control. Text fields and lists take keyboard focus; lists also
     // select on press. Everything else is a press-and-release click target.
-    i32 kind = dom.kind_of(hit);
+    i32 kind = case dom.kind_of(hit) of { Some(v) -> v; None -> 0 - 1; };
     if (kind == KIND_TEXT_INPUT) {
         dom.set_focus(hit);
         return;

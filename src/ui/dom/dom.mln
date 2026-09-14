@@ -276,10 +276,10 @@ export i32 create_node(i32 kind, char *name) {
 
 // --- scalar queries -------------------------------------------------------------
 
-export i32 kind_of(i32 id) {
+export Option<i32> kind_of(i32 id) {
     Node *n = node_ptr(id);
-    if (n == 0) { return 0 - 1; }
-    return n->kind;
+    if (n == 0) { Option<i32> none = None; return none; }
+    Option<i32> hit = Some(n->kind); return hit;
 }
 
 export i32 parent_of(i32 id) {
@@ -1610,10 +1610,11 @@ export void list_set_items(i32 id, char *items) {
 }
 
 // Selected row (0-based), or -1.
-export i32 list_selected(i32 id) {
+export Option<i32> list_selected(i32 id) {
     Node *n = node_ptr(id);
-    if (n == 0) { return 0 - 1; }
-    return n->sel - 1;
+    if (n == 0) { Option<i32> none = None; return none; }
+    if (n->sel == 0) { Option<i32> none = None; return none; }
+    Option<i32> hit = Some(n->sel - 1); return hit;
 }
 
 export i32 list_count(i32 id) {
@@ -1662,17 +1663,17 @@ export void list_select(i32 id, i32 index) {
 }
 
 // Row under (px, py), or -1.
-export i32 list_row_at(i32 id, i32 px, i32 py) {
+export Option<i32> list_row_at(i32 id, i32 px, i32 py) {
     Node *n = node_ptr(id);
-    if (n == 0) { return 0 - 1; }
+    if (n == 0) { Option<i32> none = None; return none; }
     i32 s = ui_scale();
     i32 pad = 8 * s;
     i32 lh = graphics.text_height(0, s);
     i32 rel = py - n->y - pad;
-    if (rel < 0) { return 0 - 1; }
+    if (rel < 0) { Option<i32> none = None; return none; }
     i32 row = rel / lh + n->scroll;
-    if (row >= list_count(id)) { return 0 - 1; }
-    return row;
+    if (row >= list_count(id)) { Option<i32> none = None; return none; }
+    Option<i32> hit = Some(row); return hit;
 }
 
 // A click on a List at (px, py): select the row; a click on the already
@@ -1680,8 +1681,7 @@ export i32 list_row_at(i32 id, i32 px, i32 py) {
 export void list_click(i32 id, i32 px, i32 py) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
-    i32 row = list_row_at(id, px, py);
-    if (row < 0) { return; }
+    i32 row = case list_row_at(id, px, py) of { Some(v) -> v; None -> ({ return; }); };
     i32 was = n->sel - 1;
     list_select(id, row);
     if (row == was) {
@@ -1829,7 +1829,7 @@ export void menu_hover(i32 px, i32 py) {
     i32 id = g_menu_id;
     Node *n = node_ptr(id);
     if (n == 0) { return; }
-    i32 row = list_row_at(id, px, py);
+    i32 row = case list_row_at(id, px, py) of { Some(v) -> v; None -> 0 - 1; };
     i32 next = row + 1;
     if (row < 0) { next = 0; }
     if (next != n->sel) {
@@ -1841,7 +1841,7 @@ export void menu_hover(i32 px, i32 py) {
 export void menu_click(i32 px, i32 py) {
     i32 id = g_menu_id;
     if (id == 0) { return; }
-    i32 row = list_row_at(id, px, py);
+    i32 row = case list_row_at(id, px, py) of { Some(v) -> v; None -> 0 - 1; };
     i32 handler = g_menu_handler;
     close_menu();
     if (row >= 0) {

@@ -26,22 +26,22 @@ i32 g_pid[4];      // attached process, 0 = none
 i32 g_count = 0;
 i32 g_timer = 0;
 
-i32 slot_of_input(i32 input_id) {
+Option<i32> slot_of_input(i32 input_id) {
     i32 i = 0;
     while (i < g_count) {
-        if (g_in[i] == input_id) { return i; }
+        if (g_in[i] == input_id) { Option<i32> hit = Some(i); return hit; }
         i = i + 1;
     }
-    return 0 - 1;
+    Option<i32> none = None; return none;
 }
 
-i32 slot_of_window(i32 win) {
+Option<i32> slot_of_window(i32 win) {
     i32 i = 0;
     while (i < g_count) {
-        if (g_win[i] == win) { return i; }
+        if (g_win[i] == win) { Option<i32> hit = Some(i); return hit; }
         i = i + 1;
     }
-    return 0 - 1;
+    Option<i32> none = None; return none;
 }
 
 // A user process writes to the same TextArea from its stdout syscall, which
@@ -191,8 +191,7 @@ i32 on_key(i32 id, i32 code, i32 mods) {
 
 void on_run_button(i32 id) {
     i32 win = dom.window_of(id);
-    i32 slot = slot_of_window(win);
-    if (slot < 0) { return; }
+    i32 slot = case slot_of_window(win) of { Some(v) -> v; None -> ({ return; }); };
     on_key(g_in[slot], 13, 0);
     dom.set_focus(g_in[slot]);
 }

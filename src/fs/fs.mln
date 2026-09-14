@@ -187,11 +187,11 @@ Option<i32> alloc_block() {
     ssd.read_block(BITMAP_BLOCK, g_buf);
     char *bits = (char *)g_buf;
 
-    i32 b = bitset.find_clear(bits, BLOCK_COUNT, DATA_START);
-    if (b < 0) {
-        Option<i32> none = None;
-        return none;
-    }
+    Option<i32> clear_bit = bitset.find_clear(bits, BLOCK_COUNT, DATA_START);
+    i32 b = case clear_bit of {
+        Some(v) -> v;
+        None -> ({ Option<i32> none = None; return none; });
+    };
 
     bitset.set(bits, b);
     ssd.write_block(BITMAP_BLOCK, g_buf);

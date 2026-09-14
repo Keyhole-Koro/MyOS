@@ -1,6 +1,7 @@
 package notes;
 
 import dom from "../ui/dom/dom.mln";
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import graphics from "../ui/graphics.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
 
@@ -18,19 +19,18 @@ i32 g_opened = 0;
 
 char g_echo_buf[768]; // 8 slots x 96 bytes
 
-i32 echo_for(i32 field_id) {
+Option<i32> echo_for(i32 field_id) {
     i32 i = 0;
     while (i < g_count) {
-        if (g_field_ids[i] == field_id) { return i; }
+        if (g_field_ids[i] == field_id) { Option<i32> hit = Some(i); return hit; }
         i = i + 1;
     }
-    return 0 - 1;
+    Option<i32> none = None; return none;
 }
 
 // TextInput onChange: rewrite "You typed: ..." for this instance.
 void on_change(i32 id) {
-    i32 slot = echo_for(id);
-    if (slot < 0) { return; }
+    i32 slot = case echo_for(id) of { Some(v) -> v; None -> ({ return; }); };
     char *buf = &g_echo_buf[slot * 96];
     i32 n = strbuf.reset(buf);
     n = strbuf.append(buf, 96, n, "You typed: ");

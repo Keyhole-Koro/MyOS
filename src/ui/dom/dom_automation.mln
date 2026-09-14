@@ -48,7 +48,7 @@ void dump_props(i32 id) {
 
 void dump_node(i32 id, i32 depth) {
     print_indent(depth);
-    debug.printf("Node(id=%i, kind=%i) ", id, dom.kind_of(id));
+    debug.printf("Node(id=%i, kind=%i) ", id, case dom.kind_of(id) of { Some(v) -> v; None -> 0 - 1; });
     char *name = dom.name_of(id);
     if (name != 0) {
         debug.print(name);

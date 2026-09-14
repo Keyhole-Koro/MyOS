@@ -56,10 +56,9 @@ export void refresh() {
 
 // The selected row's file name (the part before the size), or 0.
 char* selected_name() {
-    i32 row = dom.list_selected(g_list);
-    if (row < 0) { return (char*)0; }
+    i32 row = case dom.list_selected(g_list) of { Some(v) -> v; None -> ({ return (char*)0; }); };
     char item[48];
-    dom.list_item(g_list, row, &item[0], 48);
+    Option<i32> _ = dom.list_item(g_list, row, &item[0], 48);
     i32 i = 0;
     while (item[i] != 0) {
         if (item[i] == ' ') { break; }
