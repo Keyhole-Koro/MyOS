@@ -9,6 +9,7 @@ import str from "../../../../toolchain/MyStdLib/str.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { FsError } from "../fs/fs.mln";
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 
 // Terminal: a read-only TextArea for output and a command line. Lines typed
 // while a user process is attached go to its stdin; otherwise they are
@@ -63,9 +64,17 @@ char g_line_buf[96];
 
 void cmd_ls(i32 slot) {
     char name[16];
-    i32 idx = fs.dir_next(0, &name[0], 16);
     i32 n = 0;
-    while (idx >= 0) {
+    i32 start = 0;
+    while (1) {
+        Option<i32> opt = case fs.dir_next(start, &name[0], 16) of {
+            Ok(v) -> v;
+            Err(e) -> ({ say_line(slot, "ls: filesystem error"); return; });
+        };
+        i32 idx = case opt of {
+            Some(v) -> v;
+            None -> ({ break; });
+        };
         i32 size = fs.entry_size(idx);
         i32 k = strbuf.reset(&g_line_buf[0]);
         k = strbuf.append(&g_line_buf[0], 96, k, "  ");
@@ -75,7 +84,7 @@ void cmd_ls(i32 slot) {
         k = strbuf.append(&g_line_buf[0], 96, k, " bytes\n");
         say(slot, &g_line_buf[0]);
         n = n + 1;
-        idx = fs.dir_next(idx + 1, &name[0], 16);
+        start = idx + 1;
     }
     if (n == 0) { say_line(slot, "  (no files)"); }
 }

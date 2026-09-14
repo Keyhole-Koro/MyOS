@@ -7,6 +7,7 @@ import editor from "editor.dom.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { FsError } from "../fs/fs.mln";
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 
 // File manager: lists the MFS disk, opens a file in the editor (activate a
 // row, or the Open button), deletes after a confirmation dialog, and creates
@@ -26,22 +27,31 @@ void files_status(char *s) { dom.set_text(g_status, s); }
 export void refresh() {
     char name[16];
     i32 k = strbuf.reset(&g_items[0]);
-    i32 idx = fs.dir_next(0, &name[0], 16);
+    i32 start = 0;
     i32 count = 0;
-    while (idx >= 0) {
+    while (1) {
+        Option<i32> opt = case fs.dir_next(start, &name[0], 16) of {
+            Ok(v) -> v;
+            Err(e) -> ({ files_status("disk error"); return; });
+        };
+        i32 idx = case opt of {
+            Some(v) -> v;
+            None -> ({ break; });
+        };
         if (count > 0) { k = strbuf.append(&g_items[0], 1024, k, "\n"); }
         k = strbuf.append(&g_items[0], 1024, k, &name[0]);
         k = strbuf.append(&g_items[0], 1024, k, "   (");
         k = strbuf.append_i32(&g_items[0], 1024, k, fs.entry_size(idx));
         k = strbuf.append(&g_items[0], 1024, k, " bytes)");
         count = count + 1;
-        idx = fs.dir_next(idx + 1, &name[0], 16);
+        start = idx + 1;
     }
     dom.list_set_items(g_list, &g_items[0]);
     i32 s = strbuf.reset(&g_status_buf[0]);
     s = strbuf.append_i32(&g_status_buf[0], 64, s, count);
     s = strbuf.append(&g_status_buf[0], 64, s, " file(s) on disk");
     files_status(&g_status_buf[0]);
+    strbuf.reset(&g_selected[0]);
 }
 
 // The selected row's file name (the part before the size), or 0.

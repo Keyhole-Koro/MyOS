@@ -606,14 +606,13 @@ i32 finish_write(i32 fd, i32 new_size) {
             i32 i = 3;
             while (i < FD_MAX) {
                 case g_fd_table[i] of {
-                    Unused -> ({ 0; });
-                    Serial(s) -> ({ 0; });
+                    Unused -> _;
+                    Serial(s) -> _;
                     File(other_f) -> ({
                         if (other_f.entry_idx == idx) {
                             other_f.file_size = new_size;
                             g_fd_table[i] = OpenFile::File(other_f);
                         }
-                        0;
                     });
                 };
                 i++;
@@ -749,13 +748,12 @@ export Result<_, FsError> remove(char* path) {
     i32 i = 3;
     while (i < FD_MAX) {
         case g_fd_table[i] of {
-            Unused -> ({ 0; });
-            Serial(s) -> ({ 0; });
+            Unused -> _;
+            Serial(s) -> _;
             File(f) -> ({
                 if (f.entry_idx == idx) {
                     g_fd_table[i] = OpenFile::Unused;
                 }
-                0;
             });
         };
         i++;
@@ -798,8 +796,8 @@ export void list() {
 // Find the first used entry at index >= start. Copies its name into out
 // (at most cap-1 bytes, NUL-terminated) and returns the entry index, or -1
 // when there are no more files. Iterate with start = index + 1.
-export i32 dir_next(i32 start, char* out, i32 cap) {
-    if (g_enabled == 0) { return 0 - 1; }
+export Result<Option<i32>, FsError> dir_next(i32 start, char* out, i32 cap) {
+    if (g_enabled == 0) { return Err(FsError::Disabled); }
     if (start < 0) { start = 0; }
     ssd.read_block(ENTRY_BLOCK, g_buf);
     i32 idx = start;
@@ -815,11 +813,11 @@ export i32 dir_next(i32 start, char* out, i32 cap) {
                 i = i + 1;
             }
             out[i] = (char)0;
-            return idx;
+            return Ok(Some(idx));
         }
         idx++;
     }
-    return 0 - 1;
+    return Ok(None);
 }
 
 // Size in bytes of the file at entry index idx (0 for a free entry).
