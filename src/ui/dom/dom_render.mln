@@ -1,0 +1,812 @@
+package dom_render;
+import debug from "../../../../MyKernel/src/debug/debug.mln";
+import heap from "../../../../MyKernel/src/mm/heap.mln";
+import scheduler from "../../../../MyKernel/src/kernel/scheduler.mln";
+import graphics from "../graphics.mln";
+import theme from "../theme.mln";
+import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
+import { Window, Text, Button, Panel, Box, TextInput, TextArea, Checkbox, Row, Column, List, Taskbar, Menu, Separator, PrimaryButton, Label } from "dom_elements.mln";
+import dom_widgets from "dom_widgets.mln";
+import dom from "dom.mln";
+import { Node } from "dom.mln";
+import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
+// --- renderer ---------------------------------------------------------------------------------
+// Walk the UI subtree and paint each node with graphics.*. The renderer and
+// the window manager are one: z-order is sibling order (later siblings on
+// top), and hover/pressed/focus looks come from the node's state bitmask.
+// Colours and metrics come from theme.mln.
+//
+// Theme values are fetched into locals before use because a cross-package
+// call nested inside another package's argument list does not resolve.
+
+export i32 node_fg(Node *n, i32 fallback) {
+    i32 c = n->color;
+    if (c != 0) { return c; }
+    return fallback;
+}
+
+export void draw_window(Node *n) {
+    i32 s = dom.ui_scale();
+    i32 x = n->x;
+    i32 y = n->y;
+    i32 w = n->w;
+    i32 h = n->h;
+    i32 state = n->state;
+    i32 focused_bit = dom.STATE_FOCUSED;
+    i32 hovered_bit = dom.STATE_HOVERED;
+    i32 active = state & focused_bit;
+    i32 hovered = state & hovered_bit;
+
+    i32 r = theme.window_radius() * s;
+    i32 tb = theme.titlebar_h() * s;
+
+    // Shadow first, then the body over it.
+    i32 shadow = theme.shadow_size() * s;
+    i32 shadow_off = theme.shadow_offset() * s;
+    i32 shadow_a = theme.shadow_alpha();
+    if (active == 0) { shadow_a = theme.shadow_alpha_inactive(); }
+    graphics.draw_shadow(x, y, w, h, r, shadow, shadow_off, shadow_a);
+
+    i32 bg = theme.window_bg();
+    graphics.fill_round_rect(x, y, w, h, r, bg);
+
+    // Title bar: rounded on top, squared off where it meets the content.
+    i32 tb_top = theme.titlebar_top();
+    i32 tb_bottom = theme.titlebar_bottom();
+    if (active == 0) {
+        tb_top = theme.titlebar_inactive();
+        tb_bottom = tb_top;
+    }
+    graphics.push_clip(x, y, w, tb);
+    graphics.fill_round_rect(x, y, w, tb + r, r, tb_top);
+    graphics.fill_gradient_v(x + r, y, w - 2 * r, tb, tb_top, tb_bottom);
+    graphics.fill_gradient_v(x, y + r, r, tb - r, tb_top, tb_bottom);
+    graphics.fill_gradient_v(x + w - r, y + r, r, tb - r, tb_top, tb_bottom);
+    graphics.pop_clip();
+    i32 divider = theme.titlebar_divider();
+    graphics.blend_rect(x, y + tb - s, w, s, divider);
+
+    // Title-bar buttons: close, minimize, maximize discs; their glyphs
+    // (x, -, +) appear while the pointer is over the window.
+    i32 cx = dom_widgets.close_button_cx(n);
+    i32 cy = dom_widgets.close_button_cy(n);
+    i32 cr = dom_widgets.close_button_r();
+    i32 ring = theme.close_button_ring();
+    i32 g = theme.close_glyph();
+    i32 k = cr / 2;
+    i32 which = 1;
+    while (which <= 3) {
+        i32 bx = dom_widgets.tb_button_cx(n, which);
+        i32 face = theme.close_button();
+        if (which == 2) { face = theme.minimize_button(); }
+        if (which == 3) { face = theme.maximize_button(); }
+        if (active == 0) { face = theme.close_button_inactive(); }
+        graphics.fill_disc(bx, cy, cr, face);
+        graphics.draw_round_rect(bx - cr, cy - cr, 2 * cr, 2 * cr, cr, s, ring);
+        if (hovered != 0) {
+            if (which == 1) {
+                graphics.draw_line(bx - k, cy - k, bx + k, cy + k, g);
+                graphics.draw_line(bx + k, cy - k, bx - k, cy + k, g);
+                graphics.draw_line(bx - k + 1, cy - k, bx + k + 1, cy + k, g);
+                graphics.draw_line(bx + k + 1, cy - k, bx - k + 1, cy + k, g);
+            }
+            if (which == 2) {
+                graphics.fill_rect(bx - k, cy - s / 2, 2 * k + 1, s + 1, g);
+            }
+            if (which == 3) {
+                graphics.fill_rect(bx - k, cy - s / 2, 2 * k + 1, s + 1, g);
+                graphics.fill_rect(bx - s / 2, cy - k, s + 1, 2 * k + 1, g);
+            }
+        }
+        which = which + 1;
+    }
+
+    // Resize grip: three short diagonal lines in the bottom-right corner.
+    i32 grip = theme.text_disabled();
+    i32 gx = x + w - 4 * s;
+    i32 gy = y + h - 4 * s;
+    i32 d = 4 * s;
+    while (d <= 12 * s) {
+        graphics.draw_line(gx - d, gy, gx, gy - d, grip);
+        d = d + 4 * s;
+    }
+
+    // Title, centred, kept clear of the buttons.
+    if (n->text != 0) {
+        i32 title_color = theme.text_primary();
+        if (active == 0) { title_color = theme.text_secondary(); }
+        i32 th = graphics.text_height(1, s);
+        i32 inset = 2 * (dom_widgets.tb_button_cx(n, 3) - x);
+        graphics.push_clip(x + inset, y, w - 2 * inset, tb);
+        graphics.draw_label_centered(x, y + (tb - th) / 2, w, (char*)n->text, title_color, 1, s);
+        graphics.pop_clip();
+    }
+
+    // Border last so it sits over the title bar edge.
+    i32 border = theme.window_border();
+    if (active == 0) { border = theme.window_border_inactive(); }
+    graphics.draw_round_rect(x, y, w, h, r, s, border);
+}
+
+export void draw_button(Node *n) {
+    i32 s = dom.ui_scale();
+    i32 x = n->x;
+    i32 y = n->y;
+    i32 w = n->w;
+    i32 h = n->h;
+    i32 state = n->state;
+    i32 pressed_bit = dom.STATE_PRESSED;
+    i32 hovered_bit = dom.STATE_HOVERED;
+    i32 primary_bit = dom.STYLE_PRIMARY;
+    i32 style = n->style;
+    i32 r = theme.button_radius() * s;
+
+    i32 face = theme.button_face();
+    i32 label = theme.text_primary();
+    i32 border = theme.button_border();
+    if ((style & primary_bit) != 0) {
+        face = theme.accent();
+        label = theme.on_accent();
+        border = theme.accent_pressed();
+        if ((state & pressed_bit) != 0) { face = theme.accent_pressed(); }
+        else if ((state & hovered_bit) != 0) { face = theme.accent_hover(); }
+    } else {
+        if ((state & pressed_bit) != 0) { face = theme.button_face_pressed(); }
+        else if ((state & hovered_bit) != 0) { face = theme.button_face_hover(); }
+    }
+    label = node_fg(n, label);
+
+    graphics.fill_round_rect(x, y, w, h, r, face);
+    graphics.draw_round_rect(x, y, w, h, r, s, border);
+    i32 focused_bit = dom.STATE_FOCUSED;
+    if ((state & focused_bit) != 0) {
+        // Keyboard focus ring just outside the button.
+        i32 ring = theme.accent();
+        graphics.draw_round_rect(x - 2 * s, y - 2 * s, w + 4 * s, h + 4 * s, r + 2 * s, s, ring);
+    }
+    if (n->text != 0) {
+        i32 th = graphics.text_height(0, s);
+        graphics.push_clip(x, y, w, h);
+        graphics.draw_label_centered(x, y + (h - th) / 2, w, (char*)n->text, label, 0, s);
+        graphics.pop_clip();
+    }
+}
+
+// --- TextArea / List / Menu rendering ---
+// All three are rows of text inside a rounded box; the list and menu add a
+// selection/hover highlight, the text area a caret.
+
+// Copy line bytes [start, start+llen) into out (bounded, NUL-terminated).
+// The renderer runs on the compositor task while append_text can run from a
+// syscall on the kernel task; terminating the shared buffer in place to draw
+// a line raced with those writes and corrupted the text, so drawing copies.
+export void copy_line(char *buf, i32 start, i32 llen, char *out, i32 cap) {
+    i32 i = 0;
+    while (i < llen) {
+        if (i + 1 >= cap) { break; }
+        out[i] = buf[start + i];
+        i = i + 1;
+    }
+    out[i] = (char)0;
+}
+
+export void draw_rows_box(Node *n, i32 focused) {
+    i32 s = dom.ui_scale();
+    i32 r = theme.input_radius() * s;
+    i32 bg = theme.input_bg();
+    graphics.fill_round_rect(n->x, n->y, n->w, n->h, r, bg);
+    i32 border = theme.input_border();
+    i32 bw = s;
+    if (focused != 0) {
+        border = theme.input_border_focus();
+        bw = 2 * s;
+    }
+    graphics.draw_round_rect(n->x, n->y, n->w, n->h, r, bw, border);
+}
+
+export void draw_text_area(Node *n) {
+    i32 s = dom.ui_scale();
+    i32 state = n->state;
+    i32 focused_bit = dom.STATE_FOCUSED;
+    i32 focused = state & focused_bit;
+    i32 x = n->x;
+    i32 y = n->y;
+    i32 w = n->w;
+    i32 h = n->h;
+    i32 pad = 8 * s;
+    i32 lh = graphics.text_height(0, s);
+    draw_rows_box(n, focused);
+
+    i32 fg = theme.text_primary();
+    fg = node_fg(n, fg);
+    i32 ro = dom_widgets.is_readonly(n);
+    char *buf = (char*)n->text;
+    i32 len = n->len;
+    graphics.push_clip(x + s, y + s, w - 2 * s, h - 2 * s);
+    i32 rows = dom_widgets.visible_lines(n);
+    i32 first = n->scroll;
+    i32 start = dom_widgets.line_start(n, first);
+    i32 row = 0;
+    i32 caret_x = 0 - 1;
+    i32 caret_y = 0;
+    while (row < rows) {
+        if (start > len) { break; }
+        i32 llen = dom_widgets.line_len_at(n, start);
+        i32 ty = y + pad + row * lh;
+        char line[160];
+        copy_line(buf, start, llen, &line[0], 160);
+        graphics.draw_label(x + pad, ty, &line[0], fg, 0, s);
+        i32 cur = n->cursor;
+        if (cur >= start) {
+            if (cur <= start + llen) {
+                caret_x = x + pad + graphics.text_width_n(&line[0], cur - start, 0, s);
+                caret_y = ty;
+            }
+        }
+        start = start + llen + 1;
+        row = row + 1;
+    }
+    if (focused != 0) {
+        if (ro == 0) {
+            if (caret_x >= 0) {
+                i32 caret = theme.caret();
+                graphics.fill_rect(caret_x, caret_y + s, s, lh - 2 * s, caret);
+            }
+        }
+    }
+    graphics.pop_clip();
+    // Empty editable area: placeholder from the node name.
+    if (len == 0) {
+        if (ro == 0) {
+            if (n->name != 0) {
+                i32 ph = theme.input_placeholder();
+                graphics.draw_label(x + pad, y + pad, (char*)n->name, ph, 0, s);
+            }
+        }
+    }
+}
+
+// Rows with an optional highlighted one (`hl` = row index or -1).
+export void draw_rows(Node *n, i32 hl, i32 hl_color, i32 hl_fg) {
+    i32 s = dom.ui_scale();
+    i32 x = n->x;
+    i32 y = n->y;
+    i32 w = n->w;
+    i32 h = n->h;
+    i32 pad = 8 * s;
+    i32 lh = graphics.text_height(0, s);
+    i32 fg = theme.text_primary();
+    fg = node_fg(n, fg);
+    char *buf = (char*)n->text;
+    i32 len = n->len;
+    i32 r = theme.button_radius() * s;
+    graphics.push_clip(x + s, y + s, w - 2 * s, h - 2 * s);
+    i32 rows = dom_widgets.visible_lines(n);
+    i32 first = n->scroll;
+    i32 start = dom_widgets.line_start(n, first);
+    i32 row = 0;
+    while (row < rows) {
+        if (start >= len) { break; }
+        i32 llen = dom_widgets.line_len_at(n, start);
+        i32 ty = y + pad + row * lh;
+        i32 color = fg;
+        if (first + row == hl) {
+            graphics.fill_round_rect(x + 4 * s, ty - s, w - 8 * s, lh + 2 * s, r, hl_color);
+            color = hl_fg;
+        }
+        char line[160];
+        copy_line(buf, start, llen, &line[0], 160);
+        graphics.draw_label(x + pad + 4 * s, ty, &line[0], color, 0, s);
+        start = start + llen + 1;
+        row = row + 1;
+    }
+    graphics.pop_clip();
+}
+
+export void draw_list(Node *n) {
+    i32 state = n->state;
+    i32 focused_bit = dom.STATE_FOCUSED;
+    i32 focused = state & focused_bit;
+    draw_rows_box(n, focused);
+    i32 sel = n->sel - 1;
+    i32 hl = theme.accent();
+    i32 hl_fg = theme.on_accent();
+    if (focused == 0) {
+        hl = theme.button_face_pressed();
+        hl_fg = theme.text_primary();
+    }
+    draw_rows(n, sel, hl, hl_fg);
+}
+
+export void draw_menu(Node *n) {
+    i32 s = dom.ui_scale();
+    i32 r = theme.button_radius() * s;
+    graphics.draw_shadow(n->x, n->y, n->w, n->h, r, 8 * s, 3 * s, 70);
+    i32 bg = theme.panel_bg();
+    graphics.fill_round_rect(n->x, n->y, n->w, n->h, r, bg);
+    i32 border = theme.window_border();
+    graphics.draw_round_rect(n->x, n->y, n->w, n->h, r, s, border);
+    i32 hl = theme.accent();
+    i32 hl_fg = theme.on_accent();
+    draw_rows(n, n->sel - 1, hl, hl_fg);
+}
+
+export void draw_text_node(Node *n) {
+    if (n->text == 0) { return; }
+    i32 s = dom.ui_scale();
+    i32 color = theme.text_primary();
+    color = node_fg(n, color);
+    i32 bold = dom.text_bold(n);
+    i32 center_bit = dom.STYLE_CENTER;
+    i32 style = n->style;
+    if ((style & center_bit) != 0) {
+        graphics.draw_label_centered(n->x, n->y, n->w, (char*)n->text, color, bold, s);
+    } else {
+        graphics.draw_label(n->x, n->y, (char*)n->text, color, bold, s);
+    }
+}
+
+export void draw_text_input(Node *n) {
+    i32 s = dom.ui_scale();
+    i32 x = n->x;
+    i32 y = n->y;
+    i32 w = n->w;
+    i32 h = n->h;
+    i32 state = n->state;
+    i32 focused_bit = dom.STATE_FOCUSED;
+    i32 focused = state & focused_bit;
+    i32 r = theme.input_radius() * s;
+    i32 pad = theme.input_padding_x() * s;
+
+    i32 bg = theme.input_bg();
+    graphics.fill_round_rect(x, y, w, h, r, bg);
+    i32 border = theme.input_border();
+    i32 bw = s;
+    if (focused != 0) {
+        border = theme.input_border_focus();
+        bw = 2 * s;
+    }
+    graphics.draw_round_rect(x, y, w, h, r, bw, border);
+
+    i32 th = graphics.text_height(0, s);
+    i32 ty = y + (h - th) / 2;
+    graphics.push_clip(x + pad / 2, y, w - pad, h);
+    if (n->len == 0) {
+        if (n->name != 0) {
+            i32 ph = theme.input_placeholder();
+            graphics.draw_label(x + pad, ty, (char*)n->name, ph, 0, s);
+        }
+    } else {
+        i32 fg = theme.text_primary();
+        fg = node_fg(n, fg);
+        graphics.draw_label(x + pad, ty, (char*)n->text, fg, 0, s);
+    }
+    if (focused != 0) {
+        i32 cur = n->cursor;
+        i32 caret_x = x + pad + graphics.text_width_n((char*)n->text, cur, 0, s);
+        i32 caret = theme.caret();
+        graphics.fill_rect(caret_x, ty + s, s, th - 2 * s, caret);
+    }
+    graphics.pop_clip();
+}
+
+export void draw_checkbox(Node *n) {
+    i32 s = dom.ui_scale();
+    i32 x = n->x;
+    i32 y = n->y;
+    i32 h = n->h;
+    i32 state = n->state;
+    i32 checked_bit = dom.STATE_CHECKED;
+    i32 hovered_bit = dom.STATE_HOVERED;
+    i32 pressed_bit = dom.STATE_PRESSED;
+    i32 checked = state & checked_bit;
+    i32 box = theme.checkbox_size() * s;
+    i32 r = theme.checkbox_radius() * s;
+    i32 by = y + (h - box) / 2;
+
+    i32 face = theme.checkbox_bg();
+    i32 border = theme.checkbox_border();
+    if (checked != 0) {
+        face = theme.accent();
+        border = theme.accent_pressed();
+        if ((state & pressed_bit) != 0) { face = theme.accent_pressed(); }
+        else if ((state & hovered_bit) != 0) { face = theme.accent_hover(); }
+    } else {
+        if ((state & pressed_bit) != 0) { face = theme.button_face_pressed(); }
+        else if ((state & hovered_bit) != 0) { face = theme.button_face_hover(); }
+    }
+    graphics.fill_round_rect(x, by, box, box, r, face);
+    graphics.draw_round_rect(x, by, box, box, r, s, border);
+    i32 focused_bit = dom.STATE_FOCUSED;
+    if ((state & focused_bit) != 0) {
+        i32 ring = theme.accent();
+        graphics.draw_round_rect(x - 2 * s, by - 2 * s, box + 4 * s, box + 4 * s, r + 2 * s, s, ring);
+    }
+    if (checked != 0) {
+        // Check mark: two strokes, drawn s+1 times side by side for weight.
+        i32 white = theme.on_accent();
+        i32 x0 = x + box * 25 / 100;
+        i32 y0 = by + box * 52 / 100;
+        i32 x1 = x + box * 43 / 100;
+        i32 y1 = by + box * 70 / 100;
+        i32 x2 = x + box * 76 / 100;
+        i32 y2 = by + box * 30 / 100;
+        i32 k = 0;
+        while (k < s + 1) {
+            graphics.draw_line(x0, y0 + k, x1, y1 + k, white);
+            graphics.draw_line(x1, y1 + k, x2, y2 + k, white);
+            k = k + 1;
+        }
+    }
+    if (n->text != 0) {
+        i32 fg = theme.text_primary();
+        fg = node_fg(n, fg);
+        i32 th = graphics.text_height(0, s);
+        graphics.draw_label(x + box + 8 * s, y + (h - th) / 2, (char*)n->text, fg, 0, s);
+    }
+}
+
+export void draw_panel(Node *n) {
+    i32 s = dom.ui_scale();
+    i32 bg = theme.panel_bg();
+    i32 border = theme.panel_border();
+    i32 r = n->radius;
+    graphics.fill_round_rect(n->x, n->y, n->w, n->h, r, bg);
+    graphics.draw_round_rect(n->x, n->y, n->w, n->h, r, s, border);
+}
+
+// --- taskbar ---
+// The bar lists every window on the desktop (click to activate), with a
+// launcher button at the left and an uptime clock at the right. Entries are
+// laid out arithmetically at draw and hit time rather than as child nodes,
+// so the bar never has to be rebuilt when windows come and go.
+
+// The desktop window with the smallest id greater than `after` (0 = first);
+// 0 when there is none. Walks the desktop's children, so a closed window
+// drops out and ids keep creation order.
+export i32 next_window_after(i32 after) {
+    i32 kw = dom.NODE_WINDOW;
+    i32 best = 0;
+    i32 child_id = dom.first_child(dom.get_g_desktop_node_id());
+    while (child_id != 0) {
+        Node *c = dom.node_ptr(child_id);
+        if (c == 0) { child_id = 0; }
+        else {
+            if (c->kind == kw) {
+                if (child_id > after) {
+                    if (best == 0) { best = child_id; }
+                    else if (child_id < best) { best = child_id; }
+                }
+            }
+            child_id = c->next_sibling;
+        }
+    }
+    return best;
+}
+
+export i32 taskbar_entry_x(i32 index) {
+    i32 s = dom.ui_scale();
+    i32 launcher = theme.taskbar_launcher_w() * s;
+    i32 ew = theme.taskbar_entry_w() * s;
+    return 8 * s + launcher + 8 * s + index * (ew + 6 * s);
+}
+
+export void format_clock() {
+    i32 *_damage_x0 = dom.get_g_damage_x0();
+    i32 *_damage_y0 = dom.get_g_damage_y0();
+    i32 *_damage_x1 = dom.get_g_damage_x1();
+    i32 *_damage_y1 = dom.get_g_damage_y1();
+    char *_clock_buf = dom.get_g_clock_buf();
+    Node **_node_table = dom.get_g_node_table();
+
+    // Uptime from the 1 ms scheduler tick: HH:MM:SS.
+    i32 secs = scheduler.ticks() / 1000;
+    i32 hh = (secs / 3600) % 100;
+    i32 mm = (secs / 60) % 60;
+    i32 ss = secs % 60;
+    _clock_buf[0] = (char)('0' + hh / 10);
+    _clock_buf[1] = (char)('0' + hh % 10);
+    _clock_buf[2] = ':';
+    _clock_buf[3] = (char)('0' + mm / 10);
+    _clock_buf[4] = (char)('0' + mm % 10);
+    _clock_buf[5] = ':';
+    _clock_buf[6] = (char)('0' + ss / 10);
+    _clock_buf[7] = (char)('0' + ss % 10);
+    _clock_buf[8] = (char)0;
+}
+
+export void draw_taskbar(Node *n) {
+    i32 *_damage_x0 = dom.get_g_damage_x0();
+    i32 *_damage_y0 = dom.get_g_damage_y0();
+    i32 *_damage_x1 = dom.get_g_damage_x1();
+    i32 *_damage_y1 = dom.get_g_damage_y1();
+    char *_clock_buf = dom.get_g_clock_buf();
+    Node **_node_table = dom.get_g_node_table();
+
+    i32 s = dom.ui_scale();
+    i32 x = n->x;
+    i32 y = n->y;
+    i32 w = n->w;
+    i32 h = n->h;
+
+    i32 bg = theme.taskbar_bg();
+    graphics.blend_rect(x, y, w, h, bg);
+    i32 edge = theme.taskbar_edge();
+    graphics.blend_rect(x, y, w, s, edge);
+
+    // Launcher: accent dot + "MyOS".
+    i32 accent = theme.accent();
+    i32 on_dark = theme.text_on_dark();
+    i32 lx = x + 8 * s;
+    i32 lw = theme.taskbar_launcher_w() * s;
+    i32 er = theme.taskbar_entry_radius() * s;
+    i32 entry_bg = theme.taskbar_entry();
+    graphics.fill_round_rect(lx, y + 6 * s, lw, h - 12 * s, er, entry_bg);
+    graphics.fill_disc(lx + 16 * s, y + h / 2, 6 * s, accent);
+    i32 th_b = graphics.text_height(1, s);
+    graphics.draw_label(lx + 30 * s, y + (h - th_b) / 2, "MyOS", on_dark, 1, s);
+
+    // One entry per window, in creation order (ids ascend), so raising a
+    // window does not shuffle the bar.
+    i32 ew = theme.taskbar_entry_w() * s;
+    i32 active_bg = theme.taskbar_entry_active();
+    i32 dim = theme.text_on_dark_dim();
+    i32 th = graphics.text_height(0, s);
+    i32 index = 0;
+    i32 win = next_window_after(0);
+    while (win != 0) {
+        Node *c = dom.node_ptr(win);
+        i32 ex = x + taskbar_entry_x(index);
+        i32 ebg = entry_bg;
+        i32 fg = dim;
+        if (win == dom.get_g_active_window()) { ebg = active_bg; fg = on_dark; }
+        graphics.fill_round_rect(ex, y + 6 * s, ew, h - 12 * s, er, ebg);
+        if (win == dom.get_g_active_window()) {
+            graphics.fill_round_rect(ex + 10 * s, y + h - 9 * s, ew - 20 * s, 2 * s, s, accent);
+        }
+        if (c->text != 0) {
+            graphics.push_clip(ex + 10 * s, y, ew - 20 * s, h);
+            graphics.draw_label(ex + 12 * s, y + (h - th) / 2, (char*)c->text, fg, 0, s);
+            graphics.pop_clip();
+        }
+        index = index + 1;
+        win = next_window_after(win);
+    }
+
+    // Clock at the right.
+    format_clock();
+    i32 cw = graphics.text_width(&_clock_buf[0], 0, s);
+    graphics.draw_label(x + w - cw - 16 * s, y + (h - th) / 2, &_clock_buf[0], on_dark, 0, s);
+}
+
+// The window whose taskbar entry is at (px, py), or 0; -1 for the launcher.
+export i32 taskbar_target_at(i32 px, i32 py) {
+    Node *n = dom.node_ptr(dom.get_g_taskbar_id());
+    if (n == 0) { return 0; }
+    i32 s = dom.ui_scale();
+    i32 x = n->x;
+    i32 lx = x + 8 * s;
+    i32 lw = theme.taskbar_launcher_w() * s;
+    if (px >= lx) {
+        if (px < lx + lw) { return 0 - 1; }
+    }
+    i32 ew = theme.taskbar_entry_w() * s;
+    i32 index = 0;
+    i32 win = next_window_after(0);
+    while (win != 0) {
+        i32 ex = x + taskbar_entry_x(index);
+        if (px >= ex) {
+            if (px < ex + ew) { return win; }
+        }
+        index = index + 1;
+        win = next_window_after(win);
+    }
+    return 0;
+}
+
+// Handle a click on the taskbar: activate the window whose entry was hit, or
+// run the launcher handler.
+export void taskbar_click(i32 px, i32 py) {
+    i32 target = taskbar_target_at(px, py);
+    if (target > 0) {
+        dom_widgets.focus_window(target);
+        return;
+    }
+    if (target < 0) {
+        i32 handler = dom.get_g_launcher();
+        if (handler != 0) { handler(); }
+    }
+}
+
+export void set_launcher(i32 handler) {
+    dom.set_g_launcher(handler);
+}
+
+// Redraw the clock (called by a timer once a second).
+export void refresh_taskbar() {
+    dom.damage_node(dom.get_g_taskbar_id());
+}
+
+export void draw_node(Node *n) {
+    i32 kind = n->kind;
+    i32 x = n->x;
+    i32 y = n->y;
+    i32 w = n->w;
+    i32 h = n->h;
+    i32 scale = dom.ui_scale();
+
+    // Copy the NODE_* u16 globals into i32 locals before comparing. Comparing an
+    // i32 against a `u16` global directly (kind == dom.NODE_WINDOW) miscompiles and is
+    // always false, even when both hold the same value; the local coerces cleanly.
+    i32 kw = dom.NODE_WINDOW;
+    i32 kbox = dom.NODE_BOX;
+    i32 kb = dom.NODE_BUTTON;
+    i32 kt = dom.NODE_TEXT;
+    i32 ki = dom.NODE_TEXT_INPUT;
+    i32 kc = dom.NODE_CHECKBOX;
+    i32 ks = dom.NODE_SEPARATOR;
+    i32 kp = dom.NODE_PANEL;
+    i32 ktb = dom.NODE_TASKBAR;
+    i32 kta = dom.NODE_TEXT_AREA;
+    i32 kl = dom.NODE_LIST;
+    i32 km = dom.NODE_MENU;
+
+    if (kind == kta) {
+        draw_text_area(n);
+    } else if (kind == kl) {
+        draw_list(n);
+    } else if (kind == km) {
+        draw_menu(n);
+    } else if (kind == kbox) {
+        graphics.fill_rect(x, y, w, h, n->background_color);
+        graphics.draw_rect_scaled(x, y, w, h, n->border_color, scale);
+    } else if (kind == kw) {
+        draw_window(n);
+    } else if (kind == kb) {
+        draw_button(n);
+    } else if (kind == kt) {
+        draw_text_node(n);
+    } else if (kind == ki) {
+        draw_text_input(n);
+    } else if (kind == kc) {
+        draw_checkbox(n);
+    } else if (kind == ks) {
+        i32 sep = theme.separator();
+        graphics.blend_rect(x, y, w, h, sep);
+    } else if (kind == kp) {
+        draw_panel(n);
+    } else if (kind == ktb) {
+        draw_taskbar(n);
+    }
+    // Structural nodes (root/system/process/...) draw nothing.
+}
+
+// True if a node's painted area overlaps the damage region. Nodes that do not
+// are skipped without drawing: the clip rectangle would discard their pixels
+// anyway, but only after paying for the fill work that produced them.
+export i32 node_in_damage(Node *n) {
+    if (dom.get_g_painting_all() != 0) { return 1; } // full repaint: draw everything
+    dom.node_extent(n);
+    if (dom.get_g_ext_x() + dom.get_g_ext_w() <= dom.get_g_paint_x0()) { return 0; }
+    if (dom.get_g_ext_y() + dom.get_g_ext_h() <= dom.get_g_paint_y0()) { return 0; }
+    if (dom.get_g_ext_x() >= dom.get_g_paint_x1()) { return 0; }
+    if (dom.get_g_ext_y() >= dom.get_g_paint_y1()) { return 0; }
+    return 1;
+}
+
+
+// Render node_id and its descendants. Skips invisible subtrees. Sibling order
+// is paint order, so later children appear on top.
+export void render(i32 node_id) {
+    i32 *_damage_x0 = dom.get_g_damage_x0();
+    i32 *_damage_y0 = dom.get_g_damage_y0();
+    i32 *_damage_x1 = dom.get_g_damage_x1();
+    i32 *_damage_y1 = dom.get_g_damage_y1();
+    char *_clock_buf = dom.get_g_clock_buf();
+    Node **_node_table = dom.get_g_node_table();
+
+    Node *n = dom.node_ptr(node_id);
+    if (n == 0) { return; }
+    if ((n->state & dom.STATE_VISIBLE) == 0) { return; }
+
+    i32 in_damage = node_in_damage(n);
+    if (in_damage != 0) {
+        draw_node(n);
+    }
+
+    // Children are visited regardless: a child can overlap the damage region
+    // even when its parent does not -- unless the parent clips them, in
+    // which case an off-damage parent means off-damage children.
+    i32 clip = dom.clips_children(n);
+    if (clip != 0) {
+        if (in_damage == 0) { return; }
+        graphics.push_clip(n->x, n->y, n->w, n->h);
+    }
+    i32 child_id = n->first_child;
+    while (child_id != 0) {
+        render(child_id);
+        child_id = dom.next_sibling(child_id);
+    }
+    if (clip != 0) { graphics.pop_clip(); }
+}
+
+// Paint the desktop: wallpaper, every window in z-order, then the taskbar on
+// top. Honours the current clip, so render_scene can call it for a region.
+export void paint_desktop() {
+    i32 top = theme.desktop_top();
+    i32 bottom = theme.desktop_bottom();
+    i32 dw = graphics.display_width();
+    i32 dh = graphics.display_height();
+    graphics.fill_gradient_v(0, 0, dw, dh, top, bottom);
+
+    i32 child_id = dom.first_child(dom.get_g_desktop_node_id());
+    while (child_id != 0) {
+        if (child_id != dom.get_g_taskbar_id()) {
+            if (child_id != dom.get_g_menu_id()) { render(child_id); }
+        }
+        child_id = dom.next_sibling(child_id);
+    }
+    if (dom.get_g_taskbar_id() != 0) { render(dom.get_g_taskbar_id()); }
+    if (dom.get_g_menu_id() != 0) { render(dom.get_g_menu_id()); }
+}
+
+// Repaint every node, ignoring the damage region. Used for the first frame and
+// whenever a caller wants an unconditional repaint.
+export void render_all() {
+    i32 *_damage_x0 = dom.get_g_damage_x0();
+    i32 *_damage_y0 = dom.get_g_damage_y0();
+    i32 *_damage_x1 = dom.get_g_damage_x1();
+    i32 *_damage_y1 = dom.get_g_damage_y1();
+    char *_clock_buf = dom.get_g_clock_buf();
+    Node **_node_table = dom.get_g_node_table();
+
+    dom.clear_damage();
+    dom.set_g_painting_all(1);
+    graphics.clear_clip();
+    paint_desktop();
+    dom.clear_damage();
+}
+
+// Repaint just the damaged region: everything that overlaps it is redrawn
+// under a clip, nodes outside it are skipped entirely -- a hover highlight
+// redraws one button, not the whole screen. Falls back to a full repaint when
+// nothing is marked, so a caller that never damages anything still gets a
+// correct frame.
+export void render_scene() {
+    i32 *_damage_x0 = dom.get_g_damage_x0();
+    i32 *_damage_y0 = dom.get_g_damage_y0();
+    i32 *_damage_x1 = dom.get_g_damage_x1();
+    i32 *_damage_y1 = dom.get_g_damage_y1();
+    char *_clock_buf = dom.get_g_clock_buf();
+    Node **_node_table = dom.get_g_node_table();
+
+    if (dom.get_g_damage_count() == 0) {
+        render_all();
+        return;
+    }
+
+    // Paint each damaged rectangle under its own clip. The count is
+    // snapshotted so anything damaged while painting waits for the next
+    // frame rather than extending this loop.
+    i32 count = dom.get_g_damage_count();
+    i32 i = 0;
+    while (i < count) {
+        dom.set_g_paint_x0(_damage_x0[i]);
+        dom.set_g_paint_y0(_damage_y0[i]);
+        dom.set_g_paint_x1(_damage_x1[i]);
+        dom.set_g_paint_y1(_damage_y1[i]);
+        dom.set_g_painting_all(0);
+        graphics.set_clip(dom.get_g_paint_x0(), dom.get_g_paint_y0(), dom.get_g_paint_x1() - dom.get_g_paint_x0(), dom.get_g_paint_y1() - dom.get_g_paint_y0());
+        paint_desktop();
+        i = i + 1;
+    }
+    dom.set_g_painting_all(1);
+    graphics.clear_clip();
+    dom.clear_damage();
+}
+
+export void render_desktop() {
+    render_scene();
+    graphics.present();
+}
+

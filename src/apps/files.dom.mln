@@ -1,6 +1,8 @@
 package files;
 
+import dom_widgets from "../ui/dom/dom_widgets.mln";
 import dom from "../ui/dom/dom.mln";
+import dom_elements from "../ui/dom/dom_elements.mln";
 import graphics from "../ui/graphics.mln";
 import fs from "../fs/fs.mln";
 import editor from "editor.dom.mln";
@@ -30,7 +32,8 @@ export void refresh() {
     i32 start = 0;
     i32 count = 0;
     while (1) {
-        Option<i32> opt = case fs.dir_next(start, &name[0], 16) of {
+        Result<Option<i32>, FsError> res = fs.dir_next(start, &name[0], 16);
+        Option<i32> opt = case res of {
             Ok(v) -> v;
             Err(e) -> ({ files_status("disk error"); return; });
         };
@@ -46,7 +49,7 @@ export void refresh() {
         count = count + 1;
         start = idx + 1;
     }
-    dom.list_set_items(g_list, &g_items[0]);
+    dom_widgets.list_set_items(g_list, &g_items[0]);
     i32 s = strbuf.reset(&g_status_buf[0]);
     s = strbuf.append_i32(&g_status_buf[0], 64, s, count);
     s = strbuf.append(&g_status_buf[0], 64, s, " file(s) on disk");
@@ -56,9 +59,10 @@ export void refresh() {
 
 // The selected row's file name (the part before the size), or 0.
 char* selected_name() {
-    i32 row = case dom.list_selected(g_list) of { Some(v) -> v; None -> ({ return (char*)0; }); };
+    Option<i32> ls = dom_widgets.list_selected(g_list);
+    i32 row = case ls of { Some(v) -> v; None -> ({ return (char*)0; }); };
     char item[48];
-    dom.list_item(g_list, row, &item[0], 48);
+    dom_widgets.list_item(g_list, row, &item[0], 48);
     i32 i = 0;
     while (item[i] != 0) {
         if (item[i] == ' ') { break; }
@@ -97,7 +101,7 @@ void on_refresh(i32 id) { refresh(); }
 
 void close_dialog() {
     if (g_dialog != 0) {
-        dom.close_window(g_dialog);
+        dom_widgets.close_window(g_dialog);
         g_dialog = 0;
     }
 }
@@ -142,7 +146,7 @@ void on_delete(i32 id) {
     g_dialog = build_dialog(wx, wy);
     dom.append_child(dom.desktop_id(), g_dialog);
     dom.set_text(dom.first_child(g_dialog), &g_question[0]);
-    dom.focus_window(g_dialog);
+    dom_widgets.focus_window(g_dialog);
 }
 
 void files_noop(i32 id) { }
@@ -176,7 +180,7 @@ export i32 mount() {
         dom.set_test_id(g_status, "files-status");
     }
     refresh();
-    dom.focus_window(g_win);
-    dom.set_focus(g_list);
+    dom_widgets.focus_window(g_win);
+    dom_widgets.set_focus(g_list);
     return g_win;
 }

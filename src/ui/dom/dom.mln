@@ -19,61 +19,61 @@ import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
 // z-order (later on top); bring_to_front re-links a window to the end.
 
 // --- node kinds --------------------------------------------------------------
-export u16 NODE_ROOT      = 0;
-export u16 NODE_SYSTEM    = 1;
-export u16 NODE_PROCESS   = 2;
-export u16 NODE_DEVICE    = 3;
-export u16 NODE_DIRECTORY = 4;
-export u16 NODE_FILE      = 5;
-export u16 NODE_UI        = 6;
-export u16 NODE_DESKTOP   = 7;
-export u16 NODE_WINDOW    = 8;
-export u16 NODE_BOX       = 9;
-export u16 NODE_TEXT      = 10;
-export u16 NODE_BUTTON    = 11;
-export u16 NODE_TIMER     = 12;
-export u16 NODE_COLUMN    = 13;
-export u16 NODE_ROW       = 14;
-export u16 NODE_TEXT_INPUT = 15;
-export u16 NODE_CHECKBOX  = 16;
-export u16 NODE_SEPARATOR = 17;
-export u16 NODE_PANEL     = 18;
-export u16 NODE_TASKBAR   = 19;
-export u16 NODE_TEXT_AREA = 20;
-export u16 NODE_LIST      = 21;
-export u16 NODE_MENU      = 22;
+export i32 NODE_ROOT      = 0;
+export i32 NODE_SYSTEM    = 1;
+export i32 NODE_PROCESS   = 2;
+export i32 NODE_DEVICE    = 3;
+export i32 NODE_DIRECTORY = 4;
+export i32 NODE_FILE      = 5;
+export i32 NODE_UI        = 6;
+export i32 NODE_DESKTOP   = 7;
+export i32 NODE_WINDOW    = 8;
+export i32 NODE_BOX       = 9;
+export i32 NODE_TEXT      = 10;
+export i32 NODE_BUTTON    = 11;
+export i32 NODE_TIMER     = 12;
+export i32 NODE_COLUMN    = 13;
+export i32 NODE_ROW       = 14;
+export i32 NODE_TEXT_INPUT = 15;
+export i32 NODE_CHECKBOX  = 16;
+export i32 NODE_SEPARATOR = 17;
+export i32 NODE_PANEL     = 18;
+export i32 NODE_TASKBAR   = 19;
+export i32 NODE_TEXT_AREA = 20;
+export i32 NODE_LIST      = 21;
+export i32 NODE_MENU      = 22;
 
 // --- accessibility roles (MYOS-004 automation locators) ------------------------
-export u16 ROLE_NONE      = 0;
-export u16 ROLE_ROOT      = 1;
-export u16 ROLE_DESKTOP   = 2;
-export u16 ROLE_WINDOW    = 3;
-export u16 ROLE_BUTTON    = 4;
-export u16 ROLE_TEXT      = 5;
-export u16 ROLE_TEXTBOX   = 6;
-export u16 ROLE_CHECKBOX  = 7;
-export u16 ROLE_TOOLBAR   = 8;
-export u16 ROLE_SEPARATOR = 9;
-export u16 ROLE_TEXTAREA  = 10;
-export u16 ROLE_LIST      = 11;
-export u16 ROLE_MENU      = 12;
+export i32 ROLE_NONE      = 0;
+export i32 ROLE_ROOT      = 1;
+export i32 ROLE_DESKTOP   = 2;
+export i32 ROLE_WINDOW    = 3;
+export i32 ROLE_BUTTON    = 4;
+export i32 ROLE_TEXT      = 5;
+export i32 ROLE_TEXTBOX   = 6;
+export i32 ROLE_CHECKBOX  = 7;
+export i32 ROLE_TOOLBAR   = 8;
+export i32 ROLE_SEPARATOR = 9;
+export i32 ROLE_TEXTAREA  = 10;
+export i32 ROLE_LIST      = 11;
+export i32 ROLE_MENU      = 12;
 
 // --- state bitmask -------------------------------------------------------------
-export u16 STATE_VISIBLE      = 0b0000001;
-export u16 STATE_ENABLED      = 0b0000010;
-export u16 STATE_HOVERED      = 0b0000100;
-export u16 STATE_PRESSED      = 0b0001000;
-export u16 STATE_FOCUSED      = 0b0010000; // keyboard focus, or the active window
-export u16 STATE_HIT_TESTABLE = 0b0100000; // find_at may return this node
-export u16 STATE_CHECKED      = 0b1000000; // Checkbox
-export u16 STATE_MAXIMIZED    = 128;       // Window fills the desktop; sx..sh hold the restore bounds
-export u16 STATE_MINIMIZED    = 256;       // Window hidden to the taskbar
+export i32 STATE_VISIBLE      = 0b0000001;
+export i32 STATE_ENABLED      = 0b0000010;
+export i32 STATE_HOVERED      = 0b0000100;
+export i32 STATE_PRESSED      = 0b0001000;
+export i32 STATE_FOCUSED      = 0b0010000; // keyboard focus, or the active window
+export i32 STATE_HIT_TESTABLE = 0b0100000; // find_at may return this node
+export i32 STATE_CHECKED      = 0b1000000; // Checkbox
+export i32 STATE_MAXIMIZED    = 128;       // Window fills the desktop; sx..sh hold the restore bounds
+export i32 STATE_MINIMIZED    = 256;       // Window hidden to the taskbar
 
 // --- style bits (Node.style) -----------------------------------------------------
-export u16 STYLE_BOLD    = 1; // Text: heavier face
-export u16 STYLE_PRIMARY = 2; // Button: accent-coloured call to action
-export u16 STYLE_CENTER  = 4; // Text: centre within w when w > 0
-export u16 STYLE_READONLY = 8; // TextArea: displays text, no editing (console output)
+export i32 STYLE_BOLD    = 1; // Text: heavier face
+export i32 STYLE_PRIMARY = 2; // Button: accent-coloured call to action
+export i32 STYLE_CENTER  = 4; // Text: centre within w when w > 0
+export i32 STYLE_READONLY = 8; // TextArea: displays text, no editing (console output)
 
 // Node layout (offsets, bytes; measured u16=2B, pointers 4B-aligned, no tail
 // padding): id=0 kind=2 name=4 parent=8 first_child=10 next_sibling=12 role=14
@@ -123,7 +123,7 @@ export typedef struct {
     u16 sh;
 } Node;
 
-i32 NODE_SIZE = 96;
+export i32 NODE_SIZE = 96;
 
 // Damage rectangles: the areas that changed since the last render, in
 // display coordinates. render_scene repaints each one under a clip. Keeping
@@ -131,62 +131,63 @@ i32 NODE_SIZE = 96;
 // width at the bottom: one rect for it plus one for a window near the top
 // would otherwise union into nearly the whole screen. When the list is
 // full, new areas merge into the first entry.
-i32 DAMAGE_MAX = 8;
-i32 g_damage_x0[8];
-i32 g_damage_y0[8];
-i32 g_damage_x1[8];
-i32 g_damage_y1[8];
-i32 g_damage_count = 0;
+export i32 DAMAGE_MAX = 8;
+export i32 g_damage_x0[8];
+export i32 g_damage_y0[8];
+export i32 g_damage_x1[8];
+export i32 g_damage_y1[8];
+export i32 g_damage_count = 0;
 
 // The rect render_scene is currently repainting, so node_in_damage can test
 // against just that one; g_painting_all short-circuits it for full paints.
-i32 g_paint_x0 = 0;
-i32 g_paint_y0 = 0;
-i32 g_paint_x1 = 0;
-i32 g_paint_y1 = 0;
-i32 g_painting_all = 1;
+export i32 g_paint_x0 = 0;
+export i32 g_paint_y0 = 0;
+export i32 g_paint_x1 = 0;
+export i32 g_paint_y1 = 0;
+export i32 g_painting_all = 1;
 
-i32 g_next_node_id = 1; // 0 is invalid/null
-i32 g_revision = 0;     // increments on externally observable DOM mutation
-i32 g_root_node_id = 0;
-i32 g_desktop_node_id = 0; // set in init(); UI attaches under this
-i32 g_taskbar_id = 0;      // the desktop's taskbar node, drawn above windows
-i32 g_timers_node_id = 0;  // structural parent for Timer nodes
+export i32 g_next_node_id = 1; // 0 is invalid/null
+export i32 g_revision = 0;     // increments on externally observable DOM mutation
+export i32 g_root_node_id = 0;
+export i32 g_desktop_node_id = 0; // set in init(); UI attaches under this
+export i32 g_taskbar_id = 0;      // the desktop's taskbar node, drawn above windows
+export i32 g_timers_node_id = 0;  // structural parent for Timer nodes
 
-i32 g_active_window = 0;   // window with STATE_FOCUSED (front-most, gets keys)
-i32 g_focus_id = 0;        // node with keyboard focus (a TextInput), or 0
-i32 g_launcher = 0;        // handler() for the taskbar's launcher button
-i32 g_menu_id = 0;         // the open popup menu, or 0
-i32 g_menu_handler = 0;    // handler(index) for the open menu
-i32 g_menu_target = 0;     // the window a window-menu acts on (0 for the desktop menu)
+export i32 g_active_window = 0;   // window with STATE_FOCUSED (front-most, gets keys)
+export i32 g_focus_id = 0;        // node with keyboard focus (a TextInput), or 0
+export i32 g_launcher = 0;        // handler() for the taskbar's launcher button
+export i32 g_menu_id = 0;         // the open popup menu, or 0
+export i32 g_menu_handler = 0;    // handler(index) for the open menu
+export i32 g_menu_target = 0;     // the window a window-menu acts on (0 for the desktop menu)
 
 // Up to 256 nodes for now to keep memory small
 // TODO: grow this table and Node.id to u32 when we need more than 256 nodes.
 Node *g_node_table[256];
+export Node **get_g_node_table() { return (Node**)(&g_node_table[0]); }
 
 // Registered timers (ids), scanned by tick().
-i32 TIMER_MAX = 16;
-i32 g_timer_ids[16];
-i32 g_timer_count = 0;
+export i32 TIMER_MAX = 16;
+export i32 g_timer_ids[16];
+export i32 g_timer_count = 0;
 
 // Scratch rectangle for helpers that hand back a rect (no multiple returns).
-i32 g_ext_x = 0;
-i32 g_ext_y = 0;
-i32 g_ext_w = 0;
-i32 g_ext_h = 0;
+export i32 g_ext_x = 0;
+export i32 g_ext_y = 0;
+export i32 g_ext_w = 0;
+export i32 g_ext_h = 0;
 
 // Formatted uptime clock for the taskbar.
-char g_clock_buf[16];
+export char g_clock_buf[16];
 
-void touch() { g_revision = g_revision + 1; }
+export void touch() { g_revision = g_revision + 1; }
 export i32 revision() { return g_revision; }
 
 // DOM markup uses logical 1024x768 coordinates. Scale it uniformly to the
 // physical display so its proportions remain intact on larger resolutions.
 // A display smaller than the base size keeps scale 1, avoiding zero-size
 // controls; responsive downscaling can be added when sub-pixel layout exists.
-i32 BASE_DISPLAY_WIDTH = 1024;
-i32 BASE_DISPLAY_HEIGHT = 768;
+export i32 BASE_DISPLAY_WIDTH = 1024;
+export i32 BASE_DISPLAY_HEIGHT = 768;
 
 export i32 ui_scale() {
     i32 sx = graphics.display_width() / BASE_DISPLAY_WIDTH;
@@ -197,12 +198,12 @@ export i32 ui_scale() {
     return scale;
 }
 
-i32 scale_ui(i32 value) {
+export i32 scale_ui(i32 value) {
     return value * ui_scale();
 }
 
 // Raw NodeId -> Node* boundary; 0 for an invalid or deleted id.
-Node* node_ptr(i32 id) {
+export Node* node_ptr(i32 id) {
     if (id <= 0) { return (Node*)0; }
     if (id >= g_next_node_id) { return (Node*)0; }
     return g_node_table[id];
@@ -338,7 +339,7 @@ export char* automation_value_of(i32 id) {
 // --- damage -------------------------------------------------------------------------
 
 // True if [ax0,ax1)x[ay0,ay1) and [bx0,bx1)x[by0,by1) overlap or touch.
-i32 rects_touch(i32 ax0, i32 ay0, i32 ax1, i32 ay1, i32 bx0, i32 by0, i32 bx1, i32 by1) {
+export i32 rects_touch(i32 ax0, i32 ay0, i32 ax1, i32 ay1, i32 bx0, i32 by0, i32 bx1, i32 by1) {
     if (ax1 < bx0) { return 0; }
     if (bx1 < ax0) { return 0; }
     if (ay1 < by0) { return 0; }
@@ -346,7 +347,7 @@ i32 rects_touch(i32 ax0, i32 ay0, i32 ax1, i32 ay1, i32 bx0, i32 by0, i32 bx1, i
     return 1;
 }
 
-void damage_union_into(i32 i, i32 x0, i32 y0, i32 x1, i32 y1) {
+export void damage_union_into(i32 i, i32 x0, i32 y0, i32 x1, i32 y1) {
     if (x0 < g_damage_x0[i]) { g_damage_x0[i] = x0; }
     if (y0 < g_damage_y0[i]) { g_damage_y0[i] = y0; }
     if (x1 > g_damage_x1[i]) { g_damage_x1[i] = x1; }
@@ -393,7 +394,7 @@ export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
 
 // The area a node paints, which for a window includes its drop shadow. The
 // result lands in g_ext_*.
-void node_extent(Node *n) {
+export void node_extent(Node *n) {
     i32 x = n->x;
     i32 y = n->y;
     i32 w = n->w;
@@ -433,21 +434,21 @@ export void clear_damage() {
 
 // --- text metrics ---------------------------------------------------------------------
 
-i32 text_bold(Node *n) {
+export i32 text_bold(Node *n) {
     i32 st = n->style;
     i32 b = STYLE_BOLD;
     if ((st & b) != 0) { return 1; }
     return 0;
 }
 
-i32 text_width_of(Node *n) {
+export i32 text_width_of(Node *n) {
     if (n->text == 0) { return 0; }
     i32 bold = text_bold(n);
     i32 s = ui_scale();
     return graphics.text_width((char*)n->text, bold, s);
 }
 
-i32 text_height_of(Node *n) {
+export i32 text_height_of(Node *n) {
     i32 bold = text_bold(n);
     i32 s = ui_scale();
     return graphics.text_height(bold, s);
@@ -456,7 +457,7 @@ i32 text_height_of(Node *n) {
 // --- layout ---------------------------------------------------------------------------------
 
 // Move a subtree by (dx, dy) without damage bookkeeping (callers damage).
-void offset_subtree(i32 id, i32 dx, i32 dy) {
+export void offset_subtree(i32 id, i32 dx, i32 dy) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
     n->x = (u16)(n->x + dx);
@@ -470,7 +471,7 @@ void offset_subtree(i32 id, i32 dx, i32 dy) {
 }
 
 // Move a child (and its subtree) so its top-left is at (x, y).
-void place_child(i32 child_id, i32 x, i32 y) {
+export void place_child(i32 child_id, i32 x, i32 y) {
     Node *child = node_ptr(child_id);
     if (child == 0) { return; }
     i32 dx = x - child->x;
@@ -488,9 +489,9 @@ void place_child(i32 child_id, i32 x, i32 y) {
 // relaid after their origin moves so their descendants follow along as well.
 // A zero-height child consumes no vertical space, which keeps structural
 // nodes inert in a layout (Text carries its measured height).
-void relayout_container(Node *n);
+export void relayout_container(Node *n);
 
-void relayout_column(Node *column) {
+export void relayout_column(Node *column) {
     i32 child_x = column->x + column->padding;
     i32 cursor_y = column->y + column->padding;
     i32 gap = column->gap;
@@ -510,7 +511,7 @@ void relayout_column(Node *column) {
 }
 
 // Lay out direct children left-to-right, top-aligned.
-void relayout_row(Node *row) {
+export void relayout_row(Node *row) {
     i32 cursor_x = row->x + row->padding;
     i32 child_y = row->y + row->padding;
     i32 gap = row->gap;
@@ -529,7 +530,7 @@ void relayout_row(Node *row) {
     }
 }
 
-void relayout_container(Node *n) {
+export void relayout_container(Node *n) {
     i32 kc = NODE_COLUMN;
     i32 kr = NODE_ROW;
     i32 k = n->kind;
@@ -648,7 +649,7 @@ export void set_column_layout(i32 id, i32 padding, i32 gap) {
 // True if changing `flag` on this node changes how it looks. Only controls
 // draw differently when hovered or pressed, so flagging a label as hovered
 // must not damage its area; windows repaint when focus changes (title bar).
-i32 state_is_visible(Node *n, i32 flag) {
+export i32 state_is_visible(Node *n, i32 flag) {
     i32 kind = n->kind;
     i32 kb = NODE_BUTTON;
     i32 kc = NODE_CHECKBOX;
@@ -766,7 +767,7 @@ export void set_on_change(i32 id, i32 handler) {
     n->on_change = handler;
 }
 
-void fire_change(Node *n) {
+export void fire_change(Node *n) {
     i32 handler = n->on_change;
     if (handler != 0) {
         i32 id = n->id;
@@ -799,7 +800,7 @@ export i32 dispatch_click(i32 id) {
 // Where a parent's children are positioned from: a window's content area
 // starts below its title bar, everything else at its own origin. Result in
 // g_ext_x / g_ext_y.
-void content_origin(Node *parent) {
+export void content_origin(Node *parent) {
     g_ext_x = parent->x;
     g_ext_y = parent->y;
     i32 kw = NODE_WINDOW;
@@ -846,7 +847,7 @@ export void append_child(i32 parent_id, i32 child_id) {
 }
 
 // Unlink a node from its parent's child list (no damage, no free).
-void unlink(Node *n) {
+export void unlink(Node *n) {
     Node *parent = node_ptr(n->parent);
     if (parent == 0) { return; }
     i32 id = n->id;
@@ -894,7 +895,7 @@ export void bring_to_front(i32 id) {
 
 // Nodes whose `text` is a heap buffer they allocated (TextInput/TextArea/
 // List/Menu); everyone else points at a string the caller owns.
-i32 owns_buffer(Node *n) {
+export i32 owns_buffer(Node *n) {
     i32 k = n->kind;
     i32 ki = NODE_TEXT_INPUT;
     i32 kta = NODE_TEXT_AREA;
@@ -907,7 +908,7 @@ i32 owns_buffer(Node *n) {
     return 0;
 }
 
-void free_subtree(i32 id) {
+export void free_subtree(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
     i32 child_id = n->first_child;
@@ -985,2018 +986,73 @@ export i32 window_of(i32 id) {
     return 0;
 }
 
-// --- focus / window management -----------------------------------------------------------
 
-// Height of the taskbar in display pixels (0 if none), so callers can keep
-// windows above it.
-export i32 taskbar_height() {
-    Node *n = node_ptr(g_taskbar_id);
-    if (n == 0) { return 0; }
-    return n->h;
-}
-
-export i32 active_window() {
-    return g_active_window;
-}
-
-export i32 focused_node() {
-    return g_focus_id;
-}
-
-// Keyboard focus. Only one node holds it; 0 clears it.
-export void set_focus(i32 id) {
-    if (id == g_focus_id) { return; }
-    if (g_focus_id != 0) { set_state_flag(g_focus_id, STATE_FOCUSED, 0); }
-    g_focus_id = 0;
-    Node *n = node_ptr(id);
-    if (n == 0) { return; }
-    g_focus_id = id;
-    set_state_flag(id, STATE_FOCUSED, 1);
-}
-
-// Make a window the active one: it comes to the front, gets the focused
-// title bar look, and keyboard focus leaves any control outside it.
-export void focus_window(i32 win) {
-    Node *n = node_ptr(win);
-    if (n == 0) { return; }
-    i32 kw = NODE_WINDOW;
-    if (n->kind != kw) { return; }
-    i32 minimized = STATE_MINIMIZED;
-    if ((n->state & minimized) != 0) {
-        set_state_flag(win, STATE_MINIMIZED, 0);
-        set_state_flag(win, STATE_VISIBLE, 1);
-    }
-    if (g_active_window != win) {
-        if (g_active_window != 0) { set_state_flag(g_active_window, STATE_FOCUSED, 0); }
-        g_active_window = win;
-        set_state_flag(win, STATE_FOCUSED, 1);
-        if (window_of(g_focus_id) != win) { set_focus(0); }
-        damage_node(g_taskbar_id); // the active entry's highlight moved
-    }
-    bring_to_front(win);
-}
-
-// After a window goes away, activate the top-most remaining one.
-void activate_topmost() {
-    i32 kw = NODE_WINDOW;
-    i32 minimized = STATE_MINIMIZED;
-    i32 top = 0;
-    i32 child_id = first_child(g_desktop_node_id);
-    while (child_id != 0) {
-        Node *c = node_ptr(child_id);
-        if (c == 0) { child_id = 0; }
-        else {
-            if (c->kind == kw) {
-                if ((c->state & minimized) == 0) { top = child_id; }
-            }
-            child_id = c->next_sibling;
-        }
-    }
-    if (top != 0) { focus_window(top); }
-    else { g_active_window = 0; }
-    damage_node(g_taskbar_id);
-}
-
-export void close_window(i32 win) {
-    remove_node(win);
-    activate_topmost();
-}
-
-// Change a window's size in place (its children stay anchored top-left;
-// they are clipped to the window). Enforces a minimum so the chrome stays
-// usable.
-export void resize_window(i32 win, i32 w, i32 h) {
-    Node *n = node_ptr(win);
-    if (n == 0) { return; }
-    i32 s = ui_scale();
-    i32 min_w = 200 * s;
-    i32 min_h = 120 * s;
-    if (w < min_w) { w = min_w; }
-    if (h < min_h) { h = min_h; }
-    damage_node(win);
-    n->w = (u16)w;
-    n->h = (u16)h;
-    damage_node(win);
-    touch();
-}
-
-// Hide a window to the taskbar. Its entry stays; clicking it (or
-// focus_window) brings it back.
-export void minimize_window(i32 win) {
-    Node *n = node_ptr(win);
-    if (n == 0) { return; }
-    set_state_flag(win, STATE_MINIMIZED, 1);
-    set_state_flag(win, STATE_VISIBLE, 0);
-    if (window_of(g_focus_id) == win) { set_focus(0); }
-    if (g_active_window == win) {
-        set_state_flag(win, STATE_FOCUSED, 0);
-        g_active_window = 0;
-        activate_topmost();
-    }
-    damage_node(g_taskbar_id);
-    touch();
-}
-
-export i32 is_minimized(i32 win) {
-    return get_state_flag(win, STATE_MINIMIZED);
-}
-
-export i32 is_maximized(i32 win) {
-    return get_state_flag(win, STATE_MAXIMIZED);
-}
-
-// Fill the desktop (above the taskbar), remembering the old bounds; a second
-// call restores them. Children move with the window and keep their size.
-export void maximize_window(i32 win) {
-    Node *n = node_ptr(win);
-    if (n == 0) { return; }
-    i32 maximized = STATE_MAXIMIZED;
-    if ((n->state & maximized) != 0) {
-        i32 rx = n->sx;
-        i32 ry = n->sy;
-        move_node(win, rx - n->x, ry - n->y);
-        resize_window(win, n->sw, n->sh);
-        set_state_flag(win, STATE_MAXIMIZED, 0);
-        return;
-    }
-    n->sx = n->x;
-    n->sy = n->y;
-    n->sw = n->w;
-    n->sh = n->h;
-    i32 dw = graphics.display_width();
-    i32 dh = graphics.display_height() - taskbar_height();
-    move_node(win, 0 - n->x, 0 - n->y);
-    resize_window(win, dw, dh);
-    set_state_flag(win, STATE_MAXIMIZED, 1);
-}
-
-// Chrome geometry, in display pixels. Three discs sit at the left of the
-// title bar -- close, minimize, maximize -- and the rest of the bar is the
-// drag handle. A resize grip occupies the bottom-right corner.
-i32 TB_BUTTON_CLOSE = 1;
-i32 TB_BUTTON_MINIMIZE = 2;
-i32 TB_BUTTON_MAXIMIZE = 3;
-i32 GRIP_SIZE = 16; // logical px
-
-i32 close_button_cx(Node *w) {
-    i32 s = ui_scale();
-    return w->x + 16 * s;
-}
-
-i32 tb_button_cx(Node *w, i32 which) {
-    i32 s = ui_scale();
-    return w->x + (16 + 20 * (which - 1)) * s;
-}
-
-i32 close_button_cy(Node *w) {
-    i32 s = ui_scale();
-    i32 tb = theme.titlebar_h() * s;
-    return w->y + tb / 2;
-}
-
-i32 close_button_r() {
-    return 7 * ui_scale();
-}
-
-// Which title-bar button (px, py) is on: 1 = close, 2 = minimize,
-// 3 = maximize, 0 = none.
-export i32 titlebar_button_hit(i32 win, i32 px, i32 py) {
-    Node *w = node_ptr(win);
-    if (w == 0) { return 0; }
-    i32 dy = py - close_button_cy(w);
-    i32 r = close_button_r() + 3 * ui_scale(); // a little slack
-    i32 which = 1;
-    while (which <= 3) {
-        i32 dx = px - tb_button_cx(w, which);
-        if (dx * dx + dy * dy <= r * r) { return which; }
-        which = which + 1;
-    }
-    return 0;
-}
-
-// True if (px, py) is on the window's close button.
-export i32 close_button_hit(i32 win, i32 px, i32 py) {
-    if (titlebar_button_hit(win, px, py) == 1) { return 1; }
-    return 0;
-}
-
-// True if (px, py) is on the resize grip in the window's bottom-right corner.
-export i32 resize_grip_hit(i32 win, i32 px, i32 py) {
-    Node *w = node_ptr(win);
-    if (w == 0) { return 0; }
-    i32 g = GRIP_SIZE * ui_scale();
-    if (px < w->x + w->w - g) { return 0; }
-    if (py < w->y + w->h - g) { return 0; }
-    if (px >= w->x + w->w) { return 0; }
-    if (py >= w->y + w->h) { return 0; }
-    return 1;
-}
-
-// True if (px, py) is in the window's title bar (excluding its buttons).
-export i32 titlebar_hit(i32 win, i32 px, i32 py) {
-    Node *w = node_ptr(win);
-    if (w == 0) { return 0; }
-    if (titlebar_button_hit(win, px, py) != 0) { return 0; }
-    i32 tb = theme.titlebar_h() * ui_scale();
-    if (px < w->x) { return 0; }
-    if (px >= w->x + w->w) { return 0; }
-    if (py < w->y) { return 0; }
-    if (py >= w->y + tb) { return 0; }
-    return 1;
-}
-
-// --- keyboard --------------------------------------------------------------------------------
-
-i32 KEY_BACKSPACE = 8;
-i32 KEY_TAB = 9;
-i32 KEY_ENTER = 13;
-i32 KEY_ESCAPE = 27;
-i32 KEY_SPACE = 32;
-i32 KEY_DELETE = 127;
-i32 KEY_LEFT = 0x101;
-i32 KEY_RIGHT = 0x102;
-i32 KEY_UP = 0x103;
-i32 KEY_DOWN = 0x104;
-i32 KEY_HOME = 0x105;
-i32 KEY_END = 0x106;
-i32 KEY_PAGE_UP = 0x107;
-i32 KEY_PAGE_DOWN = 0x108;
-i32 MOD_SHIFT = 1;
-i32 EVT_DOWN = 1;
-i32 EVT_CHAR = 3;
-
-void input_insert(Node *n, i32 c) {
-    i32 len = n->len;
-    i32 cap = n->cap;
-    if (len + 1 >= cap) { return; }
-    char *buf = (char*)n->text;
-    i32 cur = n->cursor;
-    i32 i = len;
-    while (i > cur) {
-        buf[i] = buf[i - 1];
-        i = i - 1;
-    }
-    buf[cur] = (char)c;
-    buf[len + 1] = (char)0;
-    n->len = (u16)(len + 1);
-    n->cursor = (u16)(cur + 1);
-}
-
-void input_delete_at(Node *n, i32 at) {
-    i32 len = n->len;
-    if (at < 0) { return; }
-    if (at >= len) { return; }
-    char *buf = (char*)n->text;
-    i32 i = at;
-    while (i < len - 1) {
-        buf[i] = buf[i + 1];
-        i = i + 1;
-    }
-    buf[len - 1] = (char)0;
-    n->len = (u16)(len - 1);
-}
-
-// Default editing behaviour of a TextInput. Returns 1 if the text changed,
-// 2 if only the caret moved, 0 if nothing happened.
-i32 input_handle(Node *n, i32 type, i32 code) {
-    i32 cur = n->cursor;
-    i32 len = n->len;
-    if (type == EVT_CHAR) {
-        if (code >= 0x20) {
-            if (code <= 0x7E) {
-                input_insert(n, code);
-                return 1;
-            }
-        }
-        return 0;
-    }
-    if (type != EVT_DOWN) { return 0; }
-    if (code == KEY_BACKSPACE) {
-        if (cur > 0) {
-            input_delete_at(n, cur - 1);
-            n->cursor = (u16)(cur - 1);
-            return 1;
-        }
-        return 0;
-    }
-    if (code == KEY_DELETE) {
-        if (cur < len) { input_delete_at(n, cur); return 1; }
-        return 0;
-    }
-    if (code == KEY_LEFT) {
-        if (cur > 0) { n->cursor = (u16)(cur - 1); }
-        return 2;
-    }
-    if (code == KEY_RIGHT) {
-        if (cur < len) { n->cursor = (u16)(cur + 1); }
-        return 2;
-    }
-    if (code == KEY_HOME) { n->cursor = 0; return 2; }
-    if (code == KEY_END) { n->cursor = (u16)len; return 2; }
-    return 0;
-}
-
-// Route one keyboard event (type = keyboard.EVT_*, code = key code or
-// character) to the focused node. A node's on_key handler, if set, sees DOWN
-// events first and can claim them by returning non-zero; otherwise text
-// inputs get their default editing behaviour.
-// --- multi-line text (TextArea) ---
-// The buffer holds the whole document with '\n' separators; `cursor` is a
-// byte index, `scroll` the first visible line. Editing shares the insert/
-// delete helpers with TextInput and adds newline, vertical movement and
-// keeping the caret's line in view.
-
-i32 is_readonly(Node *n) {
-    i32 st = n->style;
-    i32 ro = STYLE_READONLY;
-    if ((st & ro) != 0) { return 1; }
-    return 0;
-}
-
-// Line index containing byte offset `at`.
-i32 line_of(Node *n, i32 at) {
-    char *buf = (char*)n->text;
-    i32 line = 0;
-    i32 i = 0;
-    while (i < at) {
-        if (buf[i] == 10) { line = line + 1; }
-        i = i + 1;
-    }
-    return line;
-}
-
-// Byte offset of the start of `line` (len if past the end).
-i32 line_start(Node *n, i32 line) {
-    char *buf = (char*)n->text;
-    i32 len = n->len;
-    i32 i = 0;
-    i32 cur = 0;
-    while (cur < line) {
-        if (i >= len) { return len; }
-        if (buf[i] == 10) { cur = cur + 1; }
-        i = i + 1;
-    }
-    return i;
-}
-
-// Length of the line starting at `start` (up to the newline or the end).
-i32 line_len_at(Node *n, i32 start) {
-    char *buf = (char*)n->text;
-    i32 len = n->len;
-    i32 i = start;
-    while (i < len) {
-        if (buf[i] == 10) { return i - start; }
-        i = i + 1;
-    }
-    return len - start;
-}
-
-export i32 text_area_line_count(i32 id) {
-    Node *n = node_ptr(id);
-    if (n == 0) { return 0; }
-    return line_of(n, n->len) + 1;
-}
-
-// How many lines fit in the node's box.
-i32 visible_lines(Node *n) {
-    i32 s = ui_scale();
-    i32 pad = 8 * s;
-    i32 lh = graphics.text_height(0, s);
-    i32 rows = (n->h - 2 * pad) / lh;
-    if (rows < 1) { rows = 1; }
-    return rows;
-}
-
-// Scroll so the caret's line is visible.
-void text_area_reveal_cursor(Node *n) {
-    i32 line = line_of(n, n->cursor);
-    i32 rows = visible_lines(n);
-    i32 scroll = n->scroll;
-    if (line < scroll) { scroll = line; }
-    if (line >= scroll + rows) { scroll = line - rows + 1; }
-    n->scroll = (u16)scroll;
-}
-
-// Move the caret to the same column on line `line`.
-void text_area_goto_line(Node *n, i32 line) {
-    i32 total = line_of(n, n->len) + 1;
-    if (line < 0) { line = 0; }
-    if (line >= total) { line = total - 1; }
-    i32 cur_start = line_start(n, line_of(n, n->cursor));
-    i32 col = n->cursor - cur_start;
-    i32 start = line_start(n, line);
-    i32 llen = line_len_at(n, start);
-    if (col > llen) { col = llen; }
-    n->cursor = (u16)(start + col);
-}
-
-// Editing for a TextArea: 1 = text changed, 2 = caret/scroll moved, 0 = nothing.
-i32 text_area_handle(Node *n, i32 type, i32 code, i32 mods) {
-    i32 ro = is_readonly(n);
-    i32 cur = n->cursor;
-    i32 len = n->len;
-    if (type == EVT_CHAR) {
-        if (ro != 0) { return 0; }
-        if (code >= 0x20) {
-            if (code <= 0x7E) {
-                input_insert(n, code);
-                text_area_reveal_cursor(n);
-                return 1;
-            }
-        }
-        return 0;
-    }
-    if (type != EVT_DOWN) { return 0; }
-    if (code == KEY_ENTER) {
-        if (ro != 0) { return 0; }
-        input_insert(n, 10);
-        text_area_reveal_cursor(n);
-        return 1;
-    }
-    if (code == KEY_BACKSPACE) {
-        if (ro != 0) { return 0; }
-        if (cur > 0) {
-            input_delete_at(n, cur - 1);
-            n->cursor = (u16)(cur - 1);
-            text_area_reveal_cursor(n);
-            return 1;
-        }
-        return 0;
-    }
-    if (code == KEY_DELETE) {
-        if (ro != 0) { return 0; }
-        if (cur < len) { input_delete_at(n, cur); return 1; }
-        return 0;
-    }
-    if (code == KEY_LEFT) {
-        if (cur > 0) { n->cursor = (u16)(cur - 1); }
-        text_area_reveal_cursor(n);
-        return 2;
-    }
-    if (code == KEY_RIGHT) {
-        if (cur < len) { n->cursor = (u16)(cur + 1); }
-        text_area_reveal_cursor(n);
-        return 2;
-    }
-    if (code == KEY_UP) {
-        text_area_goto_line(n, line_of(n, cur) - 1);
-        text_area_reveal_cursor(n);
-        return 2;
-    }
-    if (code == KEY_DOWN) {
-        text_area_goto_line(n, line_of(n, cur) + 1);
-        text_area_reveal_cursor(n);
-        return 2;
-    }
-    if (code == KEY_PAGE_UP) {
-        text_area_goto_line(n, line_of(n, cur) - visible_lines(n));
-        text_area_reveal_cursor(n);
-        return 2;
-    }
-    if (code == KEY_PAGE_DOWN) {
-        text_area_goto_line(n, line_of(n, cur) + visible_lines(n));
-        text_area_reveal_cursor(n);
-        return 2;
-    }
-    if (code == KEY_HOME) {
-        n->cursor = (u16)line_start(n, line_of(n, cur));
-        return 2;
-    }
-    if (code == KEY_END) {
-        i32 start = line_start(n, line_of(n, cur));
-        n->cursor = (u16)(start + line_len_at(n, start));
-        return 2;
-    }
-    return 0;
-}
-
-// Append text to a TextArea (console output). When the buffer is full the
-// oldest lines are dropped. The view follows the end of the text.
-export void append_text(i32 id, char *s) {
-    Node *n = node_ptr(id);
-    if (n == 0) { return; }
-    i32 kta = NODE_TEXT_AREA;
-    if (n->kind != kta) { return; }
-    char *buf = (char*)n->text;
-    i32 cap = n->cap;
-    i32 add = 0;
-    while (s[add] != 0) { add = add + 1; }
-    i32 len = n->len;
-    if (len + add + 1 > cap) {
-        // Drop whole lines from the front until it fits (or everything).
-        i32 need = len + add + 1 - cap;
-        i32 drop = 0;
-        while (drop < len) {
-            if (drop >= need) {
-                if (buf[drop - 1] == 10) { break; }
-            }
-            drop = drop + 1;
-        }
-        i32 i = 0;
-        while (drop + i < len) {
-            buf[i] = buf[drop + i];
-            i = i + 1;
-        }
-        len = len - drop;
-        if (len < 0) { len = 0; }
-    }
-    i32 i = 0;
-    while (i < add) {
-        if (len + 1 >= cap) { break; }
-        buf[len] = s[i];
-        len = len + 1;
-        i = i + 1;
-    }
-    buf[len] = (char)0;
-    n->len = (u16)len;
-    n->cursor = (u16)len;
-    text_area_reveal_cursor(n);
-    damage_node(id);
-    touch();
-}
-
-// Append `count` raw bytes (from any address, e.g. a user process buffer
-// read by the kernel) to a TextArea. Bytes outside printable ASCII other
-// than newline are dropped.
-export void append_bytes(i32 id, i32 addr, i32 count) {
-    char tmp[64];
-    i32 n = 0;
-    i32 i = 0;
-    while (i < count) {
-        char *p = (char*)(addr + i);
-        i32 c = (i32)(*p) & 0xFF;
-        i32 keep = 0;
-        if (c == 10) { keep = 1; }
-        if (c >= 0x20) { if (c <= 0x7E) { keep = 1; } }
-        if (keep != 0) {
-            tmp[n] = (char)c;
-            n = n + 1;
-            if (n == 63) {
-                tmp[n] = (char)0;
-                append_text(id, &tmp[0]);
-                n = 0;
-            }
-        }
-        i = i + 1;
-    }
-    tmp[n] = (char)0;
-    if (n > 0) { append_text(id, &tmp[0]); }
-}
-
-export void clear_text_area(i32 id) {
-    Node *n = node_ptr(id);
-    if (n == 0) { return; }
-    if (owns_buffer(n) == 0) { return; }
-    char *buf = (char*)n->text;
-    buf[0] = (char)0;
-    n->len = 0;
-    n->cursor = 0;
-    n->scroll = 0;
-    n->sel = 0;
-    damage_node(id);
-    touch();
-}
-
-// Scroll a TextArea or List by `lines` (negative = up), clamped.
-export void scroll_by(i32 id, i32 lines) {
-    Node *n = node_ptr(id);
-    if (n == 0) { return; }
-    i32 kta = NODE_TEXT_AREA;
-    i32 kl = NODE_LIST;
-    if (n->kind != kta) { if (n->kind != kl) { return; } }
-    i32 total = line_of(n, n->len) + 1;
-    i32 rows = visible_lines(n);
-    i32 max_scroll = total - rows;
-    if (max_scroll < 0) { max_scroll = 0; }
-    i32 scroll = n->scroll + lines;
-    if (scroll < 0) { scroll = 0; }
-    if (scroll > max_scroll) { scroll = max_scroll; }
-    if (scroll != n->scroll) {
-        n->scroll = (u16)scroll;
-        damage_node(id);
-    }
-}
-
-// Mouse wheel over a node: scroll whatever under the pointer scrolls.
-export void dispatch_wheel(i32 id, i32 steps) {
-    if (steps == 0) { return; }
-    scroll_by(id, 0 - steps * 3);
-}
-
-// --- List ---
-// Items are newline-separated in the node's buffer; `sel` is the selected
-// row + 1. A click selects a row (on_change); clicking the selected row again
-// or pressing Enter activates it (on_click).
-
-export void list_set_items(i32 id, char *items) {
-    Node *n = node_ptr(id);
-    if (n == 0) { return; }
-    i32 kl = NODE_LIST;
-    if (n->kind != kl) { return; }
-    char *buf = (char*)n->text;
-    i32 cap = n->cap;
-    i32 i = 0;
-    while (items[i] != 0) {
-        if (i + 1 >= cap) { break; }
-        buf[i] = items[i];
-        i = i + 1;
-    }
-    buf[i] = (char)0;
-    n->len = (u16)i;
-    n->sel = 0;
-    n->scroll = 0;
-    damage_node(id);
-    touch();
-}
-
-// Selected row (0-based), or -1.
-export Option<i32> list_selected(i32 id) {
-    Node *n = node_ptr(id);
-    if (n == 0) { Option<i32> none = None; return none; }
-    if (n->sel == 0) { Option<i32> none = None; return none; }
-    Option<i32> hit = Some(n->sel - 1); return hit;
-}
-
-export i32 list_count(i32 id) {
-    Node *n = node_ptr(id);
-    if (n == 0) { return 0; }
-    if (n->len == 0) { return 0; }
-    return line_of(n, n->len) + 1;
-}
-
-// Copy item `index` into out (at most cap-1 bytes). Returns its length or -1.
-export i32 list_item(i32 id, i32 index, char *out, i32 cap) {
-    Node *n = node_ptr(id);
-    if (n == 0) { return 0 - 1; }
-    if (index < 0) { return 0 - 1; }
-    if (index >= list_count(id)) { return 0 - 1; }
-    i32 start = line_start(n, index);
-    i32 llen = line_len_at(n, start);
-    char *buf = (char*)n->text;
-    i32 i = 0;
-    while (i < llen) {
-        if (i + 1 >= cap) { break; }
-        out[i] = buf[start + i];
-        i = i + 1;
-    }
-    out[i] = (char)0;
-    return i;
-}
-
-export void list_select(i32 id, i32 index) {
-    Node *n = node_ptr(id);
-    if (n == 0) { return; }
-    i32 count = list_count(id);
-    if (index < 0) { n->sel = 0; }
-    else if (index >= count) { n->sel = 0; }
-    else {
-        n->sel = (u16)(index + 1);
-        // keep it in view
-        i32 rows = visible_lines(n);
-        i32 scroll = n->scroll;
-        if (index < scroll) { scroll = index; }
-        if (index >= scroll + rows) { scroll = index - rows + 1; }
-        n->scroll = (u16)scroll;
-    }
-    damage_node(id);
-    touch();
-}
-
-// Row under (px, py), or -1.
-export Option<i32> list_row_at(i32 id, i32 px, i32 py) {
-    Node *n = node_ptr(id);
-    if (n == 0) { Option<i32> none = None; return none; }
-    i32 s = ui_scale();
-    i32 pad = 8 * s;
-    i32 lh = graphics.text_height(0, s);
-    i32 rel = py - n->y - pad;
-    if (rel < 0) { Option<i32> none = None; return none; }
-    i32 row = rel / lh + n->scroll;
-    if (row >= list_count(id)) { Option<i32> none = None; return none; }
-    Option<i32> hit = Some(row); return hit;
-}
-
-// A click on a List at (px, py): select the row; a click on the already
-// selected row activates it. Menus use the same geometry.
-export void list_click(i32 id, i32 px, i32 py) {
-    Node *n = node_ptr(id);
-    if (n == 0) { return; }
-    i32 row = case list_row_at(id, px, py) of { Some(v) -> v; None -> ({ return; }); };
-    i32 was = n->sel - 1;
-    list_select(id, row);
-    if (row == was) {
-        i32 handler = n->on_click;
-        if (handler != 0) { handler(id); }
-    } else {
-        fire_change(n);
-    }
-}
-
-// Keyboard on a focused List: arrows move the selection, Enter activates.
-i32 list_handle(Node *n, i32 type, i32 code) {
-    if (type != EVT_DOWN) { return 0; }
-    i32 id = n->id;
-    i32 sel = n->sel - 1;
-    i32 count = list_count(id);
-    if (count == 0) { return 0; }
-    if (code == KEY_UP) {
-        if (sel > 0) { list_select(id, sel - 1); } else { list_select(id, 0); }
-        fire_change(n);
-        return 2;
-    }
-    if (code == KEY_DOWN) {
-        if (sel + 1 < count) { list_select(id, sel + 1); }
-        fire_change(n);
-        return 2;
-    }
-    if (code == KEY_HOME) { list_select(id, 0); fire_change(n); return 2; }
-    if (code == KEY_END) { list_select(id, count - 1); fire_change(n); return 2; }
-    if (code == KEY_ENTER) {
-        if (sel >= 0) {
-            i32 handler = n->on_click;
-            if (handler != 0) { handler(id); }
-        }
-        return 2;
-    }
-    return 0;
-}
-
-// --- popup menu ---
-// One menu at a time, a top-level node on the desktop drawn above everything.
-// Items are newline-separated; hovering highlights a row, clicking one calls
-// handler(index) after closing. Escape or a click elsewhere closes it.
-
-export void close_menu() {
-    if (g_menu_id == 0) { return; }
-    i32 id = g_menu_id;
-    g_menu_id = 0;
-    g_menu_handler = 0;
-    remove_node(id);
-    touch();
-}
-
-export i32 menu_id() {
-    return g_menu_id;
-}
-
-export i32 menu_target() {
-    return g_menu_target;
-}
-
-// Open a menu with its top-left at display (x, y). `target` is remembered
-// for the handler (menu_target()); a menu that would run off the display is
-// shifted back in.
-export i32 open_menu(i32 x, i32 y, char *items, i32 handler, i32 target) {
-    close_menu();
-    i32 s = ui_scale();
-    i32 count = 1;
-    i32 i = 0;
-    i32 widest = 0;
-    i32 line_w = 0;
-    while (items[i] != 0) {
-        if (items[i] == 10) {
-            count = count + 1;
-            line_w = 0;
-        } else {
-            line_w = line_w + 1;
-        }
-        i = i + 1;
-    }
-    i32 lh = graphics.text_height(0, s);
-    i32 pad = 8 * s;
-    i32 h = count * lh + 2 * pad;
-    i32 w = graphics.text_width(items, 0, s);
-    // text_width measures the whole string; a rough width from the longest
-    // item is enough for a menu, so measure per line instead.
-    w = 0;
-    i32 start = 0;
-    i32 j = 0;
-    while (1) {
-        if (items[j] == 10) {
-            items[j] = (char)0;
-            i32 lw = graphics.text_width(&items[start], 0, s);
-            items[j] = (char)10;
-            if (lw > w) { w = lw; }
-            start = j + 1;
-        } else if (items[j] == 0) {
-            i32 lw = graphics.text_width(&items[start], 0, s);
-            if (lw > w) { w = lw; }
-            break;
-        }
-        j = j + 1;
-    }
-    w = w + 4 * pad;
-    if (w < 140 * s) { w = 140 * s; }
-    i32 dw = graphics.display_width();
-    i32 dh = graphics.display_height();
-    if (x + w > dw) { x = dw - w; }
-    if (y + h > dh) { y = dh - h; }
-    if (x < 0) { x = 0; }
-    if (y < 0) { y = 0; }
-
-    i32 id = create_node(NODE_MENU, "menu");
-    set_role(id, ROLE_MENU);
-    Node *n = node_ptr(id);
-    i32 cap = i + 2;
-    char *buf = (char*)heap.alloc(cap);
-    i32 k = 0;
-    while (k < i) { buf[k] = items[k]; k = k + 1; }
-    buf[i] = (char)0;
-    n->text = buf;
-    n->cap = (u16)cap;
-    n->len = (u16)i;
-    n->x = (u16)x;
-    n->y = (u16)y;
-    n->w = (u16)w;
-    n->h = (u16)h;
-    n->sel = 0;
-    n->on_change = 0;
-    set_state_flag(id, STATE_VISIBLE, 1);
-    set_state_flag(id, STATE_HIT_TESTABLE, 1);
-    // Appended to the desktop like a window, but painted last (see
-    // paint_desktop) and hit-tested first (see find_at).
-    append_child(g_desktop_node_id, id);
-    // append_child translated by the desktop origin (0,0): bounds stand.
-    g_menu_id = id;
-    g_menu_handler = handler;
-    g_menu_target = target;
-    touch();
-    return id;
-}
-
-// Hover moves the highlight; a click picks the row.
-export void menu_hover(i32 px, i32 py) {
-    i32 id = g_menu_id;
-    Node *n = node_ptr(id);
-    if (n == 0) { return; }
-    i32 row = case list_row_at(id, px, py) of { Some(v) -> v; None -> 0 - 1; };
-    i32 next = row + 1;
-    if (row < 0) { next = 0; }
-    if (next != n->sel) {
-        n->sel = (u16)next;
-        damage_node(id);
-    }
-}
-
-export void menu_click(i32 px, i32 py) {
-    i32 id = g_menu_id;
-    if (id == 0) { return; }
-    i32 row = case list_row_at(id, px, py) of { Some(v) -> v; None -> 0 - 1; };
-    i32 handler = g_menu_handler;
-    close_menu();
-    if (row >= 0) {
-        if (handler != 0) { handler(row); }
-    }
-}
-
-// --- Tab focus ---
-// Focusable controls are visited in tree order within the active window.
-
-i32 is_focusable(Node *n) {
-    i32 k = n->kind;
-    i32 ki = NODE_TEXT_INPUT;
-    i32 kta = NODE_TEXT_AREA;
-    i32 kb = NODE_BUTTON;
-    i32 kc = NODE_CHECKBOX;
-    i32 kl = NODE_LIST;
-    i32 visible = STATE_VISIBLE;
-    if ((n->state & visible) == 0) { return 0; }
-    if (k == ki) { return 1; }
-    if (k == kta) { return 1; }
-    if (k == kb) { return 1; }
-    if (k == kc) { return 1; }
-    if (k == kl) { return 1; }
-    return 0;
-}
-
-// Depth-first walk collecting focusable ids into g_focus_ring.
-i32 FOCUS_MAX = 64;
-i32 g_focus_ring[64];
-i32 g_focus_ring_count = 0;
-
-void collect_focusable(i32 id) {
-    Node *n = node_ptr(id);
-    if (n == 0) { return; }
-    if (is_focusable(n) != 0) {
-        if (g_focus_ring_count < FOCUS_MAX) {
-            g_focus_ring[g_focus_ring_count] = id;
-            g_focus_ring_count = g_focus_ring_count + 1;
-        }
-    }
-    i32 child = n->first_child;
-    while (child != 0) {
-        collect_focusable(child);
-        child = next_sibling(child);
-    }
-}
-
-// Move keyboard focus to the next (or previous) control in the active window.
-export void focus_next(i32 backwards) {
-    i32 win = g_active_window;
-    if (win == 0) { return; }
-    g_focus_ring_count = 0;
-    collect_focusable(win);
-    if (g_focus_ring_count == 0) { return; }
-    i32 idx = 0 - 1;
-    i32 i = 0;
-    while (i < g_focus_ring_count) {
-        if (g_focus_ring[i] == g_focus_id) { idx = i; }
-        i = i + 1;
-    }
-    if (backwards != 0) {
-        idx = idx - 1;
-        if (idx < 0) { idx = g_focus_ring_count - 1; }
-    } else {
-        idx = idx + 1;
-        if (idx >= g_focus_ring_count) { idx = 0; }
-    }
-    set_focus(g_focus_ring[idx]);
-}
-
-// Route one keyboard event (type = keyboard.EVT_*, code = key code or
-// character) to the focused node. Escape closes an open menu; Tab moves
-// focus. A node's on_key handler, if set, sees DOWN events first and can
-// claim them by returning non-zero; otherwise the control's default
-// behaviour runs (text editing, list navigation, Enter/Space on buttons).
-export void dispatch_key_event(i32 type, i32 code, i32 mods) {
-    if (type == EVT_DOWN) {
-        if (code == KEY_ESCAPE) {
-            if (g_menu_id != 0) { close_menu(); return; }
-        }
-        if (code == KEY_TAB) {
-            focus_next(mods & MOD_SHIFT);
-            return;
-        }
-    }
-    Node *n = node_ptr(g_focus_id);
-    if (n == 0) { return; }
-    i32 id = g_focus_id;
-    if (type == EVT_DOWN) {
-        i32 handler = n->on_key;
-        if (handler != 0) {
-            i32 claimed = handler(id, code, mods);
-            if (claimed != 0) { return; }
-        }
-    }
-    i32 kind = n->kind;
-    i32 ki = NODE_TEXT_INPUT;
-    i32 kta = NODE_TEXT_AREA;
-    i32 kl = NODE_LIST;
-    i32 kb = NODE_BUTTON;
-    i32 kc = NODE_CHECKBOX;
-    if (kind == ki) {
-        i32 r = input_handle(n, type, code);
-        if (r != 0) { damage_node(id); touch(); }
-        if (r == 1) { fire_change(n); }
-        return;
-    }
-    if (kind == kta) {
-        i32 r = text_area_handle(n, type, code, mods);
-        if (r != 0) { damage_node(id); touch(); }
-        if (r == 1) { fire_change(n); }
-        return;
-    }
-    if (kind == kl) {
-        list_handle(n, type, code);
-        return;
-    }
-    if (type == EVT_DOWN) {
-        if (kind == kb) {
-            if (code == KEY_ENTER) { dispatch_click(id); return; }
-            if (code == KEY_SPACE) { dispatch_click(id); return; }
-        }
-        if (kind == kc) {
-            if (code == KEY_SPACE) { dispatch_click(id); return; }
-        }
-    }
-}
-
-// Replace a TextInput's contents (truncated to its capacity).
-export void set_input_text(i32 id, char *s) {
-    Node *n = node_ptr(id);
-    if (n == 0) { return; }
-    i32 ki = NODE_TEXT_INPUT;
-    if (n->kind != ki) { return; }
-    char *buf = (char*)n->text;
-    i32 cap = n->cap;
-    i32 i = 0;
-    while (s[i] != 0) {
-        if (i + 1 >= cap) { break; }
-        buf[i] = s[i];
-        i = i + 1;
-    }
-    buf[i] = (char)0;
-    n->len = (u16)i;
-    n->cursor = (u16)i;
-    damage_node(id);
-    touch();
-}
-
-// --- timers --------------------------------------------------------------------------------------
-
-// Fire every registered timer whose period has elapsed. The compositor calls
-// this once per pass; handlers run on the compositor task.
-export void tick() {
-    i32 now = scheduler.ticks();
-    i32 i = 0;
-    while (i < g_timer_count) {
-        i32 id = g_timer_ids[i];
-        Node *t = node_ptr(id);
-        if (t != 0) {
-            if (now >= t->next_due) {
-                t->next_due = now + t->interval;
-                i32 handler = t->on_tick;
-                if (handler != 0) { handler(id); }
-            }
-        }
-        i = i + 1;
-    }
-}
-
-export i32 create_timer(i32 interval, i32 handler) {
-    i32 id = create_node(NODE_TIMER, "timer");
-    Node *t = node_ptr(id);
-    t->interval = interval;
-    t->on_tick = handler;
-    t->next_due = scheduler.ticks() + interval;
-    if (g_timer_count < TIMER_MAX) {
-        g_timer_ids[g_timer_count] = id;
-        g_timer_count = g_timer_count + 1;
-    }
-    return id;
-}
-
-// --- UI node create helpers ------------------------------------------------------------------
-// Each sets kind + role + bounds + text + default state (visible/enabled) in one
-// call. Coordinates are logical (1024x768) and relative to the parent the node
-// is later appended to.
-
-// Note: NODE_*/ROLE_*/STATE_* are `export u16` globals; pass them bare as
-// function args. Casting them like (i32)STATE_VISIBLE makes semantic report
-// `undefined identifier` (see docs/DOM_SPEC.md), so no casts here.
-export i32 create_window(char *title, i32 x, i32 y, i32 w, i32 h) {
-    i32 id = create_node(NODE_WINDOW, title);
-    set_role(id, ROLE_WINDOW);
-    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
-    set_text(id, title);
-    set_state_flag(id, STATE_VISIBLE, 1);
-    set_state_flag(id, STATE_ENABLED, 1);
-    set_state_flag(id, STATE_HIT_TESTABLE, 1); // body clicks focus the window
-    return id;
-}
-
-export i32 create_button(char *label, i32 x, i32 y, i32 w, i32 h) {
-    i32 id = create_node(NODE_BUTTON, label);
-    set_role(id, ROLE_BUTTON);
-    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
-    set_text(id, label);
-    set_state_flag(id, STATE_VISIBLE, 1);
-    set_state_flag(id, STATE_ENABLED, 1);
-    set_state_flag(id, STATE_HIT_TESTABLE, 1);
-    return id;
-}
-
-export i32 create_text(char *text, i32 x, i32 y) {
-    i32 id = create_node(NODE_TEXT, text);
-    set_role(id, ROLE_TEXT);
-    set_bounds(id, scale_ui(x), scale_ui(y), 0, 0);
-    set_text(id, text);
-    set_state_flag(id, STATE_VISIBLE, 1);
-    return id;
-}
-
-// A Box is a visual grouping primitive. It has no accessibility role and is
-// not hit-testable by default, so decoration never obscures a Button within it.
-export i32 create_box(i32 x, i32 y, i32 w, i32 h,
-                      i32 background, i32 border) {
-    i32 id = create_node(NODE_BOX, "box");
-    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
-    set_colors(id, background, border);
-    set_state_flag(id, STATE_VISIBLE, 1);
-    return id;
-}
-
-// A Panel is a themed rounded card; its children are clipped to it.
-export i32 create_panel(i32 x, i32 y, i32 w, i32 h, i32 radius) {
-    i32 id = create_node(NODE_PANEL, "panel");
-    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
-    Node *n = node_ptr(id);
-    n->radius = (u16)scale_ui(radius);
-    set_state_flag(id, STATE_VISIBLE, 1);
-    return id;
-}
-
-// A Column is a visible-to-the-renderer layout container: it draws nothing of
-// its own, but visibility gates all descendants. When a child is appended its
-// x/y are recomputed from this origin, padding, and the preceding child sizes.
-export i32 create_column(i32 x, i32 y, i32 w, i32 h,
-                         i32 padding, i32 gap) {
-    i32 id = create_node(NODE_COLUMN, "column");
-    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
-    set_column_layout(id, scale_ui(padding), scale_ui(gap));
-    set_state_flag(id, STATE_VISIBLE, 1);
-    return id;
-}
-
-export i32 create_row(i32 x, i32 y, i32 w, i32 h,
-                      i32 padding, i32 gap) {
-    i32 id = create_node(NODE_ROW, "row");
-    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
-    set_column_layout(id, scale_ui(padding), scale_ui(gap));
-    set_state_flag(id, STATE_VISIBLE, 1);
-    return id;
-}
-
-// A single-line text field. `placeholder` shows while empty; the node owns a
-// heap buffer of `capacity` bytes (including the terminator).
-export i32 create_text_input(char *placeholder, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
-    if (capacity < 2) { capacity = 2; }
-    i32 id = create_node(NODE_TEXT_INPUT, placeholder);
-    set_role(id, ROLE_TEXTBOX);
-    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
-    Node *n = node_ptr(id);
-    char *buf = (char*)heap.alloc(capacity);
-    buf[0] = (char)0;
-    n->text = buf;
-    n->cap = (u16)capacity;
-    n->len = 0;
-    n->cursor = 0;
-    set_state_flag(id, STATE_VISIBLE, 1);
-    set_state_flag(id, STATE_ENABLED, 1);
-    set_state_flag(id, STATE_HIT_TESTABLE, 1);
-    return id;
-}
-
-export i32 create_checkbox(char *label, i32 x, i32 y, i32 checked) {
-    i32 id = create_node(NODE_CHECKBOX, label);
-    set_role(id, ROLE_CHECKBOX);
-    i32 s = ui_scale();
-    i32 box = theme.checkbox_size() * s;
-    i32 tw = graphics.text_width(label, 0, s);
-    i32 th = graphics.text_height(0, s);
-    i32 h = box;
-    if (th > h) { h = th; }
-    set_bounds(id, scale_ui(x), scale_ui(y), box + 8 * s + tw, h);
-    set_text(id, label);
-    set_state_flag(id, STATE_VISIBLE, 1);
-    set_state_flag(id, STATE_ENABLED, 1);
-    set_state_flag(id, STATE_HIT_TESTABLE, 1);
-    set_state_flag(id, STATE_CHECKED, checked);
-    return id;
-}
-
-export i32 create_separator(i32 x, i32 y, i32 w) {
-    i32 id = create_node(NODE_SEPARATOR, "separator");
-    set_role(id, ROLE_SEPARATOR);
-    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), ui_scale());
-    set_state_flag(id, STATE_VISIBLE, 1);
-    return id;
-}
-
-// Multi-line text. `capacity` bytes of heap (including the terminator);
-// readonly != 0 makes it a display-only console that append_text feeds.
-export i32 create_text_area(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 readonly) {
-    if (capacity < 2) { capacity = 2; }
-    i32 id = create_node(NODE_TEXT_AREA, name);
-    set_role(id, ROLE_TEXTAREA);
-    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
-    Node *n = node_ptr(id);
-    char *buf = (char*)heap.alloc(capacity);
-    buf[0] = (char)0;
-    n->text = buf;
-    n->cap = (u16)capacity;
-    n->len = 0;
-    n->cursor = 0;
-    n->scroll = 0;
-    if (readonly != 0) { set_style(id, STYLE_READONLY); }
-    set_state_flag(id, STATE_VISIBLE, 1);
-    set_state_flag(id, STATE_ENABLED, 1);
-    set_state_flag(id, STATE_HIT_TESTABLE, 1);
-    return id;
-}
-
-// A selectable list of rows (see list_set_items).
-export i32 create_list(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
-    if (capacity < 2) { capacity = 2; }
-    i32 id = create_node(NODE_LIST, name);
-    set_role(id, ROLE_LIST);
-    set_bounds(id, scale_ui(x), scale_ui(y), scale_ui(w), scale_ui(h));
-    Node *n = node_ptr(id);
-    char *buf = (char*)heap.alloc(capacity);
-    buf[0] = (char)0;
-    n->text = buf;
-    n->cap = (u16)capacity;
-    n->len = 0;
-    n->sel = 0;
-    n->scroll = 0;
-    set_state_flag(id, STATE_VISIBLE, 1);
-    set_state_flag(id, STATE_ENABLED, 1);
-    set_state_flag(id, STATE_HIT_TESTABLE, 1);
-    return id;
-}
-
-// ---------------------------------------------------------------------------
-// DOM syntax elements.
-//
-// `<Window title="A" x={0} y={0} w={1} h={1}/>` in a .dom.mln source lowers to
-// a call to the function of the same name, with each property handed to the
-// parameter of the same name, and children passed to append_child. The element
-// vocabulary therefore lives here rather than in the compiler: adding an
-// element means adding a function, and its parameters are its properties.
-// ---------------------------------------------------------------------------
-
-export i32 Window(char *title, i32 x, i32 y, i32 w, i32 h) {
-    return create_window(title, x, y, w, h);
-}
-
-export i32 Button(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
-    i32 id = create_button(text, x, y, w, h);
-    set_on_click(id, onClick);
-    return id;
-}
-
-// Accent-coloured call to action.
-export i32 PrimaryButton(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
-    i32 id = create_button(text, x, y, w, h);
-    set_on_click(id, onClick);
-    set_style(id, STYLE_PRIMARY);
-    return id;
-}
-
-export i32 Text(char *text, i32 x, i32 y) {
-    return create_text(text, x, y);
-}
-
-// Text with an explicit colour (graphics.rgb(); 0 = theme default) and weight.
-export i32 Label(char *text, i32 x, i32 y, i32 color, i32 bold) {
-    i32 id = create_text(text, x, y);
-    if (bold != 0) { set_style(id, STYLE_BOLD); }
-    set_color(id, color);
-    return id;
-}
-
-export i32 Box(i32 x, i32 y, i32 w, i32 h,
-               i32 background, i32 border) {
-    return create_box(x, y, w, h, background, border);
-}
-
-export i32 Panel(i32 x, i32 y, i32 w, i32 h, i32 radius) {
-    return create_panel(x, y, w, h, radius);
-}
-
-export i32 Column(i32 x, i32 y, i32 w, i32 h,
-                  i32 padding, i32 gap) {
-    return create_column(x, y, w, h, padding, gap);
-}
-
-export i32 Row(i32 x, i32 y, i32 w, i32 h,
-               i32 padding, i32 gap) {
-    return create_row(x, y, w, h, padding, gap);
-}
-
-export i32 TextInput(char *placeholder, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 onChange) {
-    i32 id = create_text_input(placeholder, x, y, w, h, capacity);
-    set_on_change(id, onChange);
-    return id;
-}
-
-export i32 Checkbox(char *text, i32 x, i32 y, i32 checked, i32 onClick) {
-    i32 id = create_checkbox(text, x, y, checked);
-    set_on_click(id, onClick);
-    return id;
-}
-
-export i32 Separator(i32 x, i32 y, i32 w) {
-    return create_separator(x, y, w);
-}
-
-export i32 Timer(i32 interval, i32 onTick) {
-    return create_timer(interval, onTick);
-}
-
-export i32 TextArea(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 readonly, i32 onChange) {
-    i32 id = create_text_area(name, x, y, w, h, capacity, readonly);
-    set_on_change(id, onChange);
-    return id;
-}
-
-// onChange fires when the selection moves, onActivate (stored as the click
-// handler) when a row is clicked again or Enter is pressed.
-export i32 List(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 onChange, i32 onActivate) {
-    i32 id = create_list(name, x, y, w, h, capacity);
-    set_on_change(id, onChange);
-    set_on_click(id, onActivate);
-    return id;
-}
-
-// The human-readable dump (dump()), the JSON snapshot, and the automation
-// bridge (write_automation_snapshot/write_automation_hit_test) moved to
-// dom_automation.mln -- they only walk the tree through accessors above,
-// never touch tree state, and made this file harder to find things in.
-// role_name() stays here because it compares against ROLE_*, and an
-// `export u16` global doesn't resolve as a cross-package symbol (see
-// set_hovered() and friends above); dom_automation.mln calls dom.role_name().
-export char* role_name(i32 role) {
-    i32 r_root = ROLE_ROOT;
-    i32 r_desktop = ROLE_DESKTOP;
-    i32 r_window = ROLE_WINDOW;
-    i32 r_button = ROLE_BUTTON;
-    i32 r_text = ROLE_TEXT;
-    i32 r_textbox = ROLE_TEXTBOX;
-    i32 r_checkbox = ROLE_CHECKBOX;
-    i32 r_toolbar = ROLE_TOOLBAR;
-    i32 r_separator = ROLE_SEPARATOR;
-    i32 r_textarea = ROLE_TEXTAREA;
-    i32 r_list = ROLE_LIST;
-    i32 r_menu = ROLE_MENU;
-    if (role == r_textarea) { return "textarea"; }
-    if (role == r_list) { return "list"; }
-    if (role == r_menu) { return "menu"; }
-    if (role == r_root) { return "root"; }
-    if (role == r_desktop) { return "desktop"; }
-    if (role == r_window) { return "window"; }
-    if (role == r_button) { return "button"; }
-    if (role == r_text) { return "text"; }
-    if (role == r_textbox) { return "textbox"; }
-    if (role == r_checkbox) { return "checkbox"; }
-    if (role == r_toolbar) { return "toolbar"; }
-    if (role == r_separator) { return "separator"; }
-    return "none";
-}
-
-
-// --- renderer ---------------------------------------------------------------------------------
-// Walk the UI subtree and paint each node with graphics.*. The renderer and
-// the window manager are one: z-order is sibling order (later siblings on
-// top), and hover/pressed/focus looks come from the node's state bitmask.
-// Colours and metrics come from theme.mln.
-//
-// Theme values are fetched into locals before use because a cross-package
-// call nested inside another package's argument list does not resolve.
-
-i32 node_fg(Node *n, i32 fallback) {
-    i32 c = n->color;
-    if (c != 0) { return c; }
-    return fallback;
-}
-
-void draw_window(Node *n) {
-    i32 s = ui_scale();
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 w = n->w;
-    i32 h = n->h;
-    i32 state = n->state;
-    i32 focused_bit = STATE_FOCUSED;
-    i32 hovered_bit = STATE_HOVERED;
-    i32 active = state & focused_bit;
-    i32 hovered = state & hovered_bit;
-
-    i32 r = theme.window_radius() * s;
-    i32 tb = theme.titlebar_h() * s;
-
-    // Shadow first, then the body over it.
-    i32 shadow = theme.shadow_size() * s;
-    i32 shadow_off = theme.shadow_offset() * s;
-    i32 shadow_a = theme.shadow_alpha();
-    if (active == 0) { shadow_a = theme.shadow_alpha_inactive(); }
-    graphics.draw_shadow(x, y, w, h, r, shadow, shadow_off, shadow_a);
-
-    i32 bg = theme.window_bg();
-    graphics.fill_round_rect(x, y, w, h, r, bg);
-
-    // Title bar: rounded on top, squared off where it meets the content.
-    i32 tb_top = theme.titlebar_top();
-    i32 tb_bottom = theme.titlebar_bottom();
-    if (active == 0) {
-        tb_top = theme.titlebar_inactive();
-        tb_bottom = tb_top;
-    }
-    graphics.push_clip(x, y, w, tb);
-    graphics.fill_round_rect(x, y, w, tb + r, r, tb_top);
-    graphics.fill_gradient_v(x + r, y, w - 2 * r, tb, tb_top, tb_bottom);
-    graphics.fill_gradient_v(x, y + r, r, tb - r, tb_top, tb_bottom);
-    graphics.fill_gradient_v(x + w - r, y + r, r, tb - r, tb_top, tb_bottom);
-    graphics.pop_clip();
-    i32 divider = theme.titlebar_divider();
-    graphics.blend_rect(x, y + tb - s, w, s, divider);
-
-    // Title-bar buttons: close, minimize, maximize discs; their glyphs
-    // (x, -, +) appear while the pointer is over the window.
-    i32 cx = close_button_cx(n);
-    i32 cy = close_button_cy(n);
-    i32 cr = close_button_r();
-    i32 ring = theme.close_button_ring();
-    i32 g = theme.close_glyph();
-    i32 k = cr / 2;
-    i32 which = 1;
-    while (which <= 3) {
-        i32 bx = tb_button_cx(n, which);
-        i32 face = theme.close_button();
-        if (which == 2) { face = theme.minimize_button(); }
-        if (which == 3) { face = theme.maximize_button(); }
-        if (active == 0) { face = theme.close_button_inactive(); }
-        graphics.fill_disc(bx, cy, cr, face);
-        graphics.draw_round_rect(bx - cr, cy - cr, 2 * cr, 2 * cr, cr, s, ring);
-        if (hovered != 0) {
-            if (which == 1) {
-                graphics.draw_line(bx - k, cy - k, bx + k, cy + k, g);
-                graphics.draw_line(bx + k, cy - k, bx - k, cy + k, g);
-                graphics.draw_line(bx - k + 1, cy - k, bx + k + 1, cy + k, g);
-                graphics.draw_line(bx + k + 1, cy - k, bx - k + 1, cy + k, g);
-            }
-            if (which == 2) {
-                graphics.fill_rect(bx - k, cy - s / 2, 2 * k + 1, s + 1, g);
-            }
-            if (which == 3) {
-                graphics.fill_rect(bx - k, cy - s / 2, 2 * k + 1, s + 1, g);
-                graphics.fill_rect(bx - s / 2, cy - k, s + 1, 2 * k + 1, g);
-            }
-        }
-        which = which + 1;
-    }
-
-    // Resize grip: three short diagonal lines in the bottom-right corner.
-    i32 grip = theme.text_disabled();
-    i32 gx = x + w - 4 * s;
-    i32 gy = y + h - 4 * s;
-    i32 d = 4 * s;
-    while (d <= 12 * s) {
-        graphics.draw_line(gx - d, gy, gx, gy - d, grip);
-        d = d + 4 * s;
-    }
-
-    // Title, centred, kept clear of the buttons.
-    if (n->text != 0) {
-        i32 title_color = theme.text_primary();
-        if (active == 0) { title_color = theme.text_secondary(); }
-        i32 th = graphics.text_height(1, s);
-        i32 inset = 2 * (tb_button_cx(n, 3) - x);
-        graphics.push_clip(x + inset, y, w - 2 * inset, tb);
-        graphics.draw_label_centered(x, y + (tb - th) / 2, w, (char*)n->text, title_color, 1, s);
-        graphics.pop_clip();
-    }
-
-    // Border last so it sits over the title bar edge.
-    i32 border = theme.window_border();
-    if (active == 0) { border = theme.window_border_inactive(); }
-    graphics.draw_round_rect(x, y, w, h, r, s, border);
-}
-
-void draw_button(Node *n) {
-    i32 s = ui_scale();
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 w = n->w;
-    i32 h = n->h;
-    i32 state = n->state;
-    i32 pressed_bit = STATE_PRESSED;
-    i32 hovered_bit = STATE_HOVERED;
-    i32 primary_bit = STYLE_PRIMARY;
-    i32 style = n->style;
-    i32 r = theme.button_radius() * s;
-
-    i32 face = theme.button_face();
-    i32 label = theme.text_primary();
-    i32 border = theme.button_border();
-    if ((style & primary_bit) != 0) {
-        face = theme.accent();
-        label = theme.on_accent();
-        border = theme.accent_pressed();
-        if ((state & pressed_bit) != 0) { face = theme.accent_pressed(); }
-        else if ((state & hovered_bit) != 0) { face = theme.accent_hover(); }
-    } else {
-        if ((state & pressed_bit) != 0) { face = theme.button_face_pressed(); }
-        else if ((state & hovered_bit) != 0) { face = theme.button_face_hover(); }
-    }
-    label = node_fg(n, label);
-
-    graphics.fill_round_rect(x, y, w, h, r, face);
-    graphics.draw_round_rect(x, y, w, h, r, s, border);
-    i32 focused_bit = STATE_FOCUSED;
-    if ((state & focused_bit) != 0) {
-        // Keyboard focus ring just outside the button.
-        i32 ring = theme.accent();
-        graphics.draw_round_rect(x - 2 * s, y - 2 * s, w + 4 * s, h + 4 * s, r + 2 * s, s, ring);
-    }
-    if (n->text != 0) {
-        i32 th = graphics.text_height(0, s);
-        graphics.push_clip(x, y, w, h);
-        graphics.draw_label_centered(x, y + (h - th) / 2, w, (char*)n->text, label, 0, s);
-        graphics.pop_clip();
-    }
-}
-
-// --- TextArea / List / Menu rendering ---
-// All three are rows of text inside a rounded box; the list and menu add a
-// selection/hover highlight, the text area a caret.
-
-// Copy line bytes [start, start+llen) into out (bounded, NUL-terminated).
-// The renderer runs on the compositor task while append_text can run from a
-// syscall on the kernel task; terminating the shared buffer in place to draw
-// a line raced with those writes and corrupted the text, so drawing copies.
-void copy_line(char *buf, i32 start, i32 llen, char *out, i32 cap) {
-    i32 i = 0;
-    while (i < llen) {
-        if (i + 1 >= cap) { break; }
-        out[i] = buf[start + i];
-        i = i + 1;
-    }
-    out[i] = (char)0;
-}
-
-void draw_rows_box(Node *n, i32 focused) {
-    i32 s = ui_scale();
-    i32 r = theme.input_radius() * s;
-    i32 bg = theme.input_bg();
-    graphics.fill_round_rect(n->x, n->y, n->w, n->h, r, bg);
-    i32 border = theme.input_border();
-    i32 bw = s;
-    if (focused != 0) {
-        border = theme.input_border_focus();
-        bw = 2 * s;
-    }
-    graphics.draw_round_rect(n->x, n->y, n->w, n->h, r, bw, border);
-}
-
-void draw_text_area(Node *n) {
-    i32 s = ui_scale();
-    i32 state = n->state;
-    i32 focused_bit = STATE_FOCUSED;
-    i32 focused = state & focused_bit;
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 w = n->w;
-    i32 h = n->h;
-    i32 pad = 8 * s;
-    i32 lh = graphics.text_height(0, s);
-    draw_rows_box(n, focused);
-
-    i32 fg = theme.text_primary();
-    fg = node_fg(n, fg);
-    i32 ro = is_readonly(n);
-    char *buf = (char*)n->text;
-    i32 len = n->len;
-    graphics.push_clip(x + s, y + s, w - 2 * s, h - 2 * s);
-    i32 rows = visible_lines(n);
-    i32 first = n->scroll;
-    i32 start = line_start(n, first);
-    i32 row = 0;
-    i32 caret_x = 0 - 1;
-    i32 caret_y = 0;
-    while (row < rows) {
-        if (start > len) { break; }
-        i32 llen = line_len_at(n, start);
-        i32 ty = y + pad + row * lh;
-        char line[160];
-        copy_line(buf, start, llen, &line[0], 160);
-        graphics.draw_label(x + pad, ty, &line[0], fg, 0, s);
-        i32 cur = n->cursor;
-        if (cur >= start) {
-            if (cur <= start + llen) {
-                caret_x = x + pad + graphics.text_width_n(&line[0], cur - start, 0, s);
-                caret_y = ty;
-            }
-        }
-        start = start + llen + 1;
-        row = row + 1;
-    }
-    if (focused != 0) {
-        if (ro == 0) {
-            if (caret_x >= 0) {
-                i32 caret = theme.caret();
-                graphics.fill_rect(caret_x, caret_y + s, s, lh - 2 * s, caret);
-            }
-        }
-    }
-    graphics.pop_clip();
-    // Empty editable area: placeholder from the node name.
-    if (len == 0) {
-        if (ro == 0) {
-            if (n->name != 0) {
-                i32 ph = theme.input_placeholder();
-                graphics.draw_label(x + pad, y + pad, (char*)n->name, ph, 0, s);
-            }
-        }
-    }
-}
-
-// Rows with an optional highlighted one (`hl` = row index or -1).
-void draw_rows(Node *n, i32 hl, i32 hl_color, i32 hl_fg) {
-    i32 s = ui_scale();
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 w = n->w;
-    i32 h = n->h;
-    i32 pad = 8 * s;
-    i32 lh = graphics.text_height(0, s);
-    i32 fg = theme.text_primary();
-    fg = node_fg(n, fg);
-    char *buf = (char*)n->text;
-    i32 len = n->len;
-    i32 r = theme.button_radius() * s;
-    graphics.push_clip(x + s, y + s, w - 2 * s, h - 2 * s);
-    i32 rows = visible_lines(n);
-    i32 first = n->scroll;
-    i32 start = line_start(n, first);
-    i32 row = 0;
-    while (row < rows) {
-        if (start >= len) { break; }
-        i32 llen = line_len_at(n, start);
-        i32 ty = y + pad + row * lh;
-        i32 color = fg;
-        if (first + row == hl) {
-            graphics.fill_round_rect(x + 4 * s, ty - s, w - 8 * s, lh + 2 * s, r, hl_color);
-            color = hl_fg;
-        }
-        char line[160];
-        copy_line(buf, start, llen, &line[0], 160);
-        graphics.draw_label(x + pad + 4 * s, ty, &line[0], color, 0, s);
-        start = start + llen + 1;
-        row = row + 1;
-    }
-    graphics.pop_clip();
-}
-
-void draw_list(Node *n) {
-    i32 state = n->state;
-    i32 focused_bit = STATE_FOCUSED;
-    i32 focused = state & focused_bit;
-    draw_rows_box(n, focused);
-    i32 sel = n->sel - 1;
-    i32 hl = theme.accent();
-    i32 hl_fg = theme.on_accent();
-    if (focused == 0) {
-        hl = theme.button_face_pressed();
-        hl_fg = theme.text_primary();
-    }
-    draw_rows(n, sel, hl, hl_fg);
-}
-
-void draw_menu(Node *n) {
-    i32 s = ui_scale();
-    i32 r = theme.button_radius() * s;
-    graphics.draw_shadow(n->x, n->y, n->w, n->h, r, 8 * s, 3 * s, 70);
-    i32 bg = theme.panel_bg();
-    graphics.fill_round_rect(n->x, n->y, n->w, n->h, r, bg);
-    i32 border = theme.window_border();
-    graphics.draw_round_rect(n->x, n->y, n->w, n->h, r, s, border);
-    i32 hl = theme.accent();
-    i32 hl_fg = theme.on_accent();
-    draw_rows(n, n->sel - 1, hl, hl_fg);
-}
-
-void draw_text_node(Node *n) {
-    if (n->text == 0) { return; }
-    i32 s = ui_scale();
-    i32 color = theme.text_primary();
-    color = node_fg(n, color);
-    i32 bold = text_bold(n);
-    i32 center_bit = STYLE_CENTER;
-    i32 style = n->style;
-    if ((style & center_bit) != 0) {
-        graphics.draw_label_centered(n->x, n->y, n->w, (char*)n->text, color, bold, s);
-    } else {
-        graphics.draw_label(n->x, n->y, (char*)n->text, color, bold, s);
-    }
-}
-
-void draw_text_input(Node *n) {
-    i32 s = ui_scale();
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 w = n->w;
-    i32 h = n->h;
-    i32 state = n->state;
-    i32 focused_bit = STATE_FOCUSED;
-    i32 focused = state & focused_bit;
-    i32 r = theme.input_radius() * s;
-    i32 pad = theme.input_padding_x() * s;
-
-    i32 bg = theme.input_bg();
-    graphics.fill_round_rect(x, y, w, h, r, bg);
-    i32 border = theme.input_border();
-    i32 bw = s;
-    if (focused != 0) {
-        border = theme.input_border_focus();
-        bw = 2 * s;
-    }
-    graphics.draw_round_rect(x, y, w, h, r, bw, border);
-
-    i32 th = graphics.text_height(0, s);
-    i32 ty = y + (h - th) / 2;
-    graphics.push_clip(x + pad / 2, y, w - pad, h);
-    if (n->len == 0) {
-        if (n->name != 0) {
-            i32 ph = theme.input_placeholder();
-            graphics.draw_label(x + pad, ty, (char*)n->name, ph, 0, s);
-        }
-    } else {
-        i32 fg = theme.text_primary();
-        fg = node_fg(n, fg);
-        graphics.draw_label(x + pad, ty, (char*)n->text, fg, 0, s);
-    }
-    if (focused != 0) {
-        i32 cur = n->cursor;
-        i32 caret_x = x + pad + graphics.text_width_n((char*)n->text, cur, 0, s);
-        i32 caret = theme.caret();
-        graphics.fill_rect(caret_x, ty + s, s, th - 2 * s, caret);
-    }
-    graphics.pop_clip();
-}
-
-void draw_checkbox(Node *n) {
-    i32 s = ui_scale();
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 h = n->h;
-    i32 state = n->state;
-    i32 checked_bit = STATE_CHECKED;
-    i32 hovered_bit = STATE_HOVERED;
-    i32 pressed_bit = STATE_PRESSED;
-    i32 checked = state & checked_bit;
-    i32 box = theme.checkbox_size() * s;
-    i32 r = theme.checkbox_radius() * s;
-    i32 by = y + (h - box) / 2;
-
-    i32 face = theme.checkbox_bg();
-    i32 border = theme.checkbox_border();
-    if (checked != 0) {
-        face = theme.accent();
-        border = theme.accent_pressed();
-        if ((state & pressed_bit) != 0) { face = theme.accent_pressed(); }
-        else if ((state & hovered_bit) != 0) { face = theme.accent_hover(); }
-    } else {
-        if ((state & pressed_bit) != 0) { face = theme.button_face_pressed(); }
-        else if ((state & hovered_bit) != 0) { face = theme.button_face_hover(); }
-    }
-    graphics.fill_round_rect(x, by, box, box, r, face);
-    graphics.draw_round_rect(x, by, box, box, r, s, border);
-    i32 focused_bit = STATE_FOCUSED;
-    if ((state & focused_bit) != 0) {
-        i32 ring = theme.accent();
-        graphics.draw_round_rect(x - 2 * s, by - 2 * s, box + 4 * s, box + 4 * s, r + 2 * s, s, ring);
-    }
-    if (checked != 0) {
-        // Check mark: two strokes, drawn s+1 times side by side for weight.
-        i32 white = theme.on_accent();
-        i32 x0 = x + box * 25 / 100;
-        i32 y0 = by + box * 52 / 100;
-        i32 x1 = x + box * 43 / 100;
-        i32 y1 = by + box * 70 / 100;
-        i32 x2 = x + box * 76 / 100;
-        i32 y2 = by + box * 30 / 100;
-        i32 k = 0;
-        while (k < s + 1) {
-            graphics.draw_line(x0, y0 + k, x1, y1 + k, white);
-            graphics.draw_line(x1, y1 + k, x2, y2 + k, white);
-            k = k + 1;
-        }
-    }
-    if (n->text != 0) {
-        i32 fg = theme.text_primary();
-        fg = node_fg(n, fg);
-        i32 th = graphics.text_height(0, s);
-        graphics.draw_label(x + box + 8 * s, y + (h - th) / 2, (char*)n->text, fg, 0, s);
-    }
-}
-
-void draw_panel(Node *n) {
-    i32 s = ui_scale();
-    i32 bg = theme.panel_bg();
-    i32 border = theme.panel_border();
-    i32 r = n->radius;
-    graphics.fill_round_rect(n->x, n->y, n->w, n->h, r, bg);
-    graphics.draw_round_rect(n->x, n->y, n->w, n->h, r, s, border);
-}
-
-// --- taskbar ---
-// The bar lists every window on the desktop (click to activate), with a
-// launcher button at the left and an uptime clock at the right. Entries are
-// laid out arithmetically at draw and hit time rather than as child nodes,
-// so the bar never has to be rebuilt when windows come and go.
-
-// The desktop window with the smallest id greater than `after` (0 = first);
-// 0 when there is none. Walks the desktop's children, so a closed window
-// drops out and ids keep creation order.
-i32 next_window_after(i32 after) {
-    i32 kw = NODE_WINDOW;
-    i32 best = 0;
-    i32 child_id = first_child(g_desktop_node_id);
-    while (child_id != 0) {
-        Node *c = node_ptr(child_id);
-        if (c == 0) { child_id = 0; }
-        else {
-            if (c->kind == kw) {
-                if (child_id > after) {
-                    if (best == 0) { best = child_id; }
-                    else if (child_id < best) { best = child_id; }
-                }
-            }
-            child_id = c->next_sibling;
-        }
-    }
-    return best;
-}
-
-i32 taskbar_entry_x(i32 index) {
-    i32 s = ui_scale();
-    i32 launcher = theme.taskbar_launcher_w() * s;
-    i32 ew = theme.taskbar_entry_w() * s;
-    return 8 * s + launcher + 8 * s + index * (ew + 6 * s);
-}
-
-void format_clock() {
-    // Uptime from the 1 ms scheduler tick: HH:MM:SS.
-    i32 secs = scheduler.ticks() / 1000;
-    i32 hh = (secs / 3600) % 100;
-    i32 mm = (secs / 60) % 60;
-    i32 ss = secs % 60;
-    g_clock_buf[0] = (char)('0' + hh / 10);
-    g_clock_buf[1] = (char)('0' + hh % 10);
-    g_clock_buf[2] = ':';
-    g_clock_buf[3] = (char)('0' + mm / 10);
-    g_clock_buf[4] = (char)('0' + mm % 10);
-    g_clock_buf[5] = ':';
-    g_clock_buf[6] = (char)('0' + ss / 10);
-    g_clock_buf[7] = (char)('0' + ss % 10);
-    g_clock_buf[8] = (char)0;
-}
-
-void draw_taskbar(Node *n) {
-    i32 s = ui_scale();
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 w = n->w;
-    i32 h = n->h;
-
-    i32 bg = theme.taskbar_bg();
-    graphics.blend_rect(x, y, w, h, bg);
-    i32 edge = theme.taskbar_edge();
-    graphics.blend_rect(x, y, w, s, edge);
-
-    // Launcher: accent dot + "MyOS".
-    i32 accent = theme.accent();
-    i32 on_dark = theme.text_on_dark();
-    i32 lx = x + 8 * s;
-    i32 lw = theme.taskbar_launcher_w() * s;
-    i32 er = theme.taskbar_entry_radius() * s;
-    i32 entry_bg = theme.taskbar_entry();
-    graphics.fill_round_rect(lx, y + 6 * s, lw, h - 12 * s, er, entry_bg);
-    graphics.fill_disc(lx + 16 * s, y + h / 2, 6 * s, accent);
-    i32 th_b = graphics.text_height(1, s);
-    graphics.draw_label(lx + 30 * s, y + (h - th_b) / 2, "MyOS", on_dark, 1, s);
-
-    // One entry per window, in creation order (ids ascend), so raising a
-    // window does not shuffle the bar.
-    i32 ew = theme.taskbar_entry_w() * s;
-    i32 active_bg = theme.taskbar_entry_active();
-    i32 dim = theme.text_on_dark_dim();
-    i32 th = graphics.text_height(0, s);
-    i32 index = 0;
-    i32 win = next_window_after(0);
-    while (win != 0) {
-        Node *c = node_ptr(win);
-        i32 ex = x + taskbar_entry_x(index);
-        i32 ebg = entry_bg;
-        i32 fg = dim;
-        if (win == g_active_window) { ebg = active_bg; fg = on_dark; }
-        graphics.fill_round_rect(ex, y + 6 * s, ew, h - 12 * s, er, ebg);
-        if (win == g_active_window) {
-            graphics.fill_round_rect(ex + 10 * s, y + h - 9 * s, ew - 20 * s, 2 * s, s, accent);
-        }
-        if (c->text != 0) {
-            graphics.push_clip(ex + 10 * s, y, ew - 20 * s, h);
-            graphics.draw_label(ex + 12 * s, y + (h - th) / 2, (char*)c->text, fg, 0, s);
-            graphics.pop_clip();
-        }
-        index = index + 1;
-        win = next_window_after(win);
-    }
-
-    // Clock at the right.
-    format_clock();
-    i32 cw = graphics.text_width(&g_clock_buf[0], 0, s);
-    graphics.draw_label(x + w - cw - 16 * s, y + (h - th) / 2, &g_clock_buf[0], on_dark, 0, s);
-}
-
-// The window whose taskbar entry is at (px, py), or 0; -1 for the launcher.
-i32 taskbar_target_at(i32 px, i32 py) {
-    Node *n = node_ptr(g_taskbar_id);
-    if (n == 0) { return 0; }
-    i32 s = ui_scale();
-    i32 x = n->x;
-    i32 lx = x + 8 * s;
-    i32 lw = theme.taskbar_launcher_w() * s;
-    if (px >= lx) {
-        if (px < lx + lw) { return 0 - 1; }
-    }
-    i32 ew = theme.taskbar_entry_w() * s;
-    i32 index = 0;
-    i32 win = next_window_after(0);
-    while (win != 0) {
-        i32 ex = x + taskbar_entry_x(index);
-        if (px >= ex) {
-            if (px < ex + ew) { return win; }
-        }
-        index = index + 1;
-        win = next_window_after(win);
-    }
-    return 0;
-}
-
-// Handle a click on the taskbar: activate the window whose entry was hit, or
-// run the launcher handler.
-export void taskbar_click(i32 px, i32 py) {
-    i32 target = taskbar_target_at(px, py);
-    if (target > 0) {
-        focus_window(target);
-        return;
-    }
-    if (target < 0) {
-        i32 handler = g_launcher;
-        if (handler != 0) { handler(); }
-    }
-}
-
-export void set_launcher(i32 handler) {
-    g_launcher = handler;
-}
-
-// Redraw the clock (called by a timer once a second).
-export void refresh_taskbar() {
-    damage_node(g_taskbar_id);
-}
-
-void draw_node(Node *n) {
-    i32 kind = n->kind;
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 w = n->w;
-    i32 h = n->h;
-    i32 scale = ui_scale();
-
-    // Copy the NODE_* u16 globals into i32 locals before comparing. Comparing an
-    // i32 against a `u16` global directly (kind == NODE_WINDOW) miscompiles and is
-    // always false, even when both hold the same value; the local coerces cleanly.
-    i32 kw = NODE_WINDOW;
-    i32 kbox = NODE_BOX;
-    i32 kb = NODE_BUTTON;
-    i32 kt = NODE_TEXT;
-    i32 ki = NODE_TEXT_INPUT;
-    i32 kc = NODE_CHECKBOX;
-    i32 ks = NODE_SEPARATOR;
-    i32 kp = NODE_PANEL;
-    i32 ktb = NODE_TASKBAR;
-    i32 kta = NODE_TEXT_AREA;
-    i32 kl = NODE_LIST;
-    i32 km = NODE_MENU;
-
-    if (kind == kta) {
-        draw_text_area(n);
-    } else if (kind == kl) {
-        draw_list(n);
-    } else if (kind == km) {
-        draw_menu(n);
-    } else if (kind == kbox) {
-        graphics.fill_rect(x, y, w, h, n->background_color);
-        graphics.draw_rect_scaled(x, y, w, h, n->border_color, scale);
-    } else if (kind == kw) {
-        draw_window(n);
-    } else if (kind == kb) {
-        draw_button(n);
-    } else if (kind == kt) {
-        draw_text_node(n);
-    } else if (kind == ki) {
-        draw_text_input(n);
-    } else if (kind == kc) {
-        draw_checkbox(n);
-    } else if (kind == ks) {
-        i32 sep = theme.separator();
-        graphics.blend_rect(x, y, w, h, sep);
-    } else if (kind == kp) {
-        draw_panel(n);
-    } else if (kind == ktb) {
-        draw_taskbar(n);
-    }
-    // Structural nodes (root/system/process/...) draw nothing.
-}
-
-// True if a node's painted area overlaps the damage region. Nodes that do not
-// are skipped without drawing: the clip rectangle would discard their pixels
-// anyway, but only after paying for the fill work that produced them.
-i32 node_in_damage(Node *n) {
-    if (g_painting_all != 0) { return 1; } // full repaint: draw everything
-    node_extent(n);
-    if (g_ext_x + g_ext_w <= g_paint_x0) { return 0; }
-    if (g_ext_y + g_ext_h <= g_paint_y0) { return 0; }
-    if (g_ext_x >= g_paint_x1) { return 0; }
-    if (g_ext_y >= g_paint_y1) { return 0; }
-    return 1;
-}
-
-// Containers that confine their children's pixels to their own bounds.
-i32 clips_children(Node *n) {
+// Getters and Setters
+export i32 get_NODE_SIZE() { return NODE_SIZE; }
+export void set_NODE_SIZE(i32 v) { NODE_SIZE = v; }
+export i32 get_DAMAGE_MAX() { return DAMAGE_MAX; }
+export void set_DAMAGE_MAX(i32 v) { DAMAGE_MAX = v; }
+export i32 *get_g_damage_x0() { return &g_damage_x0[0]; }
+export i32 *get_g_damage_y0() { return &g_damage_y0[0]; }
+export i32 *get_g_damage_x1() { return &g_damage_x1[0]; }
+export i32 *get_g_damage_y1() { return &g_damage_y1[0]; }
+export i32 get_g_damage_count() { return g_damage_count; }
+export void set_g_damage_count(i32 v) { g_damage_count = v; }
+export i32 get_g_paint_x0() { return g_paint_x0; }
+export void set_g_paint_x0(i32 v) { g_paint_x0 = v; }
+export i32 get_g_paint_y0() { return g_paint_y0; }
+export void set_g_paint_y0(i32 v) { g_paint_y0 = v; }
+export i32 get_g_paint_x1() { return g_paint_x1; }
+export void set_g_paint_x1(i32 v) { g_paint_x1 = v; }
+export i32 get_g_paint_y1() { return g_paint_y1; }
+export void set_g_paint_y1(i32 v) { g_paint_y1 = v; }
+export i32 get_g_painting_all() { return g_painting_all; }
+export void set_g_painting_all(i32 v) { g_painting_all = v; }
+export i32 get_g_next_node_id() { return g_next_node_id; }
+export void set_g_next_node_id(i32 v) { g_next_node_id = v; }
+export i32 get_g_revision() { return g_revision; }
+export void set_g_revision(i32 v) { g_revision = v; }
+export i32 get_g_root_node_id() { return g_root_node_id; }
+export void set_g_root_node_id(i32 v) { g_root_node_id = v; }
+export i32 get_g_desktop_node_id() { return g_desktop_node_id; }
+export void set_g_desktop_node_id(i32 v) { g_desktop_node_id = v; }
+export i32 get_g_taskbar_id() { return g_taskbar_id; }
+export void set_g_taskbar_id(i32 v) { g_taskbar_id = v; }
+export i32 get_g_timers_node_id() { return g_timers_node_id; }
+export void set_g_timers_node_id(i32 v) { g_timers_node_id = v; }
+export i32 get_g_active_window() { return g_active_window; }
+export void set_g_active_window(i32 v) { g_active_window = v; }
+export i32 active_window() { return g_active_window; }
+export i32 get_g_focus_id() { return g_focus_id; }
+export void set_g_focus_id(i32 v) { g_focus_id = v; }
+export i32 get_g_launcher() { return g_launcher; }
+export void set_g_launcher(i32 v) { g_launcher = v; }
+export i32 get_g_menu_id() { return g_menu_id; }
+export void set_g_menu_id(i32 v) { g_menu_id = v; }
+export i32 get_g_menu_handler() { return g_menu_handler; }
+export void set_g_menu_handler(i32 v) { g_menu_handler = v; }
+export i32 get_g_menu_target() { return g_menu_target; }
+export void set_g_menu_target(i32 v) { g_menu_target = v; }
+export i32 get_TIMER_MAX() { return TIMER_MAX; }
+export void set_TIMER_MAX(i32 v) { TIMER_MAX = v; }
+export i32 *get_g_timer_ids() { return &g_timer_ids[0]; }
+export i32 get_g_timer_count() { return g_timer_count; }
+export void set_g_timer_count(i32 v) { g_timer_count = v; }
+export i32 get_g_ext_x() { return g_ext_x; }
+export void set_g_ext_x(i32 v) { g_ext_x = v; }
+export i32 get_g_ext_y() { return g_ext_y; }
+export void set_g_ext_y(i32 v) { g_ext_y = v; }
+export i32 get_g_ext_w() { return g_ext_w; }
+export void set_g_ext_w(i32 v) { g_ext_w = v; }
+export i32 get_g_ext_h() { return g_ext_h; }
+export void set_g_ext_h(i32 v) { g_ext_h = v; }
+export char *get_g_clock_buf() { return &g_clock_buf[0]; }
+export i32 get_BASE_DISPLAY_WIDTH() { return BASE_DISPLAY_WIDTH; }
+export void set_BASE_DISPLAY_WIDTH(i32 v) { BASE_DISPLAY_WIDTH = v; }
+export i32 get_BASE_DISPLAY_HEIGHT() { return BASE_DISPLAY_HEIGHT; }
+export void set_BASE_DISPLAY_HEIGHT(i32 v) { BASE_DISPLAY_HEIGHT = v; }
+
+export i32 clips_children(Node *n) {
     i32 kw = NODE_WINDOW;
     i32 kp = NODE_PANEL;
     i32 k = n->kind;
@@ -3005,104 +1061,10 @@ i32 clips_children(Node *n) {
     return 0;
 }
 
-// Render node_id and its descendants. Skips invisible subtrees. Sibling order
-// is paint order, so later children appear on top.
-export void render(i32 node_id) {
-    Node *n = node_ptr(node_id);
-    if (n == 0) { return; }
-    if ((n->state & STATE_VISIBLE) == 0) { return; }
-
-    i32 in_damage = node_in_damage(n);
-    if (in_damage != 0) {
-        draw_node(n);
-    }
-
-    // Children are visited regardless: a child can overlap the damage region
-    // even when its parent does not -- unless the parent clips them, in
-    // which case an off-damage parent means off-damage children.
-    i32 clip = clips_children(n);
-    if (clip != 0) {
-        if (in_damage == 0) { return; }
-        graphics.push_clip(n->x, n->y, n->w, n->h);
-    }
-    i32 child_id = n->first_child;
-    while (child_id != 0) {
-        render(child_id);
-        child_id = next_sibling(child_id);
-    }
-    if (clip != 0) { graphics.pop_clip(); }
-}
-
-// Paint the desktop: wallpaper, every window in z-order, then the taskbar on
-// top. Honours the current clip, so render_scene can call it for a region.
-void paint_desktop() {
-    i32 top = theme.desktop_top();
-    i32 bottom = theme.desktop_bottom();
-    i32 dw = graphics.display_width();
-    i32 dh = graphics.display_height();
-    graphics.fill_gradient_v(0, 0, dw, dh, top, bottom);
-
-    i32 child_id = first_child(g_desktop_node_id);
-    while (child_id != 0) {
-        if (child_id != g_taskbar_id) {
-            if (child_id != g_menu_id) { render(child_id); }
-        }
-        child_id = next_sibling(child_id);
-    }
-    if (g_taskbar_id != 0) { render(g_taskbar_id); }
-    if (g_menu_id != 0) { render(g_menu_id); }
-}
-
-// Repaint every node, ignoring the damage region. Used for the first frame and
-// whenever a caller wants an unconditional repaint.
-export void render_all() {
-    clear_damage();
-    g_painting_all = 1;
-    graphics.clear_clip();
-    paint_desktop();
-    clear_damage();
-}
-
-// Repaint just the damaged region: everything that overlaps it is redrawn
-// under a clip, nodes outside it are skipped entirely -- a hover highlight
-// redraws one button, not the whole screen. Falls back to a full repaint when
-// nothing is marked, so a caller that never damages anything still gets a
-// correct frame.
-export void render_scene() {
-    if (g_damage_count == 0) {
-        render_all();
-        return;
-    }
-
-    // Paint each damaged rectangle under its own clip. The count is
-    // snapshotted so anything damaged while painting waits for the next
-    // frame rather than extending this loop.
-    i32 count = g_damage_count;
-    i32 i = 0;
-    while (i < count) {
-        g_paint_x0 = g_damage_x0[i];
-        g_paint_y0 = g_damage_y0[i];
-        g_paint_x1 = g_damage_x1[i];
-        g_paint_y1 = g_damage_y1[i];
-        g_painting_all = 0;
-        graphics.set_clip(g_paint_x0, g_paint_y0, g_paint_x1 - g_paint_x0, g_paint_y1 - g_paint_y0);
-        paint_desktop();
-        i = i + 1;
-    }
-    g_painting_all = 1;
-    graphics.clear_clip();
-    clear_damage();
-}
-
-export void render_desktop() {
-    render_scene();
-    graphics.present();
-}
-
 // --- hit-test --------------------------------------------------------------------------------------
 
 // True if (px, py) is inside a node's bounds. Nodes with zero size never hit.
-i32 node_contains(Node *n, i32 px, i32 py) {
+export i32 node_contains(Node *n, i32 px, i32 py) {
     i32 x = n->x;
     i32 y = n->y;
     i32 w = n->w;
@@ -3119,7 +1081,7 @@ i32 node_contains(Node *n, i32 px, i32 py) {
 // Return the id of the topmost visible node in node_id's subtree whose bounds
 // contain (px, py), or 0 if none. Later siblings are on top (paint order), so
 // the last hit among the children wins over earlier ones and over the parent.
-i32 hit_test(i32 node_id, i32 px, i32 py) {
+export i32 hit_test(i32 node_id, i32 px, i32 py) {
     Node *n = node_ptr(node_id);
     if (n == 0) { return 0; }
     if ((n->state & STATE_VISIBLE) == 0) { return 0; }

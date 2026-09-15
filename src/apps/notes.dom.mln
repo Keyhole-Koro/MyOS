@@ -1,6 +1,8 @@
 package notes;
 
+import dom_widgets from "../ui/dom/dom_widgets.mln";
 import dom from "../ui/dom/dom.mln";
+import dom_elements from "../ui/dom/dom_elements.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import graphics from "../ui/graphics.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
@@ -50,8 +52,8 @@ void on_clear(i32 id) {
     i32 caption = dom.first_child(column);
     i32 title = dom.next_sibling(caption);
     i32 body = dom.next_sibling(title);
-    dom.set_input_text(title, "");
-    dom.set_input_text(body, "");
+    dom_widgets.set_input_text(title, "");
+    dom_widgets.set_input_text(body, "");
     on_change(title);
 }
 

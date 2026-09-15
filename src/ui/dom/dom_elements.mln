@@ -1,0 +1,310 @@
+package dom_elements;
+import debug from "../../../../MyKernel/src/debug/debug.mln";
+import heap from "../../../../MyKernel/src/mm/heap.mln";
+import scheduler from "../../../../MyKernel/src/kernel/scheduler.mln";
+import graphics from "../graphics.mln";
+import theme from "../theme.mln";
+import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
+import dom_widgets from "dom_widgets.mln";
+import dom from "dom.mln";
+import { Node } from "dom.mln";
+import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
+// --- UI node create helpers ------------------------------------------------------------------
+// Each sets kind + role + bounds + text + default state (visible/enabled) in one
+// call. Coordinates are logical (1024x768) and relative to the parent the node
+// is later appended to.
+
+// Note: NODE_*/ROLE_*/STATE_* are `export u16` globals; pass them bare as
+// function args. Casting them like (i32)dom.STATE_VISIBLE makes semantic report
+// `undefined identifier` (see docs/DOM_SPEC.md), so no casts here.
+export i32 create_window(char *title, i32 x, i32 y, i32 w, i32 h) {
+    i32 id = dom.create_node(dom.NODE_WINDOW, title);
+    dom.set_role(id, dom.ROLE_WINDOW);
+    dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
+    dom.set_text(id, title);
+    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    dom.set_state_flag(id, dom.STATE_ENABLED, 1);
+    dom.set_state_flag(id, dom.STATE_HIT_TESTABLE, 1); // body clicks focus the window
+    return id;
+}
+
+export i32 create_button(char *label, i32 x, i32 y, i32 w, i32 h) {
+    i32 id = dom.create_node(dom.NODE_BUTTON, label);
+    dom.set_role(id, dom.ROLE_BUTTON);
+    dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
+    dom.set_text(id, label);
+    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    dom.set_state_flag(id, dom.STATE_ENABLED, 1);
+    dom.set_state_flag(id, dom.STATE_HIT_TESTABLE, 1);
+    return id;
+}
+
+export i32 create_text(char *text, i32 x, i32 y) {
+    i32 id = dom.create_node(dom.NODE_TEXT, text);
+    dom.set_role(id, dom.ROLE_TEXT);
+    dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), 0, 0);
+    dom.set_text(id, text);
+    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    return id;
+}
+
+// A Box is a visual grouping primitive. It has no accessibility role and is
+// not hit-testable by default, so decoration never obscures a Button within it.
+export i32 create_box(i32 x, i32 y, i32 w, i32 h,
+                      i32 background, i32 border) {
+    i32 id = dom.create_node(dom.NODE_BOX, "box");
+    dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
+    dom.set_colors(id, background, border);
+    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    return id;
+}
+
+// A Panel is a themed rounded card; its children are clipped to it.
+export i32 create_panel(i32 x, i32 y, i32 w, i32 h, i32 radius) {
+    i32 id = dom.create_node(dom.NODE_PANEL, "panel");
+    dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
+    Node *n = dom.node_ptr(id);
+    n->radius = (u16)dom.scale_ui(radius);
+    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    return id;
+}
+
+// A Column is a visible-to-the-renderer layout container: it draws nothing of
+// its own, but visibility gates all descendants. When a child is appended its
+// x/y are recomputed from this origin, padding, and the preceding child sizes.
+export i32 create_column(i32 x, i32 y, i32 w, i32 h,
+                         i32 padding, i32 gap) {
+    i32 id = dom.create_node(dom.NODE_COLUMN, "column");
+    dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
+    dom.set_column_layout(id, dom.scale_ui(padding), dom.scale_ui(gap));
+    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    return id;
+}
+
+export i32 create_row(i32 x, i32 y, i32 w, i32 h,
+                      i32 padding, i32 gap) {
+    i32 id = dom.create_node(dom.NODE_ROW, "row");
+    dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
+    dom.set_column_layout(id, dom.scale_ui(padding), dom.scale_ui(gap));
+    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    return id;
+}
+
+// A single-line text field. `placeholder` shows while empty; the node owns a
+// heap buffer of `capacity` bytes (including the terminator).
+export i32 create_text_input(char *placeholder, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
+    if (capacity < 2) { capacity = 2; }
+    i32 id = dom.create_node(dom.NODE_TEXT_INPUT, placeholder);
+    dom.set_role(id, dom.ROLE_TEXTBOX);
+    dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
+    Node *n = dom.node_ptr(id);
+    char *buf = (char*)heap.alloc(capacity);
+    buf[0] = (char)0;
+    n->text = buf;
+    n->cap = (u16)capacity;
+    n->len = 0;
+    n->cursor = 0;
+    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    dom.set_state_flag(id, dom.STATE_ENABLED, 1);
+    dom.set_state_flag(id, dom.STATE_HIT_TESTABLE, 1);
+    return id;
+}
+
+export i32 create_checkbox(char *label, i32 x, i32 y, i32 checked) {
+    i32 id = dom.create_node(dom.NODE_CHECKBOX, label);
+    dom.set_role(id, dom.ROLE_CHECKBOX);
+    i32 s = dom.ui_scale();
+    i32 box = theme.checkbox_size() * s;
+    i32 tw = graphics.text_width(label, 0, s);
+    i32 th = graphics.text_height(0, s);
+    i32 h = box;
+    if (th > h) { h = th; }
+    dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), box + 8 * s + tw, h);
+    dom.set_text(id, label);
+    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    dom.set_state_flag(id, dom.STATE_ENABLED, 1);
+    dom.set_state_flag(id, dom.STATE_HIT_TESTABLE, 1);
+    dom.set_state_flag(id, dom.STATE_CHECKED, checked);
+    return id;
+}
+
+export i32 create_separator(i32 x, i32 y, i32 w) {
+    i32 id = dom.create_node(dom.NODE_SEPARATOR, "separator");
+    dom.set_role(id, dom.ROLE_SEPARATOR);
+    dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.ui_scale());
+    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    return id;
+}
+
+// Multi-line text. `capacity` bytes of heap (including the terminator);
+// readonly != 0 makes it a display-only console that append_text feeds.
+export i32 create_text_area(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 readonly) {
+    if (capacity < 2) { capacity = 2; }
+    i32 id = dom.create_node(dom.NODE_TEXT_AREA, name);
+    dom.set_role(id, dom.ROLE_TEXTAREA);
+    dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
+    Node *n = dom.node_ptr(id);
+    char *buf = (char*)heap.alloc(capacity);
+    buf[0] = (char)0;
+    n->text = buf;
+    n->cap = (u16)capacity;
+    n->len = 0;
+    n->cursor = 0;
+    n->scroll = 0;
+    if (readonly != 0) { dom.set_style(id, dom.STYLE_READONLY); }
+    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    dom.set_state_flag(id, dom.STATE_ENABLED, 1);
+    dom.set_state_flag(id, dom.STATE_HIT_TESTABLE, 1);
+    return id;
+}
+
+// A selectable list of rows (see list_set_items).
+export i32 create_list(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
+    if (capacity < 2) { capacity = 2; }
+    i32 id = dom.create_node(dom.NODE_LIST, name);
+    dom.set_role(id, dom.ROLE_LIST);
+    dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
+    Node *n = dom.node_ptr(id);
+    char *buf = (char*)heap.alloc(capacity);
+    buf[0] = (char)0;
+    n->text = buf;
+    n->cap = (u16)capacity;
+    n->len = 0;
+    n->sel = 0;
+    n->scroll = 0;
+    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    dom.set_state_flag(id, dom.STATE_ENABLED, 1);
+    dom.set_state_flag(id, dom.STATE_HIT_TESTABLE, 1);
+    return id;
+}
+
+// ---------------------------------------------------------------------------
+// DOM syntax elements.
+//
+// `<Window title="A" x={0} y={0} w={1} h={1}/>` in a .dom.mln source lowers to
+// a call to the function of the same name, with each property handed to the
+// parameter of the same name, and children passed to append_child. The element
+// vocabulary therefore lives here rather than in the compiler: adding an
+// element means adding a function, and its parameters are its properties.
+// ---------------------------------------------------------------------------
+
+export i32 Window(char *title, i32 x, i32 y, i32 w, i32 h) {
+    return create_window(title, x, y, w, h);
+}
+
+export i32 Button(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
+    i32 id = create_button(text, x, y, w, h);
+    dom.set_on_click(id, onClick);
+    return id;
+}
+
+// Accent-coloured call to action.
+export i32 PrimaryButton(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
+    i32 id = create_button(text, x, y, w, h);
+    dom.set_on_click(id, onClick);
+    dom.set_style(id, dom.STYLE_PRIMARY);
+    return id;
+}
+
+export i32 Text(char *text, i32 x, i32 y) {
+    return create_text(text, x, y);
+}
+
+// Text with an explicit colour (graphics.rgb(); 0 = theme default) and weight.
+export i32 Label(char *text, i32 x, i32 y, i32 color, i32 bold) {
+    i32 id = create_text(text, x, y);
+    if (bold != 0) { dom.set_style(id, dom.STYLE_BOLD); }
+    dom.set_color(id, color);
+    return id;
+}
+
+export i32 Box(i32 x, i32 y, i32 w, i32 h,
+               i32 background, i32 border) {
+    return create_box(x, y, w, h, background, border);
+}
+
+export i32 Panel(i32 x, i32 y, i32 w, i32 h, i32 radius) {
+    return create_panel(x, y, w, h, radius);
+}
+
+export i32 Column(i32 x, i32 y, i32 w, i32 h,
+                  i32 padding, i32 gap) {
+    return create_column(x, y, w, h, padding, gap);
+}
+
+export i32 Row(i32 x, i32 y, i32 w, i32 h,
+               i32 padding, i32 gap) {
+    return create_row(x, y, w, h, padding, gap);
+}
+
+export i32 TextInput(char *placeholder, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 onChange) {
+    i32 id = create_text_input(placeholder, x, y, w, h, capacity);
+    dom.set_on_change(id, onChange);
+    return id;
+}
+
+export i32 Checkbox(char *text, i32 x, i32 y, i32 checked, i32 onClick) {
+    i32 id = create_checkbox(text, x, y, checked);
+    dom.set_on_click(id, onClick);
+    return id;
+}
+
+export i32 Separator(i32 x, i32 y, i32 w) {
+    return create_separator(x, y, w);
+}
+
+export i32 Timer(i32 interval, i32 onTick) {
+    return dom_widgets.create_timer(interval, onTick);
+}
+
+export i32 TextArea(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 readonly, i32 onChange) {
+    i32 id = create_text_area(name, x, y, w, h, capacity, readonly);
+    dom.set_on_change(id, onChange);
+    return id;
+}
+
+// onChange fires when the selection moves, onActivate (stored as the click
+// handler) when a row is clicked again or Enter is pressed.
+export i32 List(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 onChange, i32 onActivate) {
+    i32 id = create_list(name, x, y, w, h, capacity);
+    dom.set_on_change(id, onChange);
+    dom.set_on_click(id, onActivate);
+    return id;
+}
+
+// The human-readable dump (dump()), the JSON snapshot, and the automation
+// bridge (write_automation_snapshot/write_automation_hit_test) moved to
+// dom_automation.mln -- they only walk the tree through accessors above,
+// never touch tree state, and made this file harder to find things in.
+// role_name() stays here because it compares against ROLE_*, and an
+// `export u16` global doesn't resolve as a cross-package symbol (see
+// dom.set_hovered() and friends above); dom_automation.mln calls dom_elements.role_name().
+export char* role_name(i32 role) {
+    i32 r_root = dom.ROLE_ROOT;
+    i32 r_desktop = dom.ROLE_DESKTOP;
+    i32 r_window = dom.ROLE_WINDOW;
+    i32 r_button = dom.ROLE_BUTTON;
+    i32 r_text = dom.ROLE_TEXT;
+    i32 r_textbox = dom.ROLE_TEXTBOX;
+    i32 r_checkbox = dom.ROLE_CHECKBOX;
+    i32 r_toolbar = dom.ROLE_TOOLBAR;
+    i32 r_separator = dom.ROLE_SEPARATOR;
+    i32 r_textarea = dom.ROLE_TEXTAREA;
+    i32 r_list = dom.ROLE_LIST;
+    i32 r_menu = dom.ROLE_MENU;
+    if (role == r_textarea) { return "textarea"; }
+    if (role == r_list) { return "list"; }
+    if (role == r_menu) { return "menu"; }
+    if (role == r_root) { return "root"; }
+    if (role == r_desktop) { return "desktop"; }
+    if (role == r_window) { return "window"; }
+    if (role == r_button) { return "button"; }
+    if (role == r_text) { return "text"; }
+    if (role == r_textbox) { return "textbox"; }
+    if (role == r_checkbox) { return "checkbox"; }
+    if (role == r_toolbar) { return "toolbar"; }
+    if (role == r_separator) { return "separator"; }
+    return "none";
+}
+
+

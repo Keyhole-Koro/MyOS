@@ -1,5 +1,8 @@
 import assert from "../../../../toolchain/MyStdLib/assert.mln";
 import dom from "../../src/ui/dom/dom.mln";
+import dom_elements from "../../src/ui/dom/dom_elements.mln";
+import dom_widgets from "../../src/ui/dom/dom_widgets.mln";
+import dom_render from "../../src/ui/dom/dom_render.mln";
 import graphics from "../../src/ui/graphics.mln";
 import theme from "../../src/ui/theme.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
@@ -64,36 +67,36 @@ void dom_hit_dispatch() {
 
     i32 tb = theme.titlebar_h(); // logical px; children sit below it
 
-    i32 win = dom.create_window("W", 0, 0, 400, 300);
+    i32 win = dom_elements.create_window("W", 0, 0, 400, 300);
     dom.append_child(dom.desktop_id(), win);
 
-    i32 a = dom.create_button("A", 10, 10, 100, 50);
+    i32 a = dom_elements.create_button("A", 10, 10, 100, 50);
     dom.set_on_click(a, on_a);
     dom.append_child(win, a);          // -> (10, tb + 10)
 
-    i32 b = dom.create_button("B", 200, 10, 100, 50);
+    i32 b = dom_elements.create_button("B", 200, 10, 100, 50);
     dom.set_on_click(b, on_b);
     dom.append_child(win, b);          // -> (200, tb + 10)
 
     // A decorative Box is visible but is not a hit target. It must therefore
     // not obscure its interactive descendants or turn empty decoration into a
     // click.
-    i32 box = dom.create_box(20, 170, 200, 120, 14737632, 8947848);
+    i32 box = dom_elements.create_box(20, 170, 200, 120, 14737632, 8947848);
     dom.append_child(win, box);        // -> (20, tb + 170)
 
     // Column owns direct-child x/y positions. Text reserves its measured
     // line height even though it has no explicit bounds, so D lands below it.
-    i32 column = dom.create_column(0, 10, 200, 100, 10, 5);
+    i32 column = dom_elements.create_column(0, 10, 200, 100, 10, 5);
     dom.append_child(box, column);     // -> (20, tb + 180)
 
-    i32 c = dom.create_button("C", 0, 0, 80, 20);
+    i32 c = dom_elements.create_button("C", 0, 0, 80, 20);
     dom.set_on_click(c, on_c);
     dom.append_child(column, c);       // -> (30, tb + 190)
 
-    i32 label = dom.create_text("note", 0, 0);
+    i32 label = dom_elements.create_text("note", 0, 0);
     dom.append_child(column, label);   // -> (30, tb + 215)
 
-    i32 d = dom.create_button("D", 0, 0, 80, 20);
+    i32 d = dom_elements.create_button("D", 0, 0, 80, 20);
     dom.set_on_click(d, on_d);
     dom.append_child(column, d);       // -> below the label + gap
 
@@ -141,19 +144,19 @@ void dom_hit_dispatch() {
 
     // Window chrome: the title bar is the drag handle and the disc at its
     // left is the close button; neither is a child node.
-    assert.assert_true(dom.titlebar_hit(win, 200 * scale, 10 * scale) == 1, "title bar hit");
-    assert.assert_true(dom.close_button_hit(win, 16 * scale, (tb / 2) * scale) == 1, "close button hit");
-    assert.assert_true(dom.titlebar_hit(win, 16 * scale, (tb / 2) * scale) == 0, "close button is not drag handle");
-    assert.assert_true(dom.titlebar_hit(win, 200 * scale, (tb + 5) * scale) == 0, "content is not the title bar");
+    assert.assert_true(dom_widgets.titlebar_hit(win, 200 * scale, 10 * scale) == 1, "title bar hit");
+    assert.assert_true(dom_widgets.close_button_hit(win, 16 * scale, (tb / 2) * scale) == 1, "close button hit");
+    assert.assert_true(dom_widgets.titlebar_hit(win, 16 * scale, (tb / 2) * scale) == 0, "close button is not drag handle");
+    assert.assert_true(dom_widgets.titlebar_hit(win, 200 * scale, (tb + 5) * scale) == 0, "content is not the title bar");
 
     // Focus and z-order: a second window appended later paints on top and
     // wins the hit test where they overlap; focusing the first raises it.
-    i32 win2 = dom.create_window("W2", 300, 200, 300, 200);
+    i32 win2 = dom_elements.create_window("W2", 300, 200, 300, 200);
     dom.append_child(dom.desktop_id(), win2);
     i32 overlap = dom.find_at(350 * scale, (tb + 250) * scale);
     assert.assert_true(overlap == win2, "later window is on top");
-    dom.focus_window(win);
-    assert.assert_true(dom.active_window() == win, "focus_window activates");
+    dom_widgets.focus_window(win);
+    assert.assert_true(dom_widgets.active_window() == win, "focus_window activates");
     assert.assert_true(dom.get_state_flag(win, 16) == 1, "active window has STATE_FOCUSED");
     overlap = dom.find_at(350 * scale, (tb + 250) * scale);
     assert.assert_true(overlap == win, "focused window was raised");
@@ -165,7 +168,7 @@ void dom_hit_dispatch() {
     dom.move_node(win, 0 - 7 * scale, 0 - 3 * scale);
 
     // Checkbox: dispatch_click toggles before the handler observes it.
-    i32 cb = dom.create_checkbox("opt", 10, 100, 0);
+    i32 cb = dom_elements.create_checkbox("opt", 10, 100, 0);
     dom.set_on_change(cb, on_change);
     dom.append_child(win2, cb);
     assert.assert_true(dom.is_checked(cb) == 0, "checkbox starts unchecked");
@@ -174,14 +177,14 @@ void dom_hit_dispatch() {
     assert.assert_true(g_changes == 1, "on_change fired once");
 
     // TextInput: keyboard events edit the focused field.
-    i32 field = dom.create_text_input("type", 10, 130, 200, 30, 16);
+    i32 field = dom_elements.create_text_input("type", 10, 130, 200, 30, 16);
     dom.set_on_change(field, on_change);
     dom.append_child(win2, field);
-    dom.set_focus(field);
-    dom.dispatch_key_event(3, 'h', 0);
-    dom.dispatch_key_event(3, 'i', 0);
-    dom.dispatch_key_event(1, 8, 0);   // backspace
-    dom.dispatch_key_event(3, 'o', 0);
+    dom_widgets.set_focus(field);
+    dom_widgets.dispatch_key_event(3, 'h', 0);
+    dom_widgets.dispatch_key_event(3, 'i', 0);
+    dom_widgets.dispatch_key_event(1, 8, 0);   // backspace
+    dom_widgets.dispatch_key_event(3, 'o', 0);
     char *typed = dom.text_of(field);
     assert.assert_true(typed[0] == 'h', "first typed char");
     assert.assert_true(typed[1] == 'o', "backspace then insert");
@@ -190,13 +193,13 @@ void dom_hit_dispatch() {
 
     // Closing a window drops its subtree and hands activation to the top-most
     // remaining window.
-    dom.focus_window(win2);
-    dom.close_window(win2);
+    dom_widgets.focus_window(win2);
+    dom_widgets.close_window(win2);
     assert.assert_true(dom.node_exists(win2) == 0, "closed window is gone");
     assert.assert_true(dom.node_exists(field) == 0, "its children are gone too");
-    assert.assert_true(dom.active_window() == win, "remaining window becomes active");
+    assert.assert_true(dom_widgets.active_window() == win, "remaining window becomes active");
 
     // Exercise the renderer (window chrome, panel, buttons, text) in the
     // headless emulator as well as the tree-only assertions.
-    dom.render_all();
+    dom_render.render_all();
 }

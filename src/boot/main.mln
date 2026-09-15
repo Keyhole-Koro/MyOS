@@ -1,5 +1,7 @@
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
+import dom_widgets from "../ui/dom/dom_widgets.mln";
+import dom_render from "../ui/dom/dom_render.mln";
 import dom from "../ui/dom/dom.mln";
 import dom_automation from "../ui/dom/dom_automation.mln";
 import graphics from "../ui/graphics.mln";
@@ -74,19 +76,19 @@ void open_app(i32 index) {
     if (index == 2) { editor.forget_if_closed(); win = editor.open("untitled.txt"); }
     if (index == 3) { win = notes.mount(); }
     if (index == 4) { win = counter.mount(); }
-    if (win != 0) { dom.focus_window(win); }
+    if (win != 0) { dom_widgets.focus_window(win); }
 }
 
 // Taskbar launcher: pop the app menu up above the button.
 void launch_menu() {
     i32 s = dom.ui_scale();
-    i32 y = graphics.display_height() - dom.taskbar_height() - 190 * s;
-    dom.open_menu(8 * s, y, menu_items(), open_app, 0);
+    i32 y = graphics.display_height() - dom_widgets.taskbar_height() - 190 * s;
+    dom_widgets.open_menu(8 * s, y, menu_items(), open_app, 0);
 }
 
 // Once a second: redraw the taskbar so its uptime clock advances.
 void on_clock(i32 id) {
-    dom.refresh_taskbar();
+    dom_render.refresh_taskbar();
 }
 
 void kernel_init() {
@@ -96,9 +98,9 @@ void kernel_init() {
 
     dom.init();
     dom.create_taskbar();
-    dom.set_launcher(launch_menu);
+    dom_render.set_launcher(launch_menu);
     compositor.set_desktop_menu(menu_items(), open_app);
-    dom.create_timer(1000, on_clock);
+    dom_widgets.create_timer(1000, on_clock);
     debug.println("kernel: dom ready");
 
     fs.init();
@@ -110,7 +112,7 @@ void kernel_init() {
     counter.mount();
     notes.mount();
     i32 term = terminal.mount();
-    dom.focus_window(term);
+    dom_widgets.focus_window(term);
     dom_automation.dump();
 
     // Paint the desktop once before interrupts are enabled. render_all()

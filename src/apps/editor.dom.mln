@@ -1,6 +1,8 @@
 package editor;
 
+import dom_widgets from "../ui/dom/dom_widgets.mln";
 import dom from "../ui/dom/dom.mln";
+import dom_elements from "../ui/dom/dom_elements.mln";
 import graphics from "../ui/graphics.mln";
 import fs from "../fs/fs.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
@@ -27,8 +29,8 @@ void editor_noop(i32 id) { }
 
 // Load `path` into the text area (empty when the file does not exist).
 export void load(char *path) {
-    dom.set_input_text(g_name, path);
-    dom.clear_text_area(g_area);
+    dom_widgets.set_input_text(g_name, path);
+    dom_widgets.clear_text_area(g_area);
     i32 fd = case fs.open(path) of {
         Ok(v) -> v;
         Err(e) -> ({ editor_status("new file"); return; });
@@ -42,12 +44,12 @@ export void load(char *path) {
         };
         if (got <= 0) { break; }
         chunk[got] = (char)0;
-        dom.append_text(g_area, &chunk[0]);
+        dom_widgets.append_text(g_area, &chunk[0]);
         total = total + got;
     }
     fs.close(fd);
     // append_text leaves the caret at the end; start at the top instead.
-    dom.dispatch_key_event(1, 0x105, 0); // Home of the last line
+    dom_widgets.dispatch_key_event(1, 0x105, 0); // Home of the last line
     i32 k = strbuf.reset(&g_status_buf[0]);
     k = strbuf.append(&g_status_buf[0], 64, k, "loaded ");
     k = strbuf.append_i32(&g_status_buf[0], 64, k, total);
@@ -109,8 +111,8 @@ export i32 open(char *path) {
         dom.set_test_id(g_name, "editor-name");
         dom.set_test_id(g_status, "editor-status");
     }
-    dom.focus_window(g_win);
-    dom.set_focus(g_area);
+    dom_widgets.focus_window(g_win);
+    dom_widgets.set_focus(g_area);
     load(path);
     return g_win;
 }

@@ -1,6 +1,8 @@
 package terminal;
 
+import dom_widgets from "../ui/dom/dom_widgets.mln";
 import dom from "../ui/dom/dom.mln";
+import dom_elements from "../ui/dom/dom_elements.mln";
 import console from "../proc/console.mln";
 import fs from "../fs/fs.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
@@ -51,13 +53,13 @@ Option<i32> slot_of_window(i32 win) {
 // two interleave into the shared buffer.
 void say(i32 slot, char *s) {
     irq.disable();
-    dom.append_text(g_out[slot], s);
+    dom_widgets.append_text(g_out[slot], s);
     irq.enable();
 }
 
 void say_line(i32 slot, char *s) {
-    dom.append_text(g_out[slot], s);
-    dom.append_text(g_out[slot], "\n");
+    dom_widgets.append_text(g_out[slot], s);
+    dom_widgets.append_text(g_out[slot], "\n");
 }
 
 char g_line_buf[96];
@@ -170,7 +172,7 @@ void run_line(i32 slot, char *line) {
         return;
     }
     if (str.eq(cmd, "ls") != 0) { cmd_ls(slot); return; }
-    if (str.eq(cmd, "clear") != 0) { dom.clear_text_area(g_out[slot]); return; }
+    if (str.eq(cmd, "clear") != 0) { dom_widgets.clear_text_area(g_out[slot]); return; }
     if (str.eq(cmd, "cat") != 0) { cmd_cat(slot, arg); return; }
     if (str.eq(cmd, "run") != 0) { cmd_run(slot, arg); return; }
     cmd_run(slot, cmd);
@@ -179,12 +181,13 @@ void run_line(i32 slot, char *line) {
 // Enter in the command line submits it.
 i32 on_key(i32 id, i32 code, i32 mods) {
     if (code != 13) { return 0; }
-    i32 slot = slot_of_input(id);
+    Option<i32> opt = slot_of_input(id);
+    i32 slot = case opt of { Some(v) -> v; None -> -1; };
     if (slot < 0) { return 0; }
     char *text = dom.text_of(id);
     i32 k = strbuf.reset(&g_line_buf[0]);
     k = strbuf.append(&g_line_buf[0], 96, k, text);
-    dom.set_input_text(id, "");
+    dom_widgets.set_input_text(id, "");
     run_line(slot, &g_line_buf[0]);
     return 1;
 }
@@ -193,7 +196,7 @@ void on_run_button(i32 id) {
     i32 win = dom.window_of(id);
     i32 slot = case slot_of_window(win) of { Some(v) -> v; None -> ({ return; }); };
     on_key(g_in[slot], 13, 0);
-    dom.set_focus(g_in[slot]);
+    dom_widgets.set_focus(g_in[slot]);
 }
 
 void terminal_noop(i32 id) { }
@@ -252,9 +255,9 @@ export i32 mount() {
     g_pid[slot] = 0;
     g_count = g_count + 1;
 
-    if (g_timer == 0) { g_timer = dom.create_timer(100, on_poll); }
+    if (g_timer == 0) { g_timer = dom_widgets.create_timer(100, on_poll); }
 
     say_line(slot, "MyOS terminal. Type help, ls, or the name of a program (hello, echo, count).");
-    dom.set_focus(input);
+    dom_widgets.set_focus(input);
     return win;
 }

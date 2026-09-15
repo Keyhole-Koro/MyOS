@@ -1,3 +1,5 @@
+import dom_elements from "dom_elements.mln";
+import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
 package dom_automation;
 
 import dom from "dom.mln";
@@ -128,7 +130,7 @@ void automation_node(i32 id) {
 
     automation_raw("{\"id\":"); automation_i32(id);
     automation_raw(",\"parent\":"); automation_i32(dom.parent_of(id));
-    automation_raw(",\"role\":"); automation_json_string(dom.role_name(dom.role_of(id)));
+    automation_raw(",\"role\":"); automation_json_string(dom_elements.role_name(dom.role_of(id)));
     automation_raw(",\"name\":"); automation_json_string(dom.name_of(id));
     automation_raw(",\"text\":"); automation_json_string(dom.text_of(id));
     automation_raw(",\"testId\":"); automation_json_string(dom.test_id_of(id));

@@ -14,6 +14,7 @@ import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import { FsError } from "../fs/fs.mln";
 import fs from "../fs/fs.mln";
+import dom_widgets from "../ui/dom/dom_widgets.mln";
 import dom from "../ui/dom/dom.mln";
 
 // Process consoles (MYOS-015): the glue between user-space processes and
@@ -67,7 +68,8 @@ export i32 bind(i32 pid, i32 output_id) {
 }
 
 export void unbind(i32 pid) {
-    i32 i = slot_of(pid);
+    Option<i32> opt = slot_of(pid);
+    i32 i = case opt of { Some(v) -> v; None -> -1; };
     if (i < 0) { return; }
     g_pid[i] = 0;
     g_output[i] = 0;
@@ -75,7 +77,8 @@ export void unbind(i32 pid) {
 
 // The TextArea a process writes to, or 0.
 export i32 output_of(i32 pid) {
-    i32 i = slot_of(pid);
+    Option<i32> opt = slot_of(pid);
+    i32 i = case opt of { Some(v) -> v; None -> -1; };
     if (i < 0) { return 0; }
     return g_output[i];
 }
@@ -83,7 +86,8 @@ export i32 output_of(i32 pid) {
 // Queue one line (plus a newline) as the process's stdin. Bytes that do not
 // fit are dropped.
 export void feed_line(i32 pid, char *line) {
-    i32 i = slot_of(pid);
+    Option<i32> opt = slot_of(pid);
+    i32 i = case opt of { Some(v) -> v; None -> -1; };
     if (i < 0) { return; }
     i32 base = g_stdin[i];
     i32 k = 0;
@@ -113,12 +117,13 @@ i32 on_write(i32 pid, i32 buf, i32 count) {
         }
         return count;
     }
-    dom.append_bytes(out, buf, count);
+    dom_widgets.append_bytes(out, buf, count);
     return count;
 }
 
 i32 on_read(i32 pid, i32 buf, i32 count) {
-    i32 i = slot_of(pid);
+    Option<i32> opt = slot_of(pid);
+    i32 i = case opt of { Some(v) -> v; None -> -1; };
     if (i < 0) { return 0; }
     i32 base = g_stdin[i];
     i32 got = 0;

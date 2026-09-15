@@ -1,6 +1,9 @@
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 package compositor;
 
 import dom from "dom/dom.mln";
+import dom_widgets from "dom/dom_widgets.mln";
+import dom_render from "dom/dom_render.mln";
 import graphics from "graphics.mln";
 import mouse from "../../../MyKernel/src/io/mouse.mln";
 import keyboard from "../../../MyKernel/src/io/keyboard.mln";
@@ -21,7 +24,7 @@ import irq from "../../../MyKernel/src/arch/irq.mln";
 // not drawn here at all, since the display controller composites it at
 // scan-out (graphics.set_cursor).
 void present_frame() {
-    dom.render_scene();
+    dom_render.render_scene();
     graphics.present();
 }
 
@@ -34,7 +37,7 @@ void present_frame() {
 // before scheduler.init()/irq.enable() makes it atomic: nothing can preempt it.
 export void paint_first_frame() {
     graphics.show_cursor(1);
-    dom.render_all();
+    dom_render.render_all();
     graphics.present();
 }
 
@@ -63,11 +66,11 @@ export void set_desktop_menu(char *items, i32 handler) {
 
 // Window context menu: the same three actions as the title-bar buttons.
 void on_window_menu(i32 index) {
-    i32 win = dom.menu_target();
+    i32 win = dom_widgets.menu_target();
     if (win == 0) { return; }
-    if (index == 0) { dom.minimize_window(win); }
-    if (index == 1) { dom.maximize_window(win); }
-    if (index == 2) { g_hot_id = 0; dom.close_window(win); }
+    if (index == 0) { dom_widgets.minimize_window(win); }
+    if (index == 1) { dom_widgets.maximize_window(win); }
+    if (index == 2) { g_hot_id = 0; dom_widgets.close_window(win); }
 }
 
 // Node kinds the compositor treats specially. dom's NODE_* are u16 exports,
@@ -79,51 +82,51 @@ i32 KIND_LIST = 21;
 void on_press(i32 ex, i32 ey) {
     // A click while a menu is open either picks an item or dismisses the
     // menu; either way it goes no further.
-    if (dom.menu_id() != 0) {
+    if (dom_widgets.menu_id() != 0) {
         i32 mhit = dom.find_at(ex, ey);
-        if (mhit == dom.menu_id()) {
-            dom.menu_click(ex, ey);
+        if (mhit == dom_widgets.menu_id()) {
+            dom_widgets.menu_click(ex, ey);
         } else {
-            dom.close_menu();
+            dom_widgets.close_menu();
         }
         return;
     }
 
     i32 hit = dom.find_at(ex, ey);
     if (hit == 0) {
-        dom.set_focus(0);
+        dom_widgets.set_focus(0);
         return;
     }
 
     // Anything inside a window activates that window first.
     i32 win = dom.window_of(hit);
     if (win != 0) {
-        dom.focus_window(win);
+        dom_widgets.focus_window(win);
     }
 
     if (hit == dom.taskbar_id()) {
-        dom.taskbar_click(ex, ey);
+        dom_render.taskbar_click(ex, ey);
         return;
     }
 
     if (hit == win) {
         // The window itself: title-bar buttons, drag handle, resize grip,
         // or just focus.
-        i32 button = dom.titlebar_button_hit(win, ex, ey);
+        i32 button = dom_widgets.titlebar_button_hit(win, ex, ey);
         if (button == 1) {
             g_hot_id = 0;
-            dom.close_window(win);
+            dom_widgets.close_window(win);
             return;
         }
-        if (button == 2) { dom.minimize_window(win); return; }
-        if (button == 3) { dom.maximize_window(win); return; }
-        if (dom.resize_grip_hit(win, ex, ey) != 0) {
+        if (button == 2) { dom_widgets.minimize_window(win); return; }
+        if (button == 3) { dom_widgets.maximize_window(win); return; }
+        if (dom_widgets.resize_grip_hit(win, ex, ey) != 0) {
             g_resize_win = win;
             g_drag_last_x = ex;
             g_drag_last_y = ey;
             return;
         }
-        if (dom.titlebar_hit(win, ex, ey) != 0) {
+        if (dom_widgets.titlebar_hit(win, ex, ey) != 0) {
             g_drag_win = win;
             g_drag_last_x = ex;
             g_drag_last_y = ey;
@@ -135,16 +138,16 @@ void on_press(i32 ex, i32 ey) {
     // select on press. Everything else is a press-and-release click target.
     i32 kind = case dom.kind_of(hit) of { Some(v) -> v; None -> 0 - 1; };
     if (kind == KIND_TEXT_INPUT) {
-        dom.set_focus(hit);
+        dom_widgets.set_focus(hit);
         return;
     }
     if (kind == KIND_TEXT_AREA) {
-        dom.set_focus(hit);
+        dom_widgets.set_focus(hit);
         return;
     }
     if (kind == KIND_LIST) {
-        dom.set_focus(hit);
-        dom.list_click(hit, ex, ey);
+        dom_widgets.set_focus(hit);
+        dom_widgets.list_click(hit, ex, ey);
         return;
     }
     dom.set_pressed(hit, 1);
@@ -152,25 +155,25 @@ void on_press(i32 ex, i32 ey) {
 }
 
 void on_right_press(i32 ex, i32 ey) {
-    if (dom.menu_id() != 0) {
-        dom.close_menu();
+    if (dom_widgets.menu_id() != 0) {
+        dom_widgets.close_menu();
         return;
     }
     i32 hit = dom.find_at(ex, ey);
     if (hit == dom.taskbar_id()) { return; }
     i32 win = dom.window_of(hit);
     if (win != 0) {
-        dom.focus_window(win);
-        if (dom.is_maximized(win) != 0) {
-            dom.open_menu(ex, ey, "Minimize\nRestore\nClose", on_window_menu, win);
+        dom_widgets.focus_window(win);
+        if (dom_widgets.is_maximized(win) != 0) {
+            dom_widgets.open_menu(ex, ey, "Minimize\nRestore\nClose", on_window_menu, win);
         } else {
-            dom.open_menu(ex, ey, "Minimize\nMaximize\nClose", on_window_menu, win);
+            dom_widgets.open_menu(ex, ey, "Minimize\nMaximize\nClose", on_window_menu, win);
         }
         return;
     }
     if (hit == 0) {
         if (g_desktop_menu_items != 0) {
-            dom.open_menu(ex, ey, g_desktop_menu_items, g_desktop_menu_handler, 0);
+            dom_widgets.open_menu(ex, ey, g_desktop_menu_items, g_desktop_menu_handler, 0);
         }
     }
 }
@@ -206,7 +209,7 @@ void on_motion(i32 ex, i32 ey) {
     if (g_resize_win != 0) {
         i32 w = dom.node_w(g_resize_win) + dx;
         i32 h = dom.node_h(g_resize_win) + dy;
-        dom.resize_window(g_resize_win, w, h);
+        dom_widgets.resize_window(g_resize_win, w, h);
     }
     g_drag_last_x = ex;
     g_drag_last_y = ey;
@@ -259,7 +262,7 @@ export void run() {
             prev_right = er;
 
             if (wheel != 0) {
-                dom.dispatch_wheel(dom.find_at(ex, ey), wheel);
+                dom_widgets.dispatch_wheel(dom.find_at(ex, ey), wheel);
             }
         }
 
@@ -269,7 +272,7 @@ export void run() {
             i32 c = keyboard.event_code();
             i32 m = keyboard.event_mods();
             keyboard.pop_event();
-            dom.dispatch_key_event(t, c, m);
+            dom_widgets.dispatch_key_event(t, c, m);
         }
 
         // Live state drives the cursor and hover. Moving the pointer is two
@@ -285,10 +288,10 @@ export void run() {
             if (hit != 0) { dom.set_hovered(hit, 1); }
             g_hot_id = hit;
         }
-        if (dom.menu_id() != 0) { dom.menu_hover(mx, my); }
+        if (dom_widgets.menu_id() != 0) { dom_widgets.menu_hover(mx, my); }
 
         // Timers (clock, animations) run on this task between events.
-        dom.tick();
+        dom_widgets.tick();
 
         // The setters above record what changed, so the damage region is the
         // authority on whether a repaint is needed.
