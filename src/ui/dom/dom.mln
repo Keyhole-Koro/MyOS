@@ -6,7 +6,6 @@ import scheduler from "../../../../MyKernel/src/kernel/scheduler.mln";
 import graphics from "../graphics.mln";
 import theme from "../theme.mln";
 import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
-import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
 
 // Kernel object tree + UI DOM. See docs/DOM_SPEC.md and MYOS-014.
 //
@@ -283,8 +282,7 @@ export bool node_exists(i32 id) {
 
 export i32 create_node(i32 kind, char *name) {
     if (g_next_node_id >= 256) {
-        debug.println("dom panic: out of node ids");
-        halt_cpu();
+        debug.panic("dom: out of node ids");
     }
 
     Node *n = (Node *)heap.alloc(NODE_SIZE);
