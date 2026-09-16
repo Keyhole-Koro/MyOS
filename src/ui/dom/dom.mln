@@ -79,60 +79,6 @@ export enum NodeStyle {
     READONLY = 8, // TextArea: displays text, no editing (console output)
 }
 
-// Backward compatibility aliases
-export i32 NODE_ROOT      = NodeKind::ROOT;
-export i32 NODE_SYSTEM    = NodeKind::SYSTEM;
-export i32 NODE_PROCESS   = NodeKind::PROCESS;
-export i32 NODE_DEVICE    = NodeKind::DEVICE;
-export i32 NODE_DIRECTORY = NodeKind::DIRECTORY;
-export i32 NODE_FILE      = NodeKind::FILE;
-export i32 NODE_UI        = NodeKind::UI;
-export i32 NODE_DESKTOP   = NodeKind::DESKTOP;
-export i32 NODE_WINDOW    = NodeKind::WINDOW;
-export i32 NODE_BOX       = NodeKind::BOX;
-export i32 NODE_TEXT      = NodeKind::TEXT;
-export i32 NODE_BUTTON    = NodeKind::BUTTON;
-export i32 NODE_TIMER     = NodeKind::TIMER;
-export i32 NODE_COLUMN    = NodeKind::COLUMN;
-export i32 NODE_ROW       = NodeKind::ROW;
-export i32 NODE_TEXT_INPUT = NodeKind::TEXT_INPUT;
-export i32 NODE_CHECKBOX  = NodeKind::CHECKBOX;
-export i32 NODE_SEPARATOR = NodeKind::SEPARATOR;
-export i32 NODE_PANEL     = NodeKind::PANEL;
-export i32 NODE_TASKBAR   = NodeKind::TASKBAR;
-export i32 NODE_TEXT_AREA = NodeKind::TEXT_AREA;
-export i32 NODE_LIST      = NodeKind::LIST;
-export i32 NODE_MENU      = NodeKind::MENU;
-
-export i32 ROLE_NONE      = NodeRole::NONE;
-export i32 ROLE_ROOT      = NodeRole::ROOT;
-export i32 ROLE_DESKTOP   = NodeRole::DESKTOP;
-export i32 ROLE_WINDOW    = NodeRole::WINDOW;
-export i32 ROLE_BUTTON    = NodeRole::BUTTON;
-export i32 ROLE_TEXT      = NodeRole::TEXT;
-export i32 ROLE_TEXTBOX   = NodeRole::TEXTBOX;
-export i32 ROLE_CHECKBOX  = NodeRole::CHECKBOX;
-export i32 ROLE_TOOLBAR   = NodeRole::TOOLBAR;
-export i32 ROLE_SEPARATOR = NodeRole::SEPARATOR;
-export i32 ROLE_TEXTAREA  = NodeRole::TEXTAREA;
-export i32 ROLE_LIST      = NodeRole::LIST;
-export i32 ROLE_MENU      = NodeRole::MENU;
-
-export i32 STATE_VISIBLE      = NodeState::VISIBLE;
-export i32 STATE_ENABLED      = NodeState::ENABLED;
-export i32 STATE_HOVERED      = NodeState::HOVERED;
-export i32 STATE_PRESSED      = NodeState::PRESSED;
-export i32 STATE_FOCUSED      = NodeState::FOCUSED;
-export i32 STATE_HIT_TESTABLE = NodeState::HIT_TESTABLE;
-export i32 STATE_CHECKED      = NodeState::CHECKED;
-export i32 STATE_MAXIMIZED    = NodeState::MAXIMIZED;
-export i32 STATE_MINIMIZED    = NodeState::MINIMIZED;
-
-export i32 STYLE_BOLD    = NodeStyle::BOLD;
-export i32 STYLE_PRIMARY = NodeStyle::PRIMARY;
-export i32 STYLE_CENTER  = NodeStyle::CENTER;
-export i32 STYLE_READONLY = NodeStyle::READONLY;
-
 // Node layout (offsets, bytes; measured u16=2B, pointers 4B-aligned, no tail
 // padding): id=0 kind=2 name=4 parent=8 first_child=10 next_sibling=12 role=14
 // text=16 x=20 y=22 w=24 h=26 state=28 style=30 on_click=32
@@ -296,7 +242,7 @@ export i32 create_node(i32 kind, char *name) {
     n->first_child = 0;
     n->next_sibling = 0;
 
-    n->role = ROLE_NONE;
+    n->role = NodeRole::NONE;
     n->text = (char*)0;
     n->x = 0;
     n->y = 0;
@@ -386,8 +332,8 @@ export char* automation_value_of(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return ""; }
     i32 role = n->role;
-    i32 textbox = ROLE_TEXTBOX;
-    i32 textarea = ROLE_TEXTAREA;
+    i32 textbox = NodeRole::TEXTBOX;
+    i32 textarea = NodeRole::TEXTAREA;
     if (role == textbox) { return (char*)n->text; }
     if (role == textarea) { return (char*)n->text; }
     return "";
@@ -493,7 +439,7 @@ export void clear_damage() {
 
 export i32 text_bold(Node *n) {
     i32 st = n->style;
-    i32 b = STYLE_BOLD;
+    i32 b = NodeStyle::BOLD;
     if ((st & b) != 0) { return 1; }
     return 0;
 }
@@ -775,18 +721,18 @@ export i32 get_state_flag(i32 id, i32 flag) {
 // Named state setters. Other packages can't pass dom.STATE_* as an argument (an
 // `export u16` global doesn't resolve as a cross-package symbol), so these expose
 // the common flags by name. `on` is 0 to clear, non-zero to set.
-export void set_hovered(i32 id, i32 on) { set_state_flag(id, STATE_HOVERED, on); }
-export void set_pressed(i32 id, i32 on) { set_state_flag(id, STATE_PRESSED, on); }
-export void set_visible(i32 id, i32 on) { set_state_flag(id, STATE_VISIBLE, on); }
-export void set_hit_testable(i32 id, i32 on) { set_state_flag(id, STATE_HIT_TESTABLE, on); }
-export void set_checked(i32 id, i32 on) { set_state_flag(id, STATE_CHECKED, on); }
-export i32 is_checked(i32 id) { return get_state_flag(id, STATE_CHECKED); }
-export i32 is_visible(i32 id) { return get_state_flag(id, STATE_VISIBLE); }
-export i32 is_enabled(i32 id) { return get_state_flag(id, STATE_ENABLED); }
-export i32 is_focused(i32 id) { return get_state_flag(id, STATE_FOCUSED); }
-export i32 is_hit_testable(i32 id) { return get_state_flag(id, STATE_HIT_TESTABLE); }
-export i32 is_hovered(i32 id) { return get_state_flag(id, STATE_HOVERED); }
-export i32 is_pressed(i32 id) { return get_state_flag(id, STATE_PRESSED); }
+export void set_hovered(i32 id, i32 on) { set_state_flag(id, NodeState::HOVERED, on); }
+export void set_pressed(i32 id, i32 on) { set_state_flag(id, NodeState::PRESSED, on); }
+export void set_visible(i32 id, i32 on) { set_state_flag(id, NodeState::VISIBLE, on); }
+export void set_hit_testable(i32 id, i32 on) { set_state_flag(id, NodeState::HIT_TESTABLE, on); }
+export void set_checked(i32 id, i32 on) { set_state_flag(id, NodeState::CHECKED, on); }
+export i32 is_checked(i32 id) { return get_state_flag(id, NodeState::CHECKED); }
+export i32 is_visible(i32 id) { return get_state_flag(id, NodeState::VISIBLE); }
+export i32 is_enabled(i32 id) { return get_state_flag(id, NodeState::ENABLED); }
+export i32 is_focused(i32 id) { return get_state_flag(id, NodeState::FOCUSED); }
+export i32 is_hit_testable(i32 id) { return get_state_flag(id, NodeState::HIT_TESTABLE); }
+export i32 is_hovered(i32 id) { return get_state_flag(id, NodeState::HOVERED); }
+export i32 is_pressed(i32 id) { return get_state_flag(id, NodeState::PRESSED); }
 
 // Raw state bitmask. Meaningless to a caller without the STATE_* flags
 // (an `export u16` global doesn't resolve as a cross-package symbol), but
@@ -1110,8 +1056,8 @@ export i32 get_BASE_DISPLAY_HEIGHT() { return BASE_DISPLAY_HEIGHT; }
 export void set_BASE_DISPLAY_HEIGHT(i32 v) { BASE_DISPLAY_HEIGHT = v; }
 
 export i32 clips_children(Node *n) {
-    i32 kw = NODE_WINDOW;
-    i32 kp = NODE_PANEL;
+    i32 kw = NodeKind::WINDOW;
+    i32 kp = NodeKind::PANEL;
     i32 k = n->kind;
     if (k == kw) { return 1; }
     if (k == kp) { return 1; }
@@ -1141,12 +1087,12 @@ export i32 node_contains(Node *n, i32 px, i32 py) {
 export i32 hit_test(i32 node_id, i32 px, i32 py) {
     Node *n = node_ptr(node_id);
     if (n == 0) { return 0; }
-    if ((n->state & STATE_VISIBLE) == 0) { return 0; }
+    if ((n->state & NodeState::VISIBLE) == 0) { return 0; }
 
     i32 inside = node_contains(n, px, py);
     i32 found = 0;
     if (inside != 0) {
-        if ((n->state & STATE_HIT_TESTABLE) != 0) {
+        if ((n->state & NodeState::HIT_TESTABLE) != 0) {
             found = node_id;
         }
     }
@@ -1198,31 +1144,31 @@ export i32 find_at(i32 x, i32 y) {
 
 export void init() {
     graphics.init();
-    i32 root = create_node(NODE_ROOT, "root");
+    i32 root = create_node(NodeKind::ROOT, "root");
     g_root_node_id = root;
-    set_role(root, ROLE_ROOT);
+    set_role(root, NodeRole::ROOT);
 
-    i32 sys = create_node(NODE_SYSTEM, "system");
+    i32 sys = create_node(NodeKind::SYSTEM, "system");
     append_child(root, sys);
 
-    i32 proc = create_node(NODE_PROCESS, "process");
+    i32 proc = create_node(NodeKind::PROCESS, "process");
     append_child(sys, proc);
 
-    i32 dev = create_node(NODE_DEVICE, "device");
+    i32 dev = create_node(NodeKind::DEVICE, "device");
     append_child(sys, dev);
 
-    i32 fs_node = create_node(NODE_DIRECTORY, "fs");
+    i32 fs_node = create_node(NodeKind::DIRECTORY, "fs");
     append_child(dev, fs_node);
 
-    i32 ui = create_node(NODE_UI, "ui");
+    i32 ui = create_node(NodeKind::UI, "ui");
     append_child(sys, ui);
 
-    i32 desktop = create_node(NODE_DESKTOP, "desktop");
+    i32 desktop = create_node(NodeKind::DESKTOP, "desktop");
     append_child(ui, desktop);
     g_desktop_node_id = desktop;
-    set_role(desktop, ROLE_DESKTOP);
+    set_role(desktop, NodeRole::DESKTOP);
 
-    i32 timers = create_node(NODE_UI, "timers");
+    i32 timers = create_node(NodeKind::UI, "timers");
     append_child(ui, timers);
     g_timers_node_id = timers;
     g_timer_count = 0;
@@ -1240,12 +1186,12 @@ export i32 create_taskbar() {
     i32 h = theme.taskbar_h() * s;
     i32 dw = graphics.display_width();
     i32 dh = graphics.display_height();
-    i32 id = create_node(NODE_TASKBAR, "taskbar");
-    set_role(id, ROLE_TOOLBAR);
+    i32 id = create_node(NodeKind::TASKBAR, "taskbar");
+    set_role(id, NodeRole::TOOLBAR);
     set_text(id, "taskbar");
     set_bounds(id, 0, dh - h, dw, h);
-    set_state_flag(id, STATE_VISIBLE, 1);
-    set_state_flag(id, STATE_HIT_TESTABLE, 1);
+    set_state_flag(id, NodeState::VISIBLE, 1);
+    set_state_flag(id, NodeState::HIT_TESTABLE, 1);
     append_child(g_desktop_node_id, id);
     g_taskbar_id = id;
     return id;
