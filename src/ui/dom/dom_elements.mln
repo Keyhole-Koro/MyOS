@@ -7,7 +7,7 @@ import theme from "../theme.mln";
 import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
 import dom_widgets from "dom_widgets.mln";
 import dom from "dom.mln";
-import { Node } from "dom.mln";
+import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
 import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
 // --- UI node create helpers ------------------------------------------------------------------
 // Each sets kind + role + bounds + text + default state (visible/enabled) in one
@@ -15,36 +15,36 @@ import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
 // is later appended to.
 
 // Note: NODE_*/ROLE_*/STATE_* are `export u16` globals; pass them bare as
-// function args. Casting them like (i32)dom.STATE_VISIBLE makes semantic report
+// function args. Casting them like (i32)NodeState::VISIBLE makes semantic report
 // `undefined identifier` (see docs/DOM_SPEC.md), so no casts here.
 export i32 create_window(char *title, i32 x, i32 y, i32 w, i32 h) {
-    i32 id = dom.create_node(dom.NODE_WINDOW, title);
-    dom.set_role(id, dom.ROLE_WINDOW);
+    i32 id = dom.create_node(NodeKind::WINDOW, title);
+    dom.set_role(id, NodeRole::WINDOW);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     dom.set_text(id, title);
-    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
-    dom.set_state_flag(id, dom.STATE_ENABLED, 1);
-    dom.set_state_flag(id, dom.STATE_HIT_TESTABLE, 1); // body clicks focus the window
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::ENABLED, 1);
+    dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1); // body clicks focus the window
     return id;
 }
 
 export i32 create_button(char *label, i32 x, i32 y, i32 w, i32 h) {
-    i32 id = dom.create_node(dom.NODE_BUTTON, label);
-    dom.set_role(id, dom.ROLE_BUTTON);
+    i32 id = dom.create_node(NodeKind::BUTTON, label);
+    dom.set_role(id, NodeRole::BUTTON);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     dom.set_text(id, label);
-    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
-    dom.set_state_flag(id, dom.STATE_ENABLED, 1);
-    dom.set_state_flag(id, dom.STATE_HIT_TESTABLE, 1);
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::ENABLED, 1);
+    dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
     return id;
 }
 
 export i32 create_text(char *text, i32 x, i32 y) {
-    i32 id = dom.create_node(dom.NODE_TEXT, text);
-    dom.set_role(id, dom.ROLE_TEXT);
+    i32 id = dom.create_node(NodeKind::TEXT, text);
+    dom.set_role(id, NodeRole::TEXT);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), 0, 0);
     dom.set_text(id, text);
-    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
     return id;
 }
 
@@ -52,20 +52,20 @@ export i32 create_text(char *text, i32 x, i32 y) {
 // not hit-testable by default, so decoration never obscures a Button within it.
 export i32 create_box(i32 x, i32 y, i32 w, i32 h,
                       i32 background, i32 border) {
-    i32 id = dom.create_node(dom.NODE_BOX, "box");
+    i32 id = dom.create_node(NodeKind::BOX, "box");
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     dom.set_colors(id, background, border);
-    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
     return id;
 }
 
 // A Panel is a themed rounded card; its children are clipped to it.
 export i32 create_panel(i32 x, i32 y, i32 w, i32 h, i32 radius) {
-    i32 id = dom.create_node(dom.NODE_PANEL, "panel");
+    i32 id = dom.create_node(NodeKind::PANEL, "panel");
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     Node *n = dom.node_ptr(id);
     n->radius = (u16)dom.scale_ui(radius);
-    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
     return id;
 }
 
@@ -74,19 +74,19 @@ export i32 create_panel(i32 x, i32 y, i32 w, i32 h, i32 radius) {
 // x/y are recomputed from this origin, padding, and the preceding child sizes.
 export i32 create_column(i32 x, i32 y, i32 w, i32 h,
                          i32 padding, i32 gap) {
-    i32 id = dom.create_node(dom.NODE_COLUMN, "column");
+    i32 id = dom.create_node(NodeKind::COLUMN, "column");
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     dom.set_column_layout(id, dom.scale_ui(padding), dom.scale_ui(gap));
-    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
     return id;
 }
 
 export i32 create_row(i32 x, i32 y, i32 w, i32 h,
                       i32 padding, i32 gap) {
-    i32 id = dom.create_node(dom.NODE_ROW, "row");
+    i32 id = dom.create_node(NodeKind::ROW, "row");
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     dom.set_column_layout(id, dom.scale_ui(padding), dom.scale_ui(gap));
-    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
     return id;
 }
 
@@ -94,8 +94,8 @@ export i32 create_row(i32 x, i32 y, i32 w, i32 h,
 // heap buffer of `capacity` bytes (including the terminator).
 export i32 create_text_input(char *placeholder, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
     if (capacity < 2) { capacity = 2; }
-    i32 id = dom.create_node(dom.NODE_TEXT_INPUT, placeholder);
-    dom.set_role(id, dom.ROLE_TEXTBOX);
+    i32 id = dom.create_node(NodeKind::TEXT_INPUT, placeholder);
+    dom.set_role(id, NodeRole::TEXTBOX);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     Node *n = dom.node_ptr(id);
     char *buf = (char*)heap.alloc(capacity);
@@ -104,15 +104,15 @@ export i32 create_text_input(char *placeholder, i32 x, i32 y, i32 w, i32 h, i32 
     n->cap = (u16)capacity;
     n->len = 0;
     n->cursor = 0;
-    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
-    dom.set_state_flag(id, dom.STATE_ENABLED, 1);
-    dom.set_state_flag(id, dom.STATE_HIT_TESTABLE, 1);
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::ENABLED, 1);
+    dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
     return id;
 }
 
 export i32 create_checkbox(char *label, i32 x, i32 y, i32 checked) {
-    i32 id = dom.create_node(dom.NODE_CHECKBOX, label);
-    dom.set_role(id, dom.ROLE_CHECKBOX);
+    i32 id = dom.create_node(NodeKind::CHECKBOX, label);
+    dom.set_role(id, NodeRole::CHECKBOX);
     i32 s = dom.ui_scale();
     i32 box = theme.checkbox_size() * s;
     i32 tw = graphics.text_width(label, 0, s);
@@ -121,18 +121,18 @@ export i32 create_checkbox(char *label, i32 x, i32 y, i32 checked) {
     if (th > h) { h = th; }
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), box + 8 * s + tw, h);
     dom.set_text(id, label);
-    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
-    dom.set_state_flag(id, dom.STATE_ENABLED, 1);
-    dom.set_state_flag(id, dom.STATE_HIT_TESTABLE, 1);
-    dom.set_state_flag(id, dom.STATE_CHECKED, checked);
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::ENABLED, 1);
+    dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
+    dom.set_state_flag(id, NodeState::CHECKED, checked);
     return id;
 }
 
 export i32 create_separator(i32 x, i32 y, i32 w) {
-    i32 id = dom.create_node(dom.NODE_SEPARATOR, "separator");
-    dom.set_role(id, dom.ROLE_SEPARATOR);
+    i32 id = dom.create_node(NodeKind::SEPARATOR, "separator");
+    dom.set_role(id, NodeRole::SEPARATOR);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.ui_scale());
-    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
     return id;
 }
 
@@ -140,8 +140,8 @@ export i32 create_separator(i32 x, i32 y, i32 w) {
 // readonly != 0 makes it a display-only console that append_text feeds.
 export i32 create_text_area(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 readonly) {
     if (capacity < 2) { capacity = 2; }
-    i32 id = dom.create_node(dom.NODE_TEXT_AREA, name);
-    dom.set_role(id, dom.ROLE_TEXTAREA);
+    i32 id = dom.create_node(NodeKind::TEXT_AREA, name);
+    dom.set_role(id, NodeRole::TEXTAREA);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     Node *n = dom.node_ptr(id);
     char *buf = (char*)heap.alloc(capacity);
@@ -151,18 +151,18 @@ export i32 create_text_area(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity
     n->len = 0;
     n->cursor = 0;
     n->scroll = 0;
-    if (readonly != 0) { dom.set_style(id, dom.STYLE_READONLY); }
-    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
-    dom.set_state_flag(id, dom.STATE_ENABLED, 1);
-    dom.set_state_flag(id, dom.STATE_HIT_TESTABLE, 1);
+    if (readonly != 0) { dom.set_style(id, NodeStyle::READONLY); }
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::ENABLED, 1);
+    dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
     return id;
 }
 
 // A selectable list of rows (see list_set_items).
 export i32 create_list(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
     if (capacity < 2) { capacity = 2; }
-    i32 id = dom.create_node(dom.NODE_LIST, name);
-    dom.set_role(id, dom.ROLE_LIST);
+    i32 id = dom.create_node(NodeKind::LIST, name);
+    dom.set_role(id, NodeRole::LIST);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     Node *n = dom.node_ptr(id);
     char *buf = (char*)heap.alloc(capacity);
@@ -172,9 +172,9 @@ export i32 create_list(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
     n->len = 0;
     n->sel = 0;
     n->scroll = 0;
-    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
-    dom.set_state_flag(id, dom.STATE_ENABLED, 1);
-    dom.set_state_flag(id, dom.STATE_HIT_TESTABLE, 1);
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::ENABLED, 1);
+    dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
     return id;
 }
 
@@ -202,7 +202,7 @@ export i32 Button(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
 export i32 PrimaryButton(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
     i32 id = create_button(text, x, y, w, h);
     dom.set_on_click(id, onClick);
-    dom.set_style(id, dom.STYLE_PRIMARY);
+    dom.set_style(id, NodeStyle::PRIMARY);
     return id;
 }
 
@@ -213,7 +213,7 @@ export i32 Text(char *text, i32 x, i32 y) {
 // Text with an explicit colour (graphics.rgb(); 0 = theme default) and weight.
 export i32 Label(char *text, i32 x, i32 y, i32 color, i32 bold) {
     i32 id = create_text(text, x, y);
-    if (bold != 0) { dom.set_style(id, dom.STYLE_BOLD); }
+    if (bold != 0) { dom.set_style(id, NodeStyle::BOLD); }
     dom.set_color(id, color);
     return id;
 }
@@ -280,18 +280,18 @@ export i32 List(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 onChan
 // `export u16` global doesn't resolve as a cross-package symbol (see
 // dom.set_hovered() and friends above); dom_automation.mln calls dom_elements.role_name().
 export char* role_name(i32 role) {
-    i32 r_root = dom.ROLE_ROOT;
-    i32 r_desktop = dom.ROLE_DESKTOP;
-    i32 r_window = dom.ROLE_WINDOW;
-    i32 r_button = dom.ROLE_BUTTON;
-    i32 r_text = dom.ROLE_TEXT;
-    i32 r_textbox = dom.ROLE_TEXTBOX;
-    i32 r_checkbox = dom.ROLE_CHECKBOX;
-    i32 r_toolbar = dom.ROLE_TOOLBAR;
-    i32 r_separator = dom.ROLE_SEPARATOR;
-    i32 r_textarea = dom.ROLE_TEXTAREA;
-    i32 r_list = dom.ROLE_LIST;
-    i32 r_menu = dom.ROLE_MENU;
+    i32 r_root = NodeRole::ROOT;
+    i32 r_desktop = NodeRole::DESKTOP;
+    i32 r_window = NodeRole::WINDOW;
+    i32 r_button = NodeRole::BUTTON;
+    i32 r_text = NodeRole::TEXT;
+    i32 r_textbox = NodeRole::TEXTBOX;
+    i32 r_checkbox = NodeRole::CHECKBOX;
+    i32 r_toolbar = NodeRole::TOOLBAR;
+    i32 r_separator = NodeRole::SEPARATOR;
+    i32 r_textarea = NodeRole::TEXTAREA;
+    i32 r_list = NodeRole::LIST;
+    i32 r_menu = NodeRole::MENU;
     if (role == r_textarea) { return "textarea"; }
     if (role == r_list) { return "list"; }
     if (role == r_menu) { return "menu"; }

@@ -19,61 +19,120 @@ import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
 // z-order (later on top); bring_to_front re-links a window to the end.
 
 // --- node kinds --------------------------------------------------------------
-export i32 NODE_ROOT      = 0;
-export i32 NODE_SYSTEM    = 1;
-export i32 NODE_PROCESS   = 2;
-export i32 NODE_DEVICE    = 3;
-export i32 NODE_DIRECTORY = 4;
-export i32 NODE_FILE      = 5;
-export i32 NODE_UI        = 6;
-export i32 NODE_DESKTOP   = 7;
-export i32 NODE_WINDOW    = 8;
-export i32 NODE_BOX       = 9;
-export i32 NODE_TEXT      = 10;
-export i32 NODE_BUTTON    = 11;
-export i32 NODE_TIMER     = 12;
-export i32 NODE_COLUMN    = 13;
-export i32 NODE_ROW       = 14;
-export i32 NODE_TEXT_INPUT = 15;
-export i32 NODE_CHECKBOX  = 16;
-export i32 NODE_SEPARATOR = 17;
-export i32 NODE_PANEL     = 18;
-export i32 NODE_TASKBAR   = 19;
-export i32 NODE_TEXT_AREA = 20;
-export i32 NODE_LIST      = 21;
-export i32 NODE_MENU      = 22;
+export enum NodeKind {
+    ROOT = 0,
+    SYSTEM = 1,
+    PROCESS = 2,
+    DEVICE = 3,
+    DIRECTORY = 4,
+    FILE = 5,
+    UI = 6,
+    DESKTOP = 7,
+    WINDOW = 8,
+    BOX = 9,
+    TEXT = 10,
+    BUTTON = 11,
+    TIMER = 12,
+    COLUMN = 13,
+    ROW = 14,
+    TEXT_INPUT = 15,
+    CHECKBOX = 16,
+    SEPARATOR = 17,
+    PANEL = 18,
+    TASKBAR = 19,
+    TEXT_AREA = 20,
+    LIST = 21,
+    MENU = 22,
+}
 
-// --- accessibility roles (MYOS-004 automation locators) ------------------------
-export i32 ROLE_NONE      = 0;
-export i32 ROLE_ROOT      = 1;
-export i32 ROLE_DESKTOP   = 2;
-export i32 ROLE_WINDOW    = 3;
-export i32 ROLE_BUTTON    = 4;
-export i32 ROLE_TEXT      = 5;
-export i32 ROLE_TEXTBOX   = 6;
-export i32 ROLE_CHECKBOX  = 7;
-export i32 ROLE_TOOLBAR   = 8;
-export i32 ROLE_SEPARATOR = 9;
-export i32 ROLE_TEXTAREA  = 10;
-export i32 ROLE_LIST      = 11;
-export i32 ROLE_MENU      = 12;
+export enum NodeRole {
+    NONE = 0,
+    ROOT = 1,
+    DESKTOP = 2,
+    WINDOW = 3,
+    BUTTON = 4,
+    TEXT = 5,
+    TEXTBOX = 6,
+    CHECKBOX = 7,
+    TOOLBAR = 8,
+    SEPARATOR = 9,
+    TEXTAREA = 10,
+    LIST = 11,
+    MENU = 12,
+}
 
-// --- state bitmask -------------------------------------------------------------
-export i32 STATE_VISIBLE      = 0b0000001;
-export i32 STATE_ENABLED      = 0b0000010;
-export i32 STATE_HOVERED      = 0b0000100;
-export i32 STATE_PRESSED      = 0b0001000;
-export i32 STATE_FOCUSED      = 0b0010000; // keyboard focus, or the active window
-export i32 STATE_HIT_TESTABLE = 0b0100000; // find_at may return this node
-export i32 STATE_CHECKED      = 0b1000000; // Checkbox
-export i32 STATE_MAXIMIZED    = 128;       // Window fills the desktop; sx..sh hold the restore bounds
-export i32 STATE_MINIMIZED    = 256;       // Window hidden to the taskbar
+export enum NodeState {
+    VISIBLE      = 0b0000001,
+    ENABLED      = 0b0000010,
+    HOVERED      = 0b0000100,
+    PRESSED      = 0b0001000,
+    FOCUSED      = 0b0010000, // keyboard focus, or the active window
+    HIT_TESTABLE = 0b0100000, // find_at may return this node
+    CHECKED      = 0b1000000, // Checkbox
+    MAXIMIZED    = 128,       // Window fills the desktop; sx..sh hold the restore bounds
+    MINIMIZED    = 256,       // Window hidden to the taskbar
+}
 
-// --- style bits (Node.style) -----------------------------------------------------
-export i32 STYLE_BOLD    = 1; // Text: heavier face
-export i32 STYLE_PRIMARY = 2; // Button: accent-coloured call to action
-export i32 STYLE_CENTER  = 4; // Text: centre within w when w > 0
-export i32 STYLE_READONLY = 8; // TextArea: displays text, no editing (console output)
+export enum NodeStyle {
+    BOLD     = 1, // Text: heavier face
+    PRIMARY  = 2, // Button: accent-coloured call to action
+    CENTER   = 4, // Text: centre within w when w > 0
+    READONLY = 8, // TextArea: displays text, no editing (console output)
+}
+
+// Backward compatibility aliases
+export i32 NODE_ROOT      = NodeKind::ROOT;
+export i32 NODE_SYSTEM    = NodeKind::SYSTEM;
+export i32 NODE_PROCESS   = NodeKind::PROCESS;
+export i32 NODE_DEVICE    = NodeKind::DEVICE;
+export i32 NODE_DIRECTORY = NodeKind::DIRECTORY;
+export i32 NODE_FILE      = NodeKind::FILE;
+export i32 NODE_UI        = NodeKind::UI;
+export i32 NODE_DESKTOP   = NodeKind::DESKTOP;
+export i32 NODE_WINDOW    = NodeKind::WINDOW;
+export i32 NODE_BOX       = NodeKind::BOX;
+export i32 NODE_TEXT      = NodeKind::TEXT;
+export i32 NODE_BUTTON    = NodeKind::BUTTON;
+export i32 NODE_TIMER     = NodeKind::TIMER;
+export i32 NODE_COLUMN    = NodeKind::COLUMN;
+export i32 NODE_ROW       = NodeKind::ROW;
+export i32 NODE_TEXT_INPUT = NodeKind::TEXT_INPUT;
+export i32 NODE_CHECKBOX  = NodeKind::CHECKBOX;
+export i32 NODE_SEPARATOR = NodeKind::SEPARATOR;
+export i32 NODE_PANEL     = NodeKind::PANEL;
+export i32 NODE_TASKBAR   = NodeKind::TASKBAR;
+export i32 NODE_TEXT_AREA = NodeKind::TEXT_AREA;
+export i32 NODE_LIST      = NodeKind::LIST;
+export i32 NODE_MENU      = NodeKind::MENU;
+
+export i32 ROLE_NONE      = NodeRole::NONE;
+export i32 ROLE_ROOT      = NodeRole::ROOT;
+export i32 ROLE_DESKTOP   = NodeRole::DESKTOP;
+export i32 ROLE_WINDOW    = NodeRole::WINDOW;
+export i32 ROLE_BUTTON    = NodeRole::BUTTON;
+export i32 ROLE_TEXT      = NodeRole::TEXT;
+export i32 ROLE_TEXTBOX   = NodeRole::TEXTBOX;
+export i32 ROLE_CHECKBOX  = NodeRole::CHECKBOX;
+export i32 ROLE_TOOLBAR   = NodeRole::TOOLBAR;
+export i32 ROLE_SEPARATOR = NodeRole::SEPARATOR;
+export i32 ROLE_TEXTAREA  = NodeRole::TEXTAREA;
+export i32 ROLE_LIST      = NodeRole::LIST;
+export i32 ROLE_MENU      = NodeRole::MENU;
+
+export i32 STATE_VISIBLE      = NodeState::VISIBLE;
+export i32 STATE_ENABLED      = NodeState::ENABLED;
+export i32 STATE_HOVERED      = NodeState::HOVERED;
+export i32 STATE_PRESSED      = NodeState::PRESSED;
+export i32 STATE_FOCUSED      = NodeState::FOCUSED;
+export i32 STATE_HIT_TESTABLE = NodeState::HIT_TESTABLE;
+export i32 STATE_CHECKED      = NodeState::CHECKED;
+export i32 STATE_MAXIMIZED    = NodeState::MAXIMIZED;
+export i32 STATE_MINIMIZED    = NodeState::MINIMIZED;
+
+export i32 STYLE_BOLD    = NodeStyle::BOLD;
+export i32 STYLE_PRIMARY = NodeStyle::PRIMARY;
+export i32 STYLE_CENTER  = NodeStyle::CENTER;
+export i32 STYLE_READONLY = NodeStyle::READONLY;
 
 // Node layout (offsets, bytes; measured u16=2B, pointers 4B-aligned, no tail
 // padding): id=0 kind=2 name=4 parent=8 first_child=10 next_sibling=12 role=14
@@ -399,7 +458,7 @@ export void node_extent(Node *n) {
     i32 y = n->y;
     i32 w = n->w;
     i32 h = n->h;
-    i32 kw = NODE_WINDOW;
+    i32 kw = NodeKind::WINDOW;
     if (n->kind == kw) {
         i32 s = ui_scale();
         i32 size = theme.shadow_size() * s;
@@ -531,8 +590,8 @@ export void relayout_row(Node *row) {
 }
 
 export void relayout_container(Node *n) {
-    i32 kc = NODE_COLUMN;
-    i32 kr = NODE_ROW;
+    i32 kc = NodeKind::COLUMN;
+    i32 kr = NodeKind::ROW;
     i32 k = n->kind;
     if (k == kc) { relayout_column(n); }
     if (k == kr) { relayout_row(n); }
@@ -579,7 +638,7 @@ export void set_text(i32 id, char *text) {
     // clipping, layout, and hit testing all agree. Windows and buttons also
     // have text, but their authored layout bounds must never be replaced by
     // caption size.
-    i32 kt = NODE_TEXT;
+    i32 kt = NodeKind::TEXT;
     if (n->kind == kt) {
         n->w = (u16)text_width_of(n);
         n->h = (u16)text_height_of(n);
@@ -628,7 +687,7 @@ export void set_style(i32 id, i32 style) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
     n->style = (u16)style;
-    i32 kt = NODE_TEXT;
+    i32 kt = NodeKind::TEXT;
     if (n->kind == kt) {
         n->w = (u16)text_width_of(n);
         n->h = (u16)text_height_of(n);
@@ -651,17 +710,17 @@ export void set_column_layout(i32 id, i32 padding, i32 gap) {
 // must not damage its area; windows repaint when focus changes (title bar).
 export i32 state_is_visible(Node *n, i32 flag) {
     i32 kind = n->kind;
-    i32 kb = NODE_BUTTON;
-    i32 kc = NODE_CHECKBOX;
-    i32 ki = NODE_TEXT_INPUT;
-    i32 kw = NODE_WINDOW;
-    i32 kta = NODE_TEXT_AREA;
-    i32 kl = NODE_LIST;
-    i32 km = NODE_MENU;
-    i32 hovered = STATE_HOVERED;
-    i32 pressed = STATE_PRESSED;
-    i32 focused = STATE_FOCUSED;
-    i32 hit_testable = STATE_HIT_TESTABLE;
+    i32 kb = NodeKind::BUTTON;
+    i32 kc = NodeKind::CHECKBOX;
+    i32 ki = NodeKind::TEXT_INPUT;
+    i32 kw = NodeKind::WINDOW;
+    i32 kta = NodeKind::TEXT_AREA;
+    i32 kl = NodeKind::LIST;
+    i32 km = NodeKind::MENU;
+    i32 hovered = NodeState::HOVERED;
+    i32 pressed = NodeState::PRESSED;
+    i32 focused = NodeState::FOCUSED;
+    i32 hit_testable = NodeState::HIT_TESTABLE;
     if (flag == hovered) {
         if (kind == kb) { return 1; }
         if (kind == kc) { return 1; }
@@ -780,11 +839,11 @@ export void fire_change(Node *n) {
 export i32 dispatch_click(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return 0; }
-    i32 kc = NODE_CHECKBOX;
+    i32 kc = NodeKind::CHECKBOX;
     if (n->kind == kc) {
-        i32 checked = STATE_CHECKED;
+        i32 checked = NodeState::CHECKED;
         i32 now = n->state & checked;
-        set_state_flag(id, STATE_CHECKED, now == 0);
+        set_state_flag(id, NodeState::CHECKED, now == 0);
         fire_change(n);
     }
     i32 handler = n->on_click;
@@ -803,7 +862,7 @@ export i32 dispatch_click(i32 id) {
 export void content_origin(Node *parent) {
     g_ext_x = parent->x;
     g_ext_y = parent->y;
-    i32 kw = NODE_WINDOW;
+    i32 kw = NodeKind::WINDOW;
     if (parent->kind == kw) {
         g_ext_y = g_ext_y + theme.titlebar_h() * ui_scale();
     }
@@ -897,10 +956,10 @@ export void bring_to_front(i32 id) {
 // List/Menu); everyone else points at a string the caller owns.
 export i32 owns_buffer(Node *n) {
     i32 k = n->kind;
-    i32 ki = NODE_TEXT_INPUT;
-    i32 kta = NODE_TEXT_AREA;
-    i32 kl = NODE_LIST;
-    i32 km = NODE_MENU;
+    i32 ki = NodeKind::TEXT_INPUT;
+    i32 kta = NodeKind::TEXT_AREA;
+    i32 kl = NodeKind::LIST;
+    i32 km = NodeKind::MENU;
     if (k == ki) { return 1; }
     if (k == kta) { return 1; }
     if (k == kl) { return 1; }
@@ -975,7 +1034,7 @@ export i32 next_sibling(i32 id) {
 // The window containing a node (or the node itself if it is a window); 0 if
 // it is not inside one.
 export i32 window_of(i32 id) {
-    i32 kw = NODE_WINDOW;
+    i32 kw = NodeKind::WINDOW;
     i32 cur = id;
     while (cur != 0) {
         Node *n = node_ptr(cur);

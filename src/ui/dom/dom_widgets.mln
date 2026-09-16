@@ -7,7 +7,7 @@ import theme from "../theme.mln";
 import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
 import { Window, Text, Button, Panel, Box, TextInput, TextArea, Checkbox, Row, Column, List, Taskbar, Menu, Separator, PrimaryButton, Label } from "dom_elements.mln";
 import dom from "dom.mln";
-import { Node } from "dom.mln";
+import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
 import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
 // --- focus / window management -----------------------------------------------------------
 
@@ -30,12 +30,12 @@ export i32 focused_node() {
 // Keyboard focus. Only one node holds it; 0 clears it.
 export void set_focus(i32 id) {
     if (id == dom.get_g_focus_id()) { return; }
-    if (dom.get_g_focus_id() != 0) { dom.set_state_flag(dom.get_g_focus_id(), dom.STATE_FOCUSED, 0); }
+    if (dom.get_g_focus_id() != 0) { dom.set_state_flag(dom.get_g_focus_id(), NodeState::FOCUSED, 0); }
     dom.set_g_focus_id(0);
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
     dom.set_g_focus_id(id);
-    dom.set_state_flag(id, dom.STATE_FOCUSED, 1);
+    dom.set_state_flag(id, NodeState::FOCUSED, 1);
 }
 
 // Make a window the active one: it comes to the front, gets the focused
@@ -43,17 +43,17 @@ export void set_focus(i32 id) {
 export void focus_window(i32 win) {
     Node *n = dom.node_ptr(win);
     if (n == 0) { return; }
-    i32 kw = dom.NODE_WINDOW;
+    i32 kw = NodeKind::WINDOW;
     if (n->kind != kw) { return; }
-    i32 minimized = dom.STATE_MINIMIZED;
+    i32 minimized = NodeState::MINIMIZED;
     if ((n->state & minimized) != 0) {
-        dom.set_state_flag(win, dom.STATE_MINIMIZED, 0);
-        dom.set_state_flag(win, dom.STATE_VISIBLE, 1);
+        dom.set_state_flag(win, NodeState::MINIMIZED, 0);
+        dom.set_state_flag(win, NodeState::VISIBLE, 1);
     }
     if (dom.get_g_active_window() != win) {
-        if (dom.get_g_active_window() != 0) { dom.set_state_flag(dom.get_g_active_window(), dom.STATE_FOCUSED, 0); }
+        if (dom.get_g_active_window() != 0) { dom.set_state_flag(dom.get_g_active_window(), NodeState::FOCUSED, 0); }
         dom.set_g_active_window(win);
-        dom.set_state_flag(win, dom.STATE_FOCUSED, 1);
+        dom.set_state_flag(win, NodeState::FOCUSED, 1);
         if (dom.window_of(dom.get_g_focus_id()) != win) { set_focus(0); }
         dom.damage_node(dom.get_g_taskbar_id()); // the active entry's highlight moved
     }
@@ -62,8 +62,8 @@ export void focus_window(i32 win) {
 
 // After a window goes away, activate the top-most remaining one.
 export void activate_topmost() {
-    i32 kw = dom.NODE_WINDOW;
-    i32 minimized = dom.STATE_MINIMIZED;
+    i32 kw = NodeKind::WINDOW;
+    i32 minimized = NodeState::MINIMIZED;
     i32 top = 0;
     i32 child_id = dom.first_child(dom.get_g_desktop_node_id());
     while (child_id != 0) {
@@ -109,11 +109,11 @@ export void resize_window(i32 win, i32 w, i32 h) {
 export void minimize_window(i32 win) {
     Node *n = dom.node_ptr(win);
     if (n == 0) { return; }
-    dom.set_state_flag(win, dom.STATE_MINIMIZED, 1);
-    dom.set_state_flag(win, dom.STATE_VISIBLE, 0);
+    dom.set_state_flag(win, NodeState::MINIMIZED, 1);
+    dom.set_state_flag(win, NodeState::VISIBLE, 0);
     if (dom.window_of(dom.get_g_focus_id()) == win) { set_focus(0); }
     if (dom.get_g_active_window() == win) {
-        dom.set_state_flag(win, dom.STATE_FOCUSED, 0);
+        dom.set_state_flag(win, NodeState::FOCUSED, 0);
         dom.set_g_active_window(0);
         activate_topmost();
     }
@@ -122,11 +122,11 @@ export void minimize_window(i32 win) {
 }
 
 export i32 is_minimized(i32 win) {
-    return dom.get_state_flag(win, dom.STATE_MINIMIZED);
+    return dom.get_state_flag(win, NodeState::MINIMIZED);
 }
 
 export i32 is_maximized(i32 win) {
-    return dom.get_state_flag(win, dom.STATE_MAXIMIZED);
+    return dom.get_state_flag(win, NodeState::MAXIMIZED);
 }
 
 // Fill the desktop (above the taskbar), remembering the old bounds; a second
@@ -134,13 +134,13 @@ export i32 is_maximized(i32 win) {
 export void maximize_window(i32 win) {
     Node *n = dom.node_ptr(win);
     if (n == 0) { return; }
-    i32 maximized = dom.STATE_MAXIMIZED;
+    i32 maximized = NodeState::MAXIMIZED;
     if ((n->state & maximized) != 0) {
         i32 rx = n->sx;
         i32 ry = n->sy;
         dom.move_node(win, rx - n->x, ry - n->y);
         resize_window(win, n->sw, n->sh);
-        dom.set_state_flag(win, dom.STATE_MAXIMIZED, 0);
+        dom.set_state_flag(win, NodeState::MAXIMIZED, 0);
         return;
     }
     n->sx = n->x;
@@ -151,7 +151,7 @@ export void maximize_window(i32 win) {
     i32 dh = graphics.display_height() - taskbar_height();
     dom.move_node(win, 0 - n->x, 0 - n->y);
     resize_window(win, dw, dh);
-    dom.set_state_flag(win, dom.STATE_MAXIMIZED, 1);
+    dom.set_state_flag(win, NodeState::MAXIMIZED, 1);
 }
 
 // Chrome geometry, in display pixels. Three discs sit at the left of the
@@ -332,7 +332,7 @@ export i32 input_handle(Node *n, i32 type, i32 code) {
 
 export i32 is_readonly(Node *n) {
     i32 st = n->style;
-    i32 ro = dom.STYLE_READONLY;
+    i32 ro = NodeStyle::READONLY;
     if ((st & ro) != 0) { return 1; }
     return 0;
 }
@@ -499,7 +499,7 @@ export i32 text_area_handle(Node *n, i32 type, i32 code, i32 mods) {
 export void append_text(i32 id, char *s) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
-    i32 kta = dom.NODE_TEXT_AREA;
+    i32 kta = NodeKind::TEXT_AREA;
     if (n->kind != kta) { return; }
     char *buf = (char*)n->text;
     i32 cap = n->cap;
@@ -585,8 +585,8 @@ export void clear_text_area(i32 id) {
 export void scroll_by(i32 id, i32 lines) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
-    i32 kta = dom.NODE_TEXT_AREA;
-    i32 kl = dom.NODE_LIST;
+    i32 kta = NodeKind::TEXT_AREA;
+    i32 kl = NodeKind::LIST;
     if (n->kind != kta) { if (n->kind != kl) { return; } }
     i32 total = line_of(n, n->len) + 1;
     i32 rows = visible_lines(n);
@@ -615,7 +615,7 @@ export void dispatch_wheel(i32 id, i32 steps) {
 export void list_set_items(i32 id, char *items) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
-    i32 kl = dom.NODE_LIST;
+    i32 kl = NodeKind::LIST;
     if (n->kind != kl) { return; }
     char *buf = (char*)n->text;
     i32 cap = n->cap;
@@ -818,8 +818,8 @@ export i32 open_menu(i32 x, i32 y, char *items, i32 handler, i32 target) {
     if (x < 0) { x = 0; }
     if (y < 0) { y = 0; }
 
-    i32 id = dom.create_node(dom.NODE_MENU, "menu");
-    dom.set_role(id, dom.ROLE_MENU);
+    i32 id = dom.create_node(NodeKind::MENU, "menu");
+    dom.set_role(id, NodeRole::MENU);
     Node *n = dom.node_ptr(id);
     i32 cap = i + 2;
     char *buf = (char*)heap.alloc(cap);
@@ -835,8 +835,8 @@ export i32 open_menu(i32 x, i32 y, char *items, i32 handler, i32 target) {
     n->h = (u16)h;
     n->sel = 0;
     n->on_change = 0;
-    dom.set_state_flag(id, dom.STATE_VISIBLE, 1);
-    dom.set_state_flag(id, dom.STATE_HIT_TESTABLE, 1);
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
     // Appended to the desktop like a window, but painted last (see
     // paint_desktop) and hit-tested first (see find_at).
     dom.append_child(dom.get_g_desktop_node_id(), id);
@@ -878,12 +878,12 @@ export void menu_click(i32 px, i32 py) {
 
 export i32 is_focusable(Node *n) {
     i32 k = n->kind;
-    i32 ki = dom.NODE_TEXT_INPUT;
-    i32 kta = dom.NODE_TEXT_AREA;
-    i32 kb = dom.NODE_BUTTON;
-    i32 kc = dom.NODE_CHECKBOX;
-    i32 kl = dom.NODE_LIST;
-    i32 visible = dom.STATE_VISIBLE;
+    i32 ki = NodeKind::TEXT_INPUT;
+    i32 kta = NodeKind::TEXT_AREA;
+    i32 kb = NodeKind::BUTTON;
+    i32 kc = NodeKind::CHECKBOX;
+    i32 kl = NodeKind::LIST;
+    i32 visible = NodeState::VISIBLE;
     if ((n->state & visible) == 0) { return 0; }
     if (k == ki) { return 1; }
     if (k == kta) { return 1; }
@@ -963,11 +963,11 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
         }
     }
     i32 kind = n->kind;
-    i32 ki = dom.NODE_TEXT_INPUT;
-    i32 kta = dom.NODE_TEXT_AREA;
-    i32 kl = dom.NODE_LIST;
-    i32 kb = dom.NODE_BUTTON;
-    i32 kc = dom.NODE_CHECKBOX;
+    i32 ki = NodeKind::TEXT_INPUT;
+    i32 kta = NodeKind::TEXT_AREA;
+    i32 kl = NodeKind::LIST;
+    i32 kb = NodeKind::BUTTON;
+    i32 kc = NodeKind::CHECKBOX;
     if (kind == ki) {
         i32 r = input_handle(n, type, code);
         if (r != 0) { dom.damage_node(id); dom.touch(); }
@@ -999,7 +999,7 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
 export void set_input_text(i32 id, char *s) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
-    i32 ki = dom.NODE_TEXT_INPUT;
+    i32 ki = NodeKind::TEXT_INPUT;
     if (n->kind != ki) { return; }
     char *buf = (char*)n->text;
     i32 cap = n->cap;
@@ -1040,7 +1040,7 @@ export void tick() {
 
 export i32 create_timer(i32 interval, i32 handler) {
     i32 *g_timer_ids = dom.get_g_timer_ids();
-    i32 id = dom.create_node(dom.NODE_TIMER, "timer");
+    i32 id = dom.create_node(NodeKind::TIMER, "timer");
     Node *t = dom.node_ptr(id);
     t->interval = interval;
     t->on_tick = handler;

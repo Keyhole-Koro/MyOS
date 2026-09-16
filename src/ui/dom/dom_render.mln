@@ -8,7 +8,7 @@ import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
 import { Window, Text, Button, Panel, Box, TextInput, TextArea, Checkbox, Row, Column, List, Taskbar, Menu, Separator, PrimaryButton, Label } from "dom_elements.mln";
 import dom_widgets from "dom_widgets.mln";
 import dom from "dom.mln";
-import { Node } from "dom.mln";
+import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
 import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
 // --- renderer ---------------------------------------------------------------------------------
 // Walk the UI subtree and paint each node with graphics.*. The renderer and
@@ -32,8 +32,8 @@ export void draw_window(Node *n) {
     i32 w = n->w;
     i32 h = n->h;
     i32 state = n->state;
-    i32 focused_bit = dom.STATE_FOCUSED;
-    i32 hovered_bit = dom.STATE_HOVERED;
+    i32 focused_bit = NodeState::FOCUSED;
+    i32 hovered_bit = NodeState::HOVERED;
     i32 active = state & focused_bit;
     i32 hovered = state & hovered_bit;
 
@@ -135,9 +135,9 @@ export void draw_button(Node *n) {
     i32 w = n->w;
     i32 h = n->h;
     i32 state = n->state;
-    i32 pressed_bit = dom.STATE_PRESSED;
-    i32 hovered_bit = dom.STATE_HOVERED;
-    i32 primary_bit = dom.STYLE_PRIMARY;
+    i32 pressed_bit = NodeState::PRESSED;
+    i32 hovered_bit = NodeState::HOVERED;
+    i32 primary_bit = NodeStyle::PRIMARY;
     i32 style = n->style;
     i32 r = theme.button_radius() * s;
 
@@ -158,7 +158,7 @@ export void draw_button(Node *n) {
 
     graphics.fill_round_rect(x, y, w, h, r, face);
     graphics.draw_round_rect(x, y, w, h, r, s, border);
-    i32 focused_bit = dom.STATE_FOCUSED;
+    i32 focused_bit = NodeState::FOCUSED;
     if ((state & focused_bit) != 0) {
         // Keyboard focus ring just outside the button.
         i32 ring = theme.accent();
@@ -207,7 +207,7 @@ export void draw_rows_box(Node *n, i32 focused) {
 export void draw_text_area(Node *n) {
     i32 s = dom.ui_scale();
     i32 state = n->state;
-    i32 focused_bit = dom.STATE_FOCUSED;
+    i32 focused_bit = NodeState::FOCUSED;
     i32 focused = state & focused_bit;
     i32 x = n->x;
     i32 y = n->y;
@@ -305,7 +305,7 @@ export void draw_rows(Node *n, i32 hl, i32 hl_color, i32 hl_fg) {
 
 export void draw_list(Node *n) {
     i32 state = n->state;
-    i32 focused_bit = dom.STATE_FOCUSED;
+    i32 focused_bit = NodeState::FOCUSED;
     i32 focused = state & focused_bit;
     draw_rows_box(n, focused);
     i32 sel = n->sel - 1;
@@ -337,7 +337,7 @@ export void draw_text_node(Node *n) {
     i32 color = theme.text_primary();
     color = node_fg(n, color);
     i32 bold = dom.text_bold(n);
-    i32 center_bit = dom.STYLE_CENTER;
+    i32 center_bit = NodeStyle::CENTER;
     i32 style = n->style;
     if ((style & center_bit) != 0) {
         graphics.draw_label_centered(n->x, n->y, n->w, (char*)n->text, color, bold, s);
@@ -353,7 +353,7 @@ export void draw_text_input(Node *n) {
     i32 w = n->w;
     i32 h = n->h;
     i32 state = n->state;
-    i32 focused_bit = dom.STATE_FOCUSED;
+    i32 focused_bit = NodeState::FOCUSED;
     i32 focused = state & focused_bit;
     i32 r = theme.input_radius() * s;
     i32 pad = theme.input_padding_x() * s;
@@ -396,9 +396,9 @@ export void draw_checkbox(Node *n) {
     i32 y = n->y;
     i32 h = n->h;
     i32 state = n->state;
-    i32 checked_bit = dom.STATE_CHECKED;
-    i32 hovered_bit = dom.STATE_HOVERED;
-    i32 pressed_bit = dom.STATE_PRESSED;
+    i32 checked_bit = NodeState::CHECKED;
+    i32 hovered_bit = NodeState::HOVERED;
+    i32 pressed_bit = NodeState::PRESSED;
     i32 checked = state & checked_bit;
     i32 box = theme.checkbox_size() * s;
     i32 r = theme.checkbox_radius() * s;
@@ -417,7 +417,7 @@ export void draw_checkbox(Node *n) {
     }
     graphics.fill_round_rect(x, by, box, box, r, face);
     graphics.draw_round_rect(x, by, box, box, r, s, border);
-    i32 focused_bit = dom.STATE_FOCUSED;
+    i32 focused_bit = NodeState::FOCUSED;
     if ((state & focused_bit) != 0) {
         i32 ring = theme.accent();
         graphics.draw_round_rect(x - 2 * s, by - 2 * s, box + 4 * s, box + 4 * s, r + 2 * s, s, ring);
@@ -465,7 +465,7 @@ export void draw_panel(Node *n) {
 // 0 when there is none. Walks the desktop's children, so a closed window
 // drops out and ids keep creation order.
 export i32 next_window_after(i32 after) {
-    i32 kw = dom.NODE_WINDOW;
+    i32 kw = NodeKind::WINDOW;
     i32 best = 0;
     i32 child_id = dom.first_child(dom.get_g_desktop_node_id());
     while (child_id != 0) {
@@ -638,18 +638,18 @@ export void draw_node(Node *n) {
     // Copy the NODE_* u16 globals into i32 locals before comparing. Comparing an
     // i32 against a `u16` global directly (kind == dom.NODE_WINDOW) miscompiles and is
     // always false, even when both hold the same value; the local coerces cleanly.
-    i32 kw = dom.NODE_WINDOW;
-    i32 kbox = dom.NODE_BOX;
-    i32 kb = dom.NODE_BUTTON;
-    i32 kt = dom.NODE_TEXT;
-    i32 ki = dom.NODE_TEXT_INPUT;
-    i32 kc = dom.NODE_CHECKBOX;
-    i32 ks = dom.NODE_SEPARATOR;
-    i32 kp = dom.NODE_PANEL;
-    i32 ktb = dom.NODE_TASKBAR;
-    i32 kta = dom.NODE_TEXT_AREA;
-    i32 kl = dom.NODE_LIST;
-    i32 km = dom.NODE_MENU;
+    i32 kw = NodeKind::WINDOW;
+    i32 kbox = NodeKind::BOX;
+    i32 kb = NodeKind::BUTTON;
+    i32 kt = NodeKind::TEXT;
+    i32 ki = NodeKind::TEXT_INPUT;
+    i32 kc = NodeKind::CHECKBOX;
+    i32 ks = NodeKind::SEPARATOR;
+    i32 kp = NodeKind::PANEL;
+    i32 ktb = NodeKind::TASKBAR;
+    i32 kta = NodeKind::TEXT_AREA;
+    i32 kl = NodeKind::LIST;
+    i32 km = NodeKind::MENU;
 
     if (kind == kta) {
         draw_text_area(n);
@@ -707,7 +707,7 @@ export void render(i32 node_id) {
 
     Node *n = dom.node_ptr(node_id);
     if (n == 0) { return; }
-    if ((n->state & dom.STATE_VISIBLE) == 0) { return; }
+    if ((n->state & NodeState::VISIBLE) == 0) { return; }
 
     i32 in_damage = node_in_damage(n);
     if (in_damage != 0) {
