@@ -64,13 +64,21 @@ export void set_desktop_menu(char *items, i32 handler) {
     g_desktop_menu_handler = handler;
 }
 
+enum WindowMenuAction {
+    WINDOW_MENU_MINIMIZE,
+    WINDOW_MENU_MAXIMIZE,
+    WINDOW_MENU_CLOSE
+}
+
 // Window context menu: the same three actions as the title-bar buttons.
-void on_window_menu(i32 index) {
+void on_window_menu(WindowMenuAction action) {
     i32 win = dom_widgets.menu_target();
     if (win == 0) { return; }
-    if (index == 0) { dom_widgets.minimize_window(win); }
-    if (index == 1) { dom_widgets.maximize_window(win); }
-    if (index == 2) { g_hot_id = 0; dom_widgets.close_window(win); }
+    case action of {
+        WindowMenuAction::MINIMIZE -> dom_widgets.minimize_window(win);
+        WindowMenuAction::MAXIMIZE -> dom_widgets.maximize_window(win);
+        WindowMenuAction::CLOSE -> ({ g_hot_id = 0; dom_widgets.close_window(win); });
+    };
 }
 
 // Node kinds the compositor treats specially. dom's NODE_* are u16 exports,
