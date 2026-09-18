@@ -2,6 +2,7 @@ import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 package compositor;
 
 import dom from "dom/dom.mln";
+import { NodeKind } from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
 import dom_render from "dom/dom_render.mln";
 import graphics from "graphics.mln";
@@ -81,12 +82,6 @@ void on_window_menu(WindowMenuAction action) {
     };
 }
 
-// Node kinds the compositor treats specially. dom's NODE_* are u16 exports,
-// which cannot be passed around as values from another package.
-i32 KIND_TEXT_INPUT = 15;
-i32 KIND_TEXT_AREA = 20;
-i32 KIND_LIST = 21;
-
 void on_press(i32 ex, i32 ey) {
     // A click while a menu is open either picks an item or dismisses the
     // menu; either way it goes no further.
@@ -146,19 +141,16 @@ void on_press(i32 ex, i32 ey) {
         Some(v) -> v;
         None -> ({ return; });
     };
-    if (kind == KIND_TEXT_INPUT) {
-        dom_widgets.set_focus(hit);
-        return;
-    }
-    if (kind == KIND_TEXT_AREA) {
-        dom_widgets.set_focus(hit);
-        return;
-    }
-    if (kind == KIND_LIST) {
-        dom_widgets.set_focus(hit);
-        dom_widgets.list_click(hit, ex, ey);
-        return;
-    }
+    case kind of {
+        NodeKind::TEXT_INPUT -> ({ dom_widgets.set_focus(hit); return; });
+        NodeKind::TEXT_AREA  -> ({ dom_widgets.set_focus(hit); return; });
+        NodeKind::LIST       -> ({
+            dom_widgets.set_focus(hit);
+            dom_widgets.list_click(hit, ex, ey);
+            return;
+        });
+        _ -> 0;
+    };
     dom.set_pressed(hit, 1);
     g_pressed_id = hit;
 }
