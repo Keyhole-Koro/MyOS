@@ -1,134 +1,49 @@
 package notes;
 
-import dom_widgets from "../ui/dom/dom_widgets.mln";
-import dom from "../ui/dom/dom.mln";
 import dom_elements from "../ui/dom/dom_elements.mln";
-import { Option } from "../../../../toolchain/MyStdLib/option.mln";
-import graphics from "../ui/graphics.mln";
-import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
+import ui from "../app/ui.mln";
 
 // "Notes": a small form that exercises keyboard input. Two text fields, a
-// checkbox and a separator, plus a label that echoes what was typed. The
-// taskbar launcher opens a fresh instance each time, so the handlers must not
-// assume a single window: each instance's echo label is looked up from the
-// field that changed via a small id table.
+// checkbox and a separator, plus a label that echoes what was typed. Every
+// launch is its own Notes instance, so the fields and the echo label are
+// per-window state on the struct; each new window cascades down and right
+// of the previous one.
 
-i32 INSTANCES = 8;
-i32 g_field_ids[8];
-i32 g_echo_ids[8];
-i32 g_count = 0;
 i32 g_opened = 0;
 
-char g_echo_buf[768]; // 8 slots x 96 bytes
+@app
+struct Notes {
+    i32 title;
+    i32 body;
+    i32 echo;
+};
 
-/**
- * Looks up the instance slot index corresponding to a text input field ID.
- * @param field_id TextInput node ID.
- * @return Option containing the slot index if found, or None.
- */
-Option<i32> echo_for(i32 field_id) {
-    i32 i = 0;
-    while (i < g_count) {
-        if (g_field_ids[i] == field_id) { return Some(i); }
-        i++;
-    }
-    return None;
-}
-
-/**
- * Change handler for note text fields: updates the instance's echo preview label.
- * @param id TextInput node ID that changed.
- */
-void on_change(i32 id) {
-    i32 slot = case echo_for(id) of { Some(v) -> v; None -> ({ return; }); };
-    char *buf = &g_echo_buf[slot * 96];
-    i32 n = strbuf.reset(buf);
-    n = strbuf.append(buf, 96, n, "You typed: ");
-    char *typed = dom.text_of(id);
-    if (typed != 0) {
-        n = strbuf.append(buf, 96, n, typed);
-    }
-    dom.set_text(g_echo_ids[slot], buf);
-}
-
-/**
- * Click handler for the Clear button: clears both title and body input fields.
- * @param id Button node ID.
- */
-void on_clear(i32 id) {
-    // The Clear button's parent Row sits under the Column that holds the
-    // title field: Column > [Text, TextInput, TextInput, Separator, Checkbox,
-    // Row > [Button]]. Walk up to the column and clear both fields.
-    i32 row = dom.parent_of(id);
-    i32 column = dom.parent_of(row);
-    i32 caption = dom.first_child(column);
-    i32 title = dom.next_sibling(caption);
-    i32 body = dom.next_sibling(title);
-    dom_widgets.set_input_text(title, "");
-    dom_widgets.set_input_text(body, "");
-    on_change(title);
-}
-
-/**
- * Click handler for the completion checkbox.
- * @param id Checkbox node ID.
- */
-void on_done(i32 id) {
-    // Nothing to do beyond the checkbox toggling itself; kept as a handler so
-    // the node is hit-testable (set_on_click marks it) and dumps show it.
-}
-
-/**
- * Constructs the declarative DOM subtree for a Notes window instance.
- * @param x Horizontal window position in logical pixels.
- * @param y Vertical window position in logical pixels.
- * @return Root Window node ID.
- */
-i32 build_ui(i32 x, i32 y) {
-    i32 muted = graphics.rgb(0x6B, 0x72, 0x80);
-    return <Window title="Notes" x={x} y={y} w={380} h={330}>
-        <Column x={24} y={20} w={332} h={270} padding={0} gap={12}>
-            <Label text="Click a field and type. Tab is not wired yet." x={0} y={0} color={muted} bold={0} />
-            <TextInput placeholder="Title" x={0} y={0} w={332} h={34} capacity={64} onChange={on_change} />
-            <TextInput placeholder="Write something..." x={0} y={0} w={332} h={34} capacity={64} onChange={on_change} />
-            <Separator x={0} y={0} w={332} />
-            <Checkbox text="Mark as done" x={0} y={0} checked={1} onClick={on_done} />
-            <Row x={0} y={0} w={332} h={34} padding={0} gap={10}>
-                <Button text="Clear" x={0} y={0} w={90} h={34} onClick={on_clear} />
+i32 (Notes *n) view() {
+    i32 offset = 28 * g_opened;
+    g_opened++;
+    i32 muted = ui.rgb(0x6B, 0x72, 0x80);
+    return <Window title="Notes" x={540 + offset} y={96 + offset} w={380} h={330}>
+        <Column x={24} y={20} w={332} h={270} gap={12}>
+            <Label text="Click a field and type. Tab moves between fields." color={muted} />
+            <TextInput ref={n->title} placeholder="Title" w={332} h={34} capacity={64} onChange={n->changed} />
+            <TextInput ref={n->body} placeholder="Write something..." w={332} h={34} capacity={64} onChange={n->changed} />
+            <Separator w={332} />
+            <Checkbox text="Mark as done" checked={1} />
+            <Row w={332} h={34} gap={10}>
+                <Button text="Clear" w={90} h={34} onClick={n->clear} />
             </Row>
-            <Label text="You typed: " x={0} y={0} color={0} bold={0} />
+            <Label ref={n->echo} text="You typed: " />
         </Column>
     </Window>;
 }
 
-/**
- * Mounts a new cascaded Notes window instance to the desktop.
- * @return Window node ID, or 0 if the maximum instance limit is reached.
- */
-export i32 mount() {
-    if (g_count >= INSTANCES) { return 0; }
-    i32 offset = 28 * g_opened;
-    g_opened++;
-    i32 win = build_ui(540 + offset, 96 + offset);
-    dom.append_child(dom.desktop_id(), win);
+// Either field changed: echo its text.
+void (Notes *n) changed(i32 id) {
+    ui.set_text_fmt(n->echo, "You typed: %s", (i32)ui.text_of(id), 0);
+}
 
-    i32 column = dom.first_child(win);
-    i32 caption = dom.first_child(column);
-    i32 title = dom.next_sibling(caption);
-    i32 body = dom.next_sibling(title);
-    i32 sep = dom.next_sibling(body);
-    i32 done = dom.next_sibling(sep);
-    i32 row = dom.next_sibling(done);
-    i32 echo = dom.next_sibling(row);
-
-    // Both fields echo into the same label.
-    g_field_ids[g_count] = title;
-    g_echo_ids[g_count] = echo;
-    g_count++;
-    if (g_count < INSTANCES) {
-        g_field_ids[g_count] = body;
-        g_echo_ids[g_count] = echo;
-        g_count++;
-    }
-    return win;
+void (Notes *n) clear(i32 id) {
+    ui.input_set(n->title, "");
+    ui.input_set(n->body, "");
+    n->changed(n->title);
 }

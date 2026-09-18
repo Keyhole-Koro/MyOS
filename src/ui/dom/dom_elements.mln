@@ -289,181 +289,214 @@ export i32 create_list(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
 // parameter of the same name, and children passed to append_child. The element
 // vocabulary therefore lives here rather than in the compiler: adding an
 // element means adding a function, and its parameters are its properties.
+//
+// A parameter with a default is an optional property: position defaults to
+// the parent's origin (which is what a child of a Column or Row wants, since
+// the container places it), sizes to something sensible, handlers to none.
+// `testId` names the node for automation. Handler parameters (on*) receive
+// functions with the dispatcher ABI, `void (i32 owner, i32 id, i32 arg)`;
+// the compiler wraps methods and plain handlers into it, see
+// toolchain/MyLangCompiler/docs/source-modifiers.md.
 // ---------------------------------------------------------------------------
 
-/**
- * Lowers JSX `<Window title="..." x={...} y={...} w={...} h={...} />`.
- * @param title Window title text.
- * @param x Logical X coordinate.
- * @param y Logical Y coordinate.
- * @param w Logical width.
- * @param h Logical height.
- * @return DOM Node ID.
- */
-export i32 Window(char *title, i32 x, i32 y, i32 w, i32 h) {
-    return create_window(title, x, y, w, h);
+// Children of an element are attached with the `append_child` in scope;
+// re-exported here so a markup file needs only this package.
+export void append_child(i32 parent, i32 child) { dom.append_child(parent, child); }
+
+void tag(i32 id, char *testId) {
+    if (testId[0] != 0) { dom.set_test_id(id, testId); }
 }
 
 /**
- * Lowers JSX `<Button text="..." x={...} y={...} w={...} h={...} onClick={...} />`.
- * @param text Button label text.
- * @param x Logical X coordinate.
- * @param y Logical Y coordinate.
- * @param w Logical width.
- * @param h Logical height.
- * @param onClick Click handler function pointer.
+ * Lowers JSX `<Window title="..." x={...} y={...} w={...} h={...} testId="..." />`.
+ * @param title Window title text.
+ * @param x Logical X coordinate (default 0).
+ * @param y Logical Y coordinate (default 0).
+ * @param w Logical width (default 400).
+ * @param h Logical height (default 300).
+ * @param testId Stable automation locator id (default none).
  * @return DOM Node ID.
  */
-export i32 Button(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
-    i32 id = create_button(text, x, y, w, h);
-    dom.set_on_click(id, onClick);
+export i32 Window(char *title, i32 x = 0, i32 y = 0, i32 w = 400, i32 h = 300, char *testId = "") {
+    i32 id = create_window(title, x, y, w, h);
+    tag(id, testId);
     return id;
 }
 
 /**
- * Lowers JSX `<PrimaryButton text="..." x={...} y={...} w={...} h={...} onClick={...} />`.
- * Accent-coloured call to action.
+ * Lowers JSX `<Button text="..." x={...} y={...} w={...} h={...} onClick={...} testId="..." />`.
  * @param text Button label text.
- * @param x Logical X coordinate.
- * @param y Logical Y coordinate.
- * @param w Logical width.
- * @param h Logical height.
- * @param onClick Click handler function pointer.
+ * @param x Logical X coordinate (default 0).
+ * @param y Logical Y coordinate (default 0).
+ * @param w Logical width (default 90).
+ * @param h Logical height (default 34).
+ * @param onClick Click handler function pointer (default none).
+ * @param testId Stable automation locator id (default none).
  * @return DOM Node ID.
  */
-export i32 PrimaryButton(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
+export i32 Button(char *text, i32 x = 0, i32 y = 0, i32 w = 90, i32 h = 34, i32 onClick = 0, char *testId = "") {
+    i32 id = create_button(text, x, y, w, h);
+    dom.set_on_click(id, onClick);
+    tag(id, testId);
+    return id;
+}
+
+/**
+ * Lowers JSX `<PrimaryButton text="..." x={...} y={...} w={...} h={...} onClick={...} testId="..." />`.
+ * Accent-coloured call to action.
+ * @param text Button label text.
+ * @param x Logical X coordinate (default 0).
+ * @param y Logical Y coordinate (default 0).
+ * @param w Logical width (default 90).
+ * @param h Logical height (default 34).
+ * @param onClick Click handler function pointer (default none).
+ * @param testId Stable automation locator id (default none).
+ * @return DOM Node ID.
+ */
+export i32 PrimaryButton(char *text, i32 x = 0, i32 y = 0, i32 w = 90, i32 h = 34, i32 onClick = 0, char *testId = "") {
     i32 id = create_button(text, x, y, w, h);
     dom.set_on_click(id, onClick);
     dom.set_style(id, NodeStyle::PRIMARY);
+    tag(id, testId);
     return id;
 }
 
 /**
- * Lowers JSX `<Text text="..." x={...} y={...} />`.
+ * Lowers JSX `<Text text="..." x={...} y={...} testId="..." />`.
  * @param text Text content string.
- * @param x Logical X coordinate.
- * @param y Logical Y coordinate.
+ * @param x Logical X coordinate (default 0).
+ * @param y Logical Y coordinate (default 0).
+ * @param testId Stable automation locator id (default none).
  * @return DOM Node ID.
  */
-export i32 Text(char *text, i32 x, i32 y) {
-    return create_text(text, x, y);
+export i32 Text(char *text, i32 x = 0, i32 y = 0, char *testId = "") {
+    i32 id = create_text(text, x, y);
+    tag(id, testId);
+    return id;
 }
 
 /**
- * Lowers JSX `<Label text="..." x={...} y={...} color={...} bold={...} />`.
+ * Lowers JSX `<Label text="..." x={...} y={...} color={...} bold={...} testId="..." />`.
  * Text with an explicit colour (graphics.rgb(); 0 = theme default) and weight.
  * @param text Label text string.
- * @param x Logical X coordinate.
- * @param y Logical Y coordinate.
+ * @param x Logical X coordinate (default 0).
+ * @param y Logical Y coordinate (default 0).
  * @param color Text color (RGB, 0 for default).
  * @param bold Non-zero for bold styling.
+ * @param testId Stable automation locator id (default none).
  * @return DOM Node ID.
  */
-export i32 Label(char *text, i32 x, i32 y, i32 color, i32 bold) {
+export i32 Label(char *text, i32 x = 0, i32 y = 0, i32 color = 0, i32 bold = 0, char *testId = "") {
     i32 id = create_text(text, x, y);
     if (bold != 0) { dom.set_style(id, NodeStyle::BOLD); }
     dom.set_color(id, color);
+    tag(id, testId);
     return id;
 }
 
 /**
  * Lowers JSX `<Box x={...} y={...} w={...} h={...} background={...} border={...} />`.
- * @param x Logical X coordinate.
- * @param y Logical Y coordinate.
- * @param w Logical width.
- * @param h Logical height.
- * @param background Background color (RGB).
- * @param border Border color (RGB).
+ * @param x Logical X coordinate (default 0).
+ * @param y Logical Y coordinate (default 0).
+ * @param w Logical width (default 100).
+ * @param h Logical height (default 100).
+ * @param background Background color (RGB, default 0).
+ * @param border Border color (RGB, default 0).
  * @return DOM Node ID.
  */
-export i32 Box(i32 x, i32 y, i32 w, i32 h,
-               i32 background, i32 border) {
+export i32 Box(i32 x = 0, i32 y = 0, i32 w = 100, i32 h = 100,
+               i32 background = 0, i32 border = 0) {
     return create_box(x, y, w, h, background, border);
 }
 
 /**
  * Lowers JSX `<Panel x={...} y={...} w={...} h={...} radius={...} />`.
- * @param x Logical X coordinate.
- * @param y Logical Y coordinate.
- * @param w Logical width.
- * @param h Logical height.
- * @param radius Corner radius in logical pixels.
+ * @param x Logical X coordinate (default 0).
+ * @param y Logical Y coordinate (default 0).
+ * @param w Logical width (default 100).
+ * @param h Logical height (default 100).
+ * @param radius Corner radius in logical pixels (default 0).
  * @return DOM Node ID.
  */
-export i32 Panel(i32 x, i32 y, i32 w, i32 h, i32 radius) {
+export i32 Panel(i32 x = 0, i32 y = 0, i32 w = 100, i32 h = 100, i32 radius = 0) {
     return create_panel(x, y, w, h, radius);
 }
 
 /**
  * Lowers JSX `<Column x={...} y={...} w={...} h={...} padding={...} gap={...} />`.
- * @param x Logical X coordinate.
- * @param y Logical Y coordinate.
- * @param w Logical width.
- * @param h Logical height.
- * @param padding Inset padding in logical pixels.
- * @param gap Gap between children in logical pixels.
+ * @param x Logical X coordinate (default 0).
+ * @param y Logical Y coordinate (default 0).
+ * @param w Logical width (default 100).
+ * @param h Logical height (default 100).
+ * @param padding Inset padding in logical pixels (default 0).
+ * @param gap Gap between children in logical pixels (default 0).
  * @return DOM Node ID.
  */
-export i32 Column(i32 x, i32 y, i32 w, i32 h,
-                  i32 padding, i32 gap) {
+export i32 Column(i32 x = 0, i32 y = 0, i32 w = 100, i32 h = 100,
+                  i32 padding = 0, i32 gap = 0) {
     return create_column(x, y, w, h, padding, gap);
 }
 
 /**
  * Lowers JSX `<Row x={...} y={...} w={...} h={...} padding={...} gap={...} />`.
- * @param x Logical X coordinate.
- * @param y Logical Y coordinate.
- * @param w Logical width.
- * @param h Logical height.
- * @param padding Inset padding in logical pixels.
- * @param gap Gap between children in logical pixels.
+ * @param x Logical X coordinate (default 0).
+ * @param y Logical Y coordinate (default 0).
+ * @param w Logical width (default 100).
+ * @param h Logical height (default 34).
+ * @param padding Inset padding in logical pixels (default 0).
+ * @param gap Gap between children in logical pixels (default 0).
  * @return DOM Node ID.
  */
-export i32 Row(i32 x, i32 y, i32 w, i32 h,
-               i32 padding, i32 gap) {
+export i32 Row(i32 x = 0, i32 y = 0, i32 w = 100, i32 h = 34,
+               i32 padding = 0, i32 gap = 0) {
     return create_row(x, y, w, h, padding, gap);
 }
 
 /**
- * Lowers JSX `<TextInput placeholder="..." x={...} y={...} w={...} h={...} capacity={...} onChange={...} />`.
+ * Lowers JSX `<TextInput placeholder="..." x={...} y={...} w={...} h={...} capacity={...} onChange={...} testId="..." />`.
  * @param placeholder Placeholder text string.
- * @param x Logical X coordinate.
- * @param y Logical Y coordinate.
- * @param w Logical width.
- * @param h Logical height.
- * @param capacity Buffer capacity in bytes.
- * @param onChange Text change callback function pointer.
+ * @param x Logical X coordinate (default 0).
+ * @param y Logical Y coordinate (default 0).
+ * @param w Logical width (default 200).
+ * @param h Logical height (default 34).
+ * @param capacity Buffer capacity in bytes (default 64).
+ * @param onChange Text change callback function pointer (default none).
+ * @param testId Stable automation locator id (default none).
  * @return DOM Node ID.
  */
-export i32 TextInput(char *placeholder, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 onChange) {
+export i32 TextInput(char *placeholder, i32 x = 0, i32 y = 0, i32 w = 200, i32 h = 34, i32 capacity = 64, i32 onChange = 0, char *testId = "") {
     i32 id = create_text_input(placeholder, x, y, w, h, capacity);
     dom.set_on_change(id, onChange);
+    tag(id, testId);
     return id;
 }
 
 /**
- * Lowers JSX `<Checkbox text="..." x={...} y={...} checked={...} onClick={...} />`.
+ * Lowers JSX `<Checkbox text="..." x={...} y={...} checked={...} onClick={...} testId="..." />`.
  * @param text Checkbox label text.
- * @param x Logical X coordinate.
- * @param y Logical Y coordinate.
- * @param checked Initial checked state.
- * @param onClick Click callback function pointer.
+ * @param x Logical X coordinate (default 0).
+ * @param y Logical Y coordinate (default 0).
+ * @param checked Initial checked state (default 0).
+ * @param onClick Click callback function pointer (default none).
+ * @param testId Stable automation locator id (default none).
  * @return DOM Node ID.
  */
-export i32 Checkbox(char *text, i32 x, i32 y, i32 checked, i32 onClick) {
+export i32 Checkbox(char *text, i32 x = 0, i32 y = 0, i32 checked = 0, i32 onClick = 0, char *testId = "") {
     i32 id = create_checkbox(text, x, y, checked);
     dom.set_on_click(id, onClick);
+    dom.set_hit_testable(id, 1); // toggles by itself even with no handler
+    tag(id, testId);
     return id;
 }
 
 /**
  * Lowers JSX `<Separator x={...} y={...} w={...} />`.
- * @param x Logical X coordinate.
- * @param y Logical Y coordinate.
- * @param w Logical width.
+ * @param x Logical X coordinate (default 0).
+ * @param y Logical Y coordinate (default 0).
+ * @param w Logical width (default 100).
  * @return DOM Node ID.
  */
-export i32 Separator(i32 x, i32 y, i32 w) {
+export i32 Separator(i32 x = 0, i32 y = 0, i32 w = 100) {
     return create_separator(x, y, w);
 }
 
@@ -478,40 +511,46 @@ export i32 Timer(i32 interval, i32 onTick) {
 }
 
 /**
- * Lowers JSX `<TextArea name="..." x={...} y={...} w={...} h={...} capacity={...} readonly={...} onChange={...} />`.
+ * Lowers JSX `<TextArea name="..." x={...} y={...} w={...} h={...} capacity={...} readonly={...} onChange={...} testId="..." />`.
  * @param name Node name identifier.
- * @param x Logical X coordinate.
- * @param y Logical Y coordinate.
- * @param w Logical width.
- * @param h Logical height.
- * @param capacity Buffer capacity in bytes.
- * @param readonly Non-zero for read-only / display console mode.
- * @param onChange Text change callback function pointer.
+ * @param x Logical X coordinate (default 0).
+ * @param y Logical Y coordinate (default 0).
+ * @param w Logical width (default 300).
+ * @param h Logical height (default 200).
+ * @param capacity Buffer capacity in bytes (default 1024).
+ * @param readonly Non-zero for read-only / display console mode (default 0).
+ * @param onChange Text change callback function pointer (default none).
+ * @param testId Stable automation locator id (default none).
  * @return DOM Node ID.
  */
-export i32 TextArea(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 readonly, i32 onChange) {
+export i32 TextArea(char *name, i32 x = 0, i32 y = 0, i32 w = 300, i32 h = 200, i32 capacity = 1024, i32 readonly = 0, i32 onChange = 0, char *testId = "") {
     i32 id = create_text_area(name, x, y, w, h, capacity, readonly);
     dom.set_on_change(id, onChange);
+    tag(id, testId);
     return id;
 }
 
 /**
- * Lowers JSX `<List name="..." x={...} y={...} w={...} h={...} capacity={...} onChange={...} onActivate={...} />`.
- * onChange fires when the selection moves, onActivate when a row is clicked again or Enter is pressed.
+ * Lowers JSX `<List name="..." x={...} y={...} w={...} h={...} capacity={...} onChange={...} onActivate={...} testId="..." />`.
+ * onChange fires when the selection moves, onActivate (stored as the click
+ * handler) when a row is clicked again or Enter is pressed.
  * @param name Node name identifier.
- * @param x Logical X coordinate.
- * @param y Logical Y coordinate.
- * @param w Logical width.
- * @param h Logical height.
- * @param capacity Buffer capacity in bytes.
- * @param onChange Selection change callback function pointer.
- * @param onActivate Row activation callback function pointer.
+ * @param x Logical X coordinate (default 0).
+ * @param y Logical Y coordinate (default 0).
+ * @param w Logical width (default 300).
+ * @param h Logical height (default 200).
+ * @param capacity Buffer capacity in bytes (default 1024).
+ * @param onChange Selection change callback function pointer (default none).
+ * @param onActivate Row activation callback function pointer (default none).
+ * @param testId Stable automation locator id (default none).
  * @return DOM Node ID.
  */
-export i32 List(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 onChange, i32 onActivate) {
+export i32 List(char *name, i32 x = 0, i32 y = 0, i32 w = 300, i32 h = 200, i32 capacity = 1024, i32 onChange = 0, i32 onActivate = 0, char *testId = "") {
     i32 id = create_list(name, x, y, w, h, capacity);
     dom.set_on_change(id, onChange);
     dom.set_on_click(id, onActivate);
+    dom.set_hit_testable(id, 1); // rows select on click even with no handler
+    tag(id, testId);
     return id;
 }
 

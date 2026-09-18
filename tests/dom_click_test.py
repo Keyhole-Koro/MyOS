@@ -29,6 +29,14 @@ def main() -> int:
             increment.click()
             expect(counter.get_by_test_id("counter")).to_have_text("clicks: 3")
 
+            # Notes sits behind the Terminal at boot; raise it by clicking a
+            # clear spot on its title bar before typing into it.
+            notes = os.get_by_role("window", name="Notes").snapshot()
+            os._pointer_sequence([
+                {"type": "move", "x": notes.bounds.x + notes.bounds.width - 120, "y": notes.bounds.y + 16},
+                {"type": "down", "button": "left"},
+                {"type": "up", "button": "left"},
+            ])
             title = os.get_by_role("textbox", name="Title")
             title.fill("Hello")
             expect(title).to_have_value("Hello")

@@ -18,11 +18,8 @@ import mmu from "../../../MyKernel/src/mm/mmu.mln";
 import { MmuError } from "../../../MyKernel/src/mm/mmu.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
-import counter from "../apps/counter.dom.mln";
-import notes from "../apps/notes.dom.mln";
-import terminal from "../apps/terminal.dom.mln";
-import files from "../apps/files.dom.mln";
-import editor from "../apps/editor.dom.mln";
+import app from "../app/app.mln";
+import apps_manifest from "../../../../build/apps_manifest.mln";
 
 // System bring-up.
 //
@@ -69,40 +66,9 @@ void enable_kernel_paging() {
     mmu.enable_paging(kpd);
 }
 
-/**
- * Returns newline-separated names of default desktop applications for the app menu.
- * @return String literal containing menu item labels.
- */
-char* menu_items() { return "Terminal\nFiles\nEditor\nNotes\nCounter"; }
-
-/**
- * Launches and focuses an application window corresponding to the given menu item index.
- * @param index Application index (0=Terminal, 1=Files, 2=Editor, 3=Notes, 4=Counter).
- */
-void open_app(i32 index) {
-    i32 win = 0;
-    if (index == 0) { win = terminal.mount(); }
-    if (index == 1) { win = files.mount(); }
-    if (index == 2) { editor.forget_if_closed(); win = editor.open("untitled.txt"); }
-    if (index == 3) { win = notes.mount(); }
-    if (index == 4) { win = counter.mount(); }
-    if (win != 0) { dom_widgets.focus_window(win); }
-}
-
-/**
- * Opens the application launcher popup menu above the taskbar button.
- */
-void launch_menu() {
-    i32 s = dom.ui_scale();
-    i32 y = graphics.display_height() - dom_widgets.taskbar_height() - 190 * s;
-    dom_widgets.open_menu(8 * s, y, menu_items(), open_app, 0);
-}
-
-/**
- * Periodic timer callback that triggers taskbar clock and uptime display refreshes.
- * @param id Timer node ID.
- */
-void on_clock(i32 id) {
+// Once a second: redraw the taskbar so its uptime clock advances. A system
+// timer, so it takes the raw handler ABI.
+void on_clock(i32 owner, i32 id, i32 arg) {
     dom_render.refresh_taskbar();
 }
 
@@ -118,21 +84,23 @@ void kernel_init() {
 
     dom.init();
     dom.create_taskbar();
-    dom_render.set_launcher(launch_menu);
-    compositor.set_desktop_menu(menu_items(), open_app);
     dom_widgets.create_timer(1000, on_clock);
     debug.println("kernel: dom ready");
 
     fs.init();
     console.init();
 
-    // Apps own their windows; the kernel only starts them. Each mount()
-    // builds a tree and attaches it to the desktop; the last one mounted is
-    // made the active window.
-    counter.mount();
-    terminal.mount();
-    i32 notes_win = notes.mount();
-    dom_widgets.focus_window(notes_win);
+    // Apps are @app structs under src/apps; the build lists them in
+    // build/apps_manifest.mln, and the framework owns launching, the app
+    // menu (taskbar button and desktop right-click) and window close.
+    apps_manifest.register_all();
+    app.install();
+    compositor.set_desktop_menu(app.menu_items(), app.on_menu);
+
+    // Open a few at boot; the last one launched is the active window.
+    app.launch_named("Counter");
+    app.launch_named("Notes");
+    app.launch_named("Terminal");
     dom_automation.dump();
 
     // Paint the desktop once before interrupts are enabled. render_all()

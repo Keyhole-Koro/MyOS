@@ -324,6 +324,12 @@ export void run() {
         // Timers (clock, animations) run on this task between events.
         dom_widgets.tick();
 
+        // Handlers queued by the input above and the timers run here, on
+        // this task, between input and paint: nothing else touches the DOM
+        // meanwhile. Moving this drain to its own task is what would make
+        // apps preemptible, and would need the DOM locked around paint.
+        dom.drain_events();
+
         // The setters above record what changed, so the damage region is the
         // authority on whether a repaint is needed.
         if (dom.has_damage() != 0) {

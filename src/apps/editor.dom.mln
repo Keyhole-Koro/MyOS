@@ -1,150 +1,92 @@
 package editor;
 
-import dom_widgets from "../ui/dom/dom_widgets.mln";
-import dom from "../ui/dom/dom.mln";
 import dom_elements from "../ui/dom/dom_elements.mln";
-import graphics from "../ui/graphics.mln";
+import ui from "../app/ui.mln";
 import fs from "../fs/fs.mln";
-import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { FsError } from "../fs/fs.mln";
 
-import ui_config from "../ui/ui_config.mln";
-
 // Text editor: a TextArea over one file on the MFS disk. Save rewrites the
 // file (MFS writes are append-only, so the file is removed and recreated).
-// Single instance: opening another file reuses the window.
+//
+// Single instance: `@app(single)` makes a second launch focus the existing
+// window, and `ui.open(path)` from another app (Files) lands in the @open
+// method of the running instance -- or of a fresh one if none is open.
 
-i32 g_win = 0;
-i32 g_area = 0;
-i32 g_name = 0;     // filename TextInput
-i32 g_status = 0;   // Label
-char g_status_buf[64];
+i32 CAP = 4096;
 
-/**
- * Updates the editor status label with the given message.
- * @param s Status text to display.
- */
-void editor_status(char *s) {
-    dom.set_text(g_status, s);
+@app(single)
+struct Editor {
+    i32 area;     // TextArea
+    i32 name;     // filename TextInput
+    i32 status;   // Label
+};
+
+i32 (Editor *e) view() {
+    i32 muted = ui.rgb(0x6B, 0x72, 0x80);
+    i32 win = <Window title="Editor" x={300} y={120} w={520} h={420}>
+        <Row x={12} y={12} w={496} h={34} gap={8}>
+            <TextInput ref={e->name} placeholder="file name" w={300} h={34} capacity={16} testId="editor-name" />
+            <PrimaryButton text="Save" w={90} h={34} onClick={e->save} />
+        </Row>
+        <TextArea ref={e->area} name="Type here..." x={12} y={56} w={496} h={294} capacity={4096} testId="editor-text" />
+        <Label ref={e->status} text="" x={12} y={360} color={muted} testId="editor-status" />
+    </Window>;
+    // A plain launch starts on a scratch file; ui.open() replaces it.
+    e->open("untitled.txt");
+    return win;
 }
 
-/**
- * No-op callback for editor UI events.
- * @param id Node ID.
- */
-void editor_noop(i32 id) { }
-
-/**
- * Loads a file from disk into the editor text area and positions caret at the beginning.
- * @param path File path to open and read.
- */
-export void load(char *path) {
-    dom_widgets.set_input_text(g_name, path);
-    dom_widgets.clear_text_area(g_area);
+// Load `path` into the text area (empty when the file does not exist).
+@open
+void (Editor *e) open(char *path) {
+    ui.input_set(e->name, path);
+    ui.area_clear(e->area);
+    ui.focus(e->area);
     i32 fd = case fs.open(path) of {
         Ok(v) -> v;
-        Err(e) -> ({ editor_status("new file"); return; });
+        Err(err) -> ({ ui.set_text(e->status, "new file"); return; });
     };
     char chunk[128];
     i32 total = 0;
     while (1) {
         i32 got = case fs.read(fd, (i32)(&chunk[0]), 127) of {
             Ok(v) -> v;
-            Err(e) -> 0;
+            Err(err) -> 0;
         };
         if (got <= 0) { break; }
         chunk[got] = (char)0;
-        dom_widgets.append_text(g_area, &chunk[0]);
+        ui.area_append(e->area, &chunk[0]);
         total = total + got;
     }
     fs.close(fd);
-    // append_text leaves the caret at the end; start at the top instead.
-    dom_widgets.dispatch_key_event(1, 0x105, 0); // Home of the last line
-    i32 k = strbuf.reset(&g_status_buf[0]);
-    k = strbuf.append(&g_status_buf[0], 64, k, "loaded ");
-    k = strbuf.append_i32(&g_status_buf[0], 64, k, total);
-    k = strbuf.append(&g_status_buf[0], 64, k, " bytes");
-    editor_status(&g_status_buf[0]);
+    // area_append leaves the caret at the end; start at the top instead.
+    ui.send_key(1, 0x105, 0); // Home of the last line
+    ui.set_text_fmt(e->status, "loaded %d bytes", total, 0);
 }
 
-/**
- * Click handler for the 'Save' button: writes text area contents to the specified file on disk.
- * @param id Button node ID.
- */
-void on_save(i32 id) {
-    char *path = dom.text_of(g_name);
+@key("Ctrl+S")
+void (Editor *e) save(i32 id) {
+    char *path = ui.text_of(e->name);
     if (path == 0) { return; }
-    if (path[0] == 0) { editor_status("enter a file name first"); return; }
-    char *text = dom.text_of(g_area);
+    if (path[0] == 0) { ui.set_text(e->status, "enter a file name first"); return; }
+    char *text = ui.text_of(e->area);
     i32 len = 0;
-    for (; text[len] != 0; len++) {}
+    while (text[len] != 0) { len++; }
     // Bind the Result: a discarded aggregate return has no out-pointer.
     Result<_, FsError> removed = fs.remove(path);
     case removed of { Ok(_) -> _; Err(_) -> _; };
     i32 fd = case fs.create(path) of {
         Ok(v) -> v;
-        Err(e) -> ({ editor_status("save failed: cannot create file"); return; });
+        Err(err) -> ({ ui.set_text(e->status, "save failed: cannot create file"); return; });
     };
     i32 written = 0;
     if (len > 0) {
         written = case fs.write(fd, (i32)text, len) of {
             Ok(v) -> v;
-            Err(e) -> 0;
+            Err(err) -> 0;
         };
     }
     fs.close(fd);
-    i32 k = strbuf.reset(&g_status_buf[0]);
-    k = strbuf.append(&g_status_buf[0], 64, k, "saved ");
-    k = strbuf.append_i32(&g_status_buf[0], 64, k, written);
-    k = strbuf.append(&g_status_buf[0], 64, k, " bytes");
-    editor_status(&g_status_buf[0]);
-}
-
-/**
- * Constructs the declarative DOM subtree for the text editor window.
- * @return Root Window node ID.
- */
-i32 build_ui() {
-    i32 muted = graphics.rgb(0x6B, 0x72, 0x80);
-    return <Window title="Editor" x={300} y={120} w={520} h={420}>
-        <Row x={12} y={12} w={496} h={34} padding={0} gap={8}>
-            <TextInput placeholder="file name" x={0} y={0} w={300} h={34} capacity={16} onChange={editor_noop} />
-            <PrimaryButton text="Save" x={0} y={0} w={90} h={34} onClick={on_save} />
-        </Row>
-        <TextArea name="Type here..." x={12} y={56} w={496} h={294} capacity={ui_config.EDITOR_CAP} readonly={0} onChange={editor_noop} />
-        <Label text="" x={12} y={360} color={muted} bold={0} />
-    </Window>;
-}
-
-/**
- * Opens the editor window, sets focus to the text area, and loads the specified file.
- * @param path File path to open.
- * @return Window node ID.
- */
-export i32 open(char *path) {
-    if (g_win == 0) {
-        g_win = build_ui();
-        dom.append_child(dom.desktop_id(), g_win);
-        i32 row = dom.first_child(g_win);
-        g_name = dom.first_child(row);
-        g_area = dom.next_sibling(row);
-        g_status = dom.next_sibling(g_area);
-        dom.set_test_id(g_area, "editor-text");
-        dom.set_test_id(g_name, "editor-name");
-        dom.set_test_id(g_status, "editor-status");
-    }
-    dom_widgets.focus_window(g_win);
-    dom_widgets.set_focus(g_area);
-    load(path);
-    return g_win;
-}
-
-/**
- * Clears the stored window ID if the editor window was closed by the user.
- */
-export void forget_if_closed() {
-    if (g_win != 0) {
-        if (dom.node_exists(g_win) == 0) { g_win = 0; }
-    }
+    ui.set_text_fmt(e->status, "saved %d bytes", written, 0);
 }
