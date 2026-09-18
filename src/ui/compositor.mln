@@ -65,9 +65,9 @@ export void set_desktop_menu(char *items, i32 handler) {
 }
 
 enum WindowMenuAction {
-    WINDOW_MENU_MINIMIZE,
-    WINDOW_MENU_MAXIMIZE,
-    WINDOW_MENU_CLOSE
+    MINIMIZE,
+    MAXIMIZE,
+    CLOSE
 }
 
 // Window context menu: the same three actions as the title-bar buttons.
