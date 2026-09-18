@@ -1,7 +1,8 @@
 package editor;
 
 import dom_elements from "../ui/dom/dom_elements.mln";
-import ui from "../app/ui.mln";
+import ui from "../../../MyAppFramework/src/ui.mln";
+import { app, open, key } from "../../../MyAppFramework/src/annotations.mln";
 import fs from "../fs/fs.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { FsError } from "../fs/fs.mln";

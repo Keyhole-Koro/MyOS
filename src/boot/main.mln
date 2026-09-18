@@ -18,7 +18,7 @@ import mmu from "../../../MyKernel/src/mm/mmu.mln";
 import { MmuError } from "../../../MyKernel/src/mm/mmu.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
-import app from "../app/app.mln";
+import app from "../../../MyAppFramework/src/app.mln";
 import apps_manifest from "../../../../build/apps_manifest.mln";
 
 // System bring-up.
@@ -91,11 +91,11 @@ void kernel_init() {
     console.init();
 
     // Apps are @app structs under src/apps; the build lists them in
-    // build/apps_manifest.mln, and the framework owns launching, the app
-    // menu (taskbar button and desktop right-click) and window close.
+    // build/apps_manifest.mln, and the framework (system/MyAppFramework)
+    // owns launching, the app menu (taskbar button and desktop right-click),
+    // shortcuts and window close.
     apps_manifest.register_all();
     app.install();
-    compositor.set_desktop_menu(app.menu_items(), app.on_menu);
 
     // Open a few at boot; the last one launched is the active window.
     app.launch_named("Counter");

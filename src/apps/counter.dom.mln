@@ -1,7 +1,8 @@
 package counter;
 
 import dom_elements from "../ui/dom/dom_elements.mln";
-import ui from "../app/ui.mln";
+import ui from "../../../MyAppFramework/src/ui.mln";
+import { app } from "../../../MyAppFramework/src/annotations.mln";
 
 // Click counter demo app, and the smallest example of the app framework.
 //

@@ -1,7 +1,8 @@
 package terminal;
 
 import dom_elements from "../ui/dom/dom_elements.mln";
-import ui from "../app/ui.mln";
+import ui from "../../../MyAppFramework/src/ui.mln";
+import { app, timer, key, on_close } from "../../../MyAppFramework/src/annotations.mln";
 import console from "../proc/console.mln";
 import fs from "../fs/fs.mln";
 import irq from "../../../MyKernel/src/arch/irq.mln";

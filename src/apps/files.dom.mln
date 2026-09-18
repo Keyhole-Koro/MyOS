@@ -1,7 +1,8 @@
 package files;
 
 import dom_elements from "../ui/dom/dom_elements.mln";
-import ui from "../app/ui.mln";
+import ui from "../../../MyAppFramework/src/ui.mln";
+import { app } from "../../../MyAppFramework/src/annotations.mln";
 import fs from "../fs/fs.mln";
 import fs_config from "../fs/fs_config.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";

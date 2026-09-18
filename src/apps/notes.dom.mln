@@ -1,7 +1,8 @@
 package notes;
 
 import dom_elements from "../ui/dom/dom_elements.mln";
-import ui from "../app/ui.mln";
+import ui from "../../../MyAppFramework/src/ui.mln";
+import { app } from "../../../MyAppFramework/src/annotations.mln";
 
 // "Notes": a small form that exercises keyboard input. Two text fields, a
 // checkbox and a separator, plus a label that echoes what was typed. Every
