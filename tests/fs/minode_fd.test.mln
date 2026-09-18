@@ -131,6 +131,7 @@ void minode_and_file_descriptors() {
         Err(BadWhence(w)) -> 2;
         Err(Closed(fd)) -> 2;
         Err(InvalidSize(s)) -> 2;
+        Err(IoError) -> 2;
     };
     assert_eq<i32>(h3_ok, 0, "removed file returns NotFound");
 
@@ -153,6 +154,7 @@ void minode_and_file_descriptors() {
         Err(Closed(fd)) -> -2;
         Err(BadWhence(w)) -> -2;
         Err(InvalidSize(s)) -> -2;
+        Err(IoError) -> -2;
     };
     assert_eq<i32>(closed_fd, h1, "closed descriptor reports its original fd");
 }

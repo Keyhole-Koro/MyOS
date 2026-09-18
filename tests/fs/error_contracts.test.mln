@@ -122,7 +122,11 @@ void filesystem_error_contracts() {
         mem.write_word(bitmap + offset, -1);
         offset = offset + 4;
     }
-    assert.assert_true(ssd.write_block(fs.BITMAP_BLOCK, bitmap) == 0,
+    i32 write_ok = case ssd.write_block(fs.BITMAP_BLOCK, bitmap) of {
+        Ok(_) -> 1;
+        Err(_) -> 0;
+    };
+    assert.assert_true(write_ok == 1,
                        "install full allocation bitmap");
     Result<i32, FsError> disk_full = fs.create("disk-full");
     assert.assert_true(is_alloc_failed(&disk_full) == 1, "full bitmap is AllocFailed");

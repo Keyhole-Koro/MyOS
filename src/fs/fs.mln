@@ -8,6 +8,7 @@ import bytes from "../../../../toolchain/MyStdLib/text/bytes.mln";
 import str from "../../../../toolchain/MyStdLib/str.mln";
 import serial from "../../../MyKernel/src/io/serial.mln";
 import ssd from "ssd.mln";
+import { SsdError } from "ssd.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 
@@ -53,6 +54,7 @@ export enum FsError {
     BadWhence(i32),  // seek(): the whence value, none of SEEK_SET/CUR/END
     Closed(i32),     // the fd whose backing file entry was removed out from under it
     InvalidSize(i32),// the size argument, <= 0
+    IoError,         // I/O error talking to SSD
 }
 
 export i32 MAGIC        = 0x4D465331; // 'MFS1' (MyFileSystem v1)
@@ -184,25 +186,35 @@ void bitmap_set(i32 block_num, i32 value) {
 // load per 8 blocks instead of one per block -- this used to test every bit of
 // the 16,384 in turn.
 Option<i32> alloc_block() {
-    ssd.read_block(BITMAP_BLOCK, g_buf);
+    case ssd.read_block(BITMAP_BLOCK, g_buf) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return None; });
+    };
     char *bits = (char *)g_buf;
 
-    Option<i32> clear_bit = bitset.find_clear(bits, BLOCK_COUNT, DATA_START);
-    i32 b = case clear_bit of {
+    i32 b = case bitset.find_clear(bits, BLOCK_COUNT, DATA_START) of {
         Some(v) -> v;
-        None -> ({ Option<i32> none = None; return none; });
+        None -> ({ return None; });
     };
 
     bitset.set(bits, b);
-    ssd.write_block(BITMAP_BLOCK, g_buf);
-    Option<i32> found = Some(b);
-    return found;
+    case ssd.write_block(BITMAP_BLOCK, g_buf) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return None; });
+    };
+    return Some(b);
 }
 
 void free_block(i32 block_num) {
-    ssd.read_block(BITMAP_BLOCK, g_buf);
+    case ssd.read_block(BITMAP_BLOCK, g_buf) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return; });
+    };
     bitmap_set(block_num, 0);
-    ssd.write_block(BITMAP_BLOCK, g_buf);
+    case ssd.write_block(BITMAP_BLOCK, g_buf) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return; });
+    };
 }
 
 // =========================================================================
@@ -217,9 +229,12 @@ i32 entry_offset(i32 idx) {
     return (idx % ENTRIES_PER_BLOCK) * ENTRY_SIZE;
 }
 
-i32 load_entry(i32 idx) {
-    ssd.read_block(entry_block(idx), g_buf);
-    return entry_offset(idx);
+Result<i32, FsError> load_entry(i32 idx) {
+    case ssd.read_block(entry_block(idx), g_buf) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return Err(FsError::IoError); });
+    };
+    return Ok(entry_offset(idx));
 }
 
 i32 name_match(i32 off, char* name) {
@@ -240,7 +255,10 @@ void store_name(i32 off, char* name) {
 }
 
 Option<i32> find_entry_by_name(char* name) {
-    ssd.read_block(ENTRY_BLOCK, g_buf);
+    case ssd.read_block(ENTRY_BLOCK, g_buf) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return None; });
+    };
     i32 idx = 0;
     while (idx < MAX_FILES) {
         i32 off = idx * ENTRY_SIZE;
@@ -257,7 +275,10 @@ Option<i32> find_entry_by_name(char* name) {
 }
 
 Option<i32> find_free_entry() {
-    ssd.read_block(ENTRY_BLOCK, g_buf);
+    case ssd.read_block(ENTRY_BLOCK, g_buf) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return None; });
+    };
     i32 idx = 0;
     while (idx < MAX_FILES) {
         i32 off = idx * ENTRY_SIZE;
@@ -290,19 +311,13 @@ void fd_table_init() {
 Option<i32> find_free_fd() {
     i32 i = 3; // Descriptors 0, 1, 2 are reserved for standard streams
     while (i < FD_MAX) {
-        i32 is_unused = case g_fd_table[i] of {
-            Unused -> 1;
-            Serial(s) -> 0;
-            File(f) -> 0;
+        case g_fd_table[i] of {
+            Unused -> ({ return Some(i); });
+            _ -> _;
         };
-        if (is_unused != 0) {
-            Option<i32> found = Some(i);
-            return found;
-        }
         i++;
     }
-    Option<i32> none = None;
-    return none;
+    return None;
 }
 
 // --- Path Resolution Constraints ---
@@ -333,13 +348,19 @@ export void format() {
     set_buf_word(0, MAGIC);
     set_buf_word(4, VERSION);
     set_buf_word(8, MAX_FILES);
-    ssd.write_block(SB_BLOCK, g_buf);
+    case ssd.write_block(SB_BLOCK, g_buf) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return; });
+    };
 
     // Clear entry table (Block 1)
     zero_buf();
     i32 b = ENTRY_BLOCK;
     while (b < BITMAP_BLOCK) {
-        ssd.write_block(b, g_buf);
+        case ssd.write_block(b, g_buf) of {
+            Ok(_) -> _;
+            Err(_) -> ({ return; });
+        };
         b++;
     }
 
@@ -350,7 +371,10 @@ export void format() {
         bitmap_set(i, 1);
         i++;
     }
-    ssd.write_block(BITMAP_BLOCK, g_buf);
+    case ssd.write_block(BITMAP_BLOCK, g_buf) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return; });
+    };
 }
 
 export void init() {
@@ -361,10 +385,13 @@ export void init() {
     fd_table_init();
 
     // Auto-format if superblock magic is missing
-    if (ssd.read_block(SB_BLOCK, g_buf) != 0) {
-        debug.println("fs: no disk (SSD disabled)");
-        return;
-    }
+    case ssd.read_block(SB_BLOCK, g_buf) of {
+        Ok(_) -> _;
+        Err(_) -> ({
+            debug.println("fs: no disk (SSD disabled)");
+            return;
+        });
+    };
     if (buf_word(0) != MAGIC) {
         debug.println("fs: formatting new disk");
         format();
@@ -391,34 +418,40 @@ export Result<i32, FsError> create(char* path) {
         return Err(FsError::InvalidName);
     }
 
-    Option<i32> existing = find_entry_by_name(&clean_name[0]);
-    i32 already = case existing of { Some(v) -> 1; None -> 0; };
-    if (already != 0) {
-        return Err(FsError::AlreadyExists);
-    }
-    Option<i32> free_entry = find_free_entry();
-    i32 idx = case free_entry of { Some(v) -> v; None -> -1; };
-    if (idx == -1) {
-        return Err(FsError::NoFreeSlot);
-    }
-    Option<i32> free_block = alloc_block();
-    i32 first = case free_block of { Some(v) -> v; None -> 0; };
-    if (first == 0) {
-        return Err(FsError::AllocFailed);
-    }
+    case find_entry_by_name(&clean_name[0]) of {
+        Some(_) -> ({ return Err(FsError::AlreadyExists); });
+        None -> _;
+    };
+    i32 idx = case find_free_entry() of {
+        Some(v) -> v;
+        None -> ({ return Err(FsError::NoFreeSlot); });
+    };
+    i32 first = case alloc_block() of {
+        Some(v) -> v;
+        None -> ({ return Err(FsError::AllocFailed); });
+    };
 
     // Initialize the first data block (0 next pointer)
     zero_buf();
-    ssd.write_block(first, g_buf);
+    case ssd.write_block(first, g_buf) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return Err(FsError::IoError); });
+    };
 
     // Write entry to disk
-    i32 off = load_entry(idx);
+    i32 off = case load_entry(idx) of {
+        Ok(v) -> v;
+        Err(e) -> ({ return Err(e); });
+    };
     store_name(off, &clean_name[0]);
     set_buf_word(off + 16, first); // first_block
     set_buf_word(off + 20, 0);     // file_size
     set_buf_word(off + 24, 0);     // flags
     set_buf_word(off + 28, 0);     // reserved
-    ssd.write_block(entry_block(idx), g_buf);
+    case ssd.write_block(entry_block(idx), g_buf) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return Err(FsError::IoError); });
+    };
 
     // A function can't `return` another function's aggregate-returning call
     // directly (no lvalue to copy from); binding it to a local first gives
@@ -439,18 +472,19 @@ export Result<i32, FsError> open(char* path) {
         return Err(FsError::InvalidName);
     }
 
-    Option<i32> entry = find_entry_by_name(&clean_name[0]);
-    i32 idx = case entry of { Some(v) -> v; None -> -1; };
-    if (idx == -1) {
-        return Err(FsError::NotFound);
-    }
-    Option<i32> free_fd = find_free_fd();
-    i32 fd = case free_fd of { Some(v) -> v; None -> -1; };
-    if (fd == -1) {
-        return Err(FsError::NoFreeSlot);
-    }
+    i32 idx = case find_entry_by_name(&clean_name[0]) of {
+        Some(v) -> v;
+        None -> ({ return Err(FsError::NotFound); });
+    };
+    i32 fd = case find_free_fd() of {
+        Some(v) -> v;
+        None -> ({ return Err(FsError::NoFreeSlot); });
+    };
 
-    i32 off = load_entry(idx);
+    i32 off = case load_entry(idx) of {
+        Ok(v) -> v;
+        Err(e) -> ({ return Err(e); });
+    };
     g_fd_table[fd] = OpenFile::File(FileState {
         entry_idx: idx,
         offset: 0,
@@ -465,14 +499,12 @@ export Result<i32, FsError> open(char* path) {
 // Constraint: Descriptors 0..2 (stdin/stdout/stderr) are preserved and never closed.
 export void close(i32 fd) {
     if (fd >= 3 && fd < FD_MAX) {
-        i32 is_file = case g_fd_table[fd] of {
-            Unused -> 0;
-            Serial(s) -> 0;
-            File(f) -> 1;
+        case g_fd_table[fd] of {
+            File(f) -> ({
+                g_fd_table[fd] = OpenFile::Unused;
+            });
+            _ -> _;
         };
-        if (is_file != 0) {
-            g_fd_table[fd] = OpenFile::Unused;
-        }
     }
 }
 
@@ -553,14 +585,20 @@ export Result<i32, FsError> read(i32 fd, i32 buf, i32 size) {
             i32 block = f.first_block;
             i32 skip = f.offset / PAYLOAD;
             while (skip > 0) {
-                ssd.read_block(block, g_buf);
+                case ssd.read_block(block, g_buf) of {
+                    Ok(_) -> _;
+                    Err(_) -> ({ return Err(FsError::IoError); });
+                };
                 block = buf_word(0);
                 skip = skip - 1;
             }
             i32 in_block = f.offset % PAYLOAD;
 
             while (read_total < size) {
-                ssd.read_block(block, g_buf);
+                case ssd.read_block(block, g_buf) of {
+                    Ok(_) -> _;
+                    Err(_) -> ({ return Err(FsError::IoError); });
+                };
                 i32 next = buf_word(0);
                 while (in_block < PAYLOAD) {
                     if (read_total >= size) {
@@ -591,7 +629,6 @@ export Result<i32, FsError> read(i32 fd, i32 buf, i32 size) {
 }
 
 // Internal helper: updates file size directly to SSD Block 1 and syncs all open handles
-// Internal helper: updates file size directly to SSD Block 1 and syncs all open handles
 i32 finish_write(i32 fd, i32 new_size) {
     case g_fd_table[fd] of {
         Unused -> ({ return 0; });
@@ -599,21 +636,26 @@ i32 finish_write(i32 fd, i32 new_size) {
         File(f) -> ({
             i32 written = new_size - f.file_size;
             i32 idx = f.entry_idx;
-            i32 off = load_entry(idx);
+            i32 off = case load_entry(idx) of {
+                Ok(v) -> v;
+                Err(_) -> ({ return 0; });
+            };
             set_buf_word(off + 20, new_size);
-            ssd.write_block(entry_block(idx), g_buf);
+            case ssd.write_block(entry_block(idx), g_buf) of {
+                Ok(_) -> _;
+                Err(_) -> ({ return 0; });
+            };
             
             i32 i = 3;
             while (i < FD_MAX) {
                 case g_fd_table[i] of {
-                    Unused -> _;
-                    Serial(s) -> _;
                     File(other_f) -> ({
                         if (other_f.entry_idx == idx) {
                             other_f.file_size = new_size;
                             g_fd_table[i] = OpenFile::File(other_f);
                         }
                     });
+                    _ -> _;
                 };
                 i++;
             }
@@ -655,31 +697,50 @@ export Result<i32, FsError> write(i32 fd, i32 buf, i32 size) {
             i32 file_size = f.file_size;
 
             i32 block = f.first_block;
-            ssd.read_block(block, g_buf);
+            case ssd.read_block(block, g_buf) of {
+                Ok(_) -> _;
+                Err(_) -> ({ return Err(FsError::IoError); });
+            };
             while (buf_word(0) != 0) {
                 block = buf_word(0);
-                ssd.read_block(block, g_buf);
+                case ssd.read_block(block, g_buf) of {
+                    Ok(_) -> _;
+                    Err(_) -> ({ return Err(FsError::IoError); });
+                };
             }
             i32 in_block = file_size % PAYLOAD;
             if (file_size > 0) {
                 if (in_block == 0) {
-                    Option<i32> next_block = alloc_block();
-                    i32 nb = case next_block of { Some(v) -> v; None -> 0; };
-                    if (nb == 0) { return Ok(0); }
+                    i32 nb = case alloc_block() of {
+                        Some(v) -> v;
+                        None -> ({ return Ok(0); });
+                    };
                     set_buf_word(0, nb);
-                    ssd.write_block(block, g_buf);
+                    case ssd.write_block(block, g_buf) of {
+                        Ok(_) -> _;
+                        Err(_) -> ({ return Err(FsError::IoError); });
+                    };
                     block = nb;
                     zero_buf();
-                    ssd.write_block(block, g_buf);
+                    case ssd.write_block(block, g_buf) of {
+                        Ok(_) -> _;
+                        Err(_) -> ({ return Err(FsError::IoError); });
+                    };
                 }
             }
 
             i32 written = 0;
             while (written < size) {
-                ssd.read_block(block, g_buf);
+                case ssd.read_block(block, g_buf) of {
+                    Ok(_) -> _;
+                    Err(_) -> ({ return Err(FsError::IoError); });
+                };
                 while (in_block < PAYLOAD) {
                     if (written >= size) {
-                        ssd.write_block(block, g_buf);
+                        case ssd.write_block(block, g_buf) of {
+                            Ok(_) -> _;
+                            Err(_) -> ({ return Err(FsError::IoError); });
+                        };
                         return Ok(finish_write(fd, file_size + written));
                     }
                     i32 c = ram_byte(buf + written);
@@ -688,21 +749,34 @@ export Result<i32, FsError> write(i32 fd, i32 buf, i32 size) {
                     in_block++;
                 }
                 if (written < size) {
-                    Option<i32> next_block = alloc_block();
-                    i32 nb = case next_block of { Some(v) -> v; None -> 0; };
-                    if (nb == 0) {
-                        set_buf_word(0, 0);
-                        ssd.write_block(block, g_buf);
-                        return Ok(finish_write(fd, file_size + written));
-                    }
+                    i32 nb = case alloc_block() of {
+                        Some(v) -> v;
+                        None -> ({
+                            set_buf_word(0, 0);
+                            case ssd.write_block(block, g_buf) of {
+                                Ok(_) -> _;
+                                Err(_) -> ({ return Err(FsError::IoError); });
+                            };
+                            return Ok(finish_write(fd, file_size + written));
+                        });
+                    };
                     set_buf_word(0, nb);
-                    ssd.write_block(block, g_buf);
+                    case ssd.write_block(block, g_buf) of {
+                        Ok(_) -> _;
+                        Err(_) -> ({ return Err(FsError::IoError); });
+                    };
                     block = nb;
                     zero_buf();
-                    ssd.write_block(block, g_buf);
+                    case ssd.write_block(block, g_buf) of {
+                        Ok(_) -> _;
+                        Err(_) -> ({ return Err(FsError::IoError); });
+                    };
                     in_block = 0;
                 } else {
-                    ssd.write_block(block, g_buf);
+                    case ssd.write_block(block, g_buf) of {
+                        Ok(_) -> _;
+                        Err(_) -> ({ return Err(FsError::IoError); });
+                    };
                 }
             }
             return Ok(finish_write(fd, file_size + written));
@@ -721,40 +795,50 @@ export Result<_, FsError> remove(char* path) {
         return Err(FsError::InvalidName);
     }
 
-    Option<i32> entry = find_entry_by_name(&clean_name[0]);
-    i32 idx = case entry of { Some(v) -> v; None -> -1; };
-    if (idx == -1) {
-        return Err(FsError::NotFound);
-    }
-    i32 off = load_entry(idx);
+    i32 idx = case find_entry_by_name(&clean_name[0]) of {
+        Some(v) -> v;
+        None -> ({ return Err(FsError::NotFound); });
+    };
+    i32 off = case load_entry(idx) of {
+        Ok(v) -> v;
+        Err(e) -> ({ return Err(e); });
+    };
     i32 block = buf_word(off + 16);
 
     // Free block chain
     while (block != 0) {
-        ssd.read_block(block, g_buf);
+        case ssd.read_block(block, g_buf) of {
+            Ok(_) -> _;
+            Err(_) -> ({ return Err(FsError::IoError); });
+        };
         i32 next = buf_word(0);
         free_block(block);
         block = next;
     }
 
     // Clear disk entry
-    off = load_entry(idx);
+    off = case load_entry(idx) of {
+        Ok(v) -> v;
+        Err(e) -> ({ return Err(e); });
+    };
     set_buf_word(off + 16, 0);
     set_buf_word(off + 20, 0);
     set_buf_byte(off, 0);
-    ssd.write_block(entry_block(idx), g_buf);
+    case ssd.write_block(entry_block(idx), g_buf) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return Err(FsError::IoError); });
+    };
 
     // Invalidate any open descriptors targeting this entry
     i32 i = 3;
     while (i < FD_MAX) {
         case g_fd_table[i] of {
-            Unused -> _;
-            Serial(s) -> _;
             File(f) -> ({
                 if (f.entry_idx == idx) {
                     g_fd_table[i] = OpenFile::Unused;
                 }
             });
+            _ -> _;
         };
         i++;
     }
@@ -766,7 +850,10 @@ export Result<_, FsError> remove(char* path) {
 export void list() {
     if (g_enabled == 0) { return; }
     debug.println("--- fs list ---");
-    ssd.read_block(ENTRY_BLOCK, g_buf);
+    case ssd.read_block(ENTRY_BLOCK, g_buf) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return; });
+    };
     i32 idx = 0;
     while (idx < MAX_FILES) {
         i32 off = idx * ENTRY_SIZE;
@@ -794,12 +881,15 @@ export void list() {
 // =========================================================================
 
 // Find the first used entry at index >= start. Copies its name into out
-// (at most cap-1 bytes, NUL-terminated) and returns the entry index, or -1
+// (at most cap-1 bytes, NUL-terminated) and returns Ok(Some(idx)), or Ok(None)
 // when there are no more files. Iterate with start = index + 1.
 export Result<Option<i32>, FsError> dir_next(i32 start, char* out, i32 cap) {
     if (g_enabled == 0) { return Err(FsError::Disabled); }
     if (start < 0) { start = 0; }
-    ssd.read_block(ENTRY_BLOCK, g_buf);
+    case ssd.read_block(ENTRY_BLOCK, g_buf) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return Err(FsError::IoError); });
+    };
     i32 idx = start;
     while (idx < MAX_FILES) {
         i32 off = idx * ENTRY_SIZE;
@@ -824,7 +914,10 @@ export Result<Option<i32>, FsError> dir_next(i32 start, char* out, i32 cap) {
 export i32 entry_size(i32 idx) {
     if (g_enabled == 0) { return 0; }
     if (idx < 0 || idx >= MAX_FILES) { return 0; }
-    ssd.read_block(ENTRY_BLOCK, g_buf);
+    case ssd.read_block(ENTRY_BLOCK, g_buf) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return 0; });
+    };
     i32 off = idx * ENTRY_SIZE;
     if (buf_word(off + 16) == 0) { return 0; }
     return buf_word(off + 20);

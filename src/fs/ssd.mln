@@ -2,6 +2,7 @@ package ssd;
 
 import mem from "../../../MyKernel/src/mm/mem.mln";
 import { wfi_cpu } from "../../../MyKernel/src/arch/wfi.masm";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 
 // Block-device driver for the emulated SSD. Memory-mapped registers must match
 // constants.rs in the emulator. A command is issued by latching the block
@@ -24,6 +25,10 @@ enum SsdStatus {
     SSD_STATUS_DONE = 2
 }
 
+export enum SsdError {
+    DeviceError,
+}
+
 export i32 BLOCK_SIZE = 65536;
 
 // Wait for the in-flight command to complete and return its final status.
@@ -39,25 +44,23 @@ i32 wait_for_completion() {
 }
 
 // Read one block from the disk into the buffer at buf_addr.
-// Returns 0 on success, -1 on error.
-export i32 read_block(i32 block_num, i32 buf_addr) {
+export Result<_, SsdError> read_block(i32 block_num, i32 buf_addr) {
     mem.write_word(SSD_BLOCK_ADDR, block_num);
     mem.write_word(SSD_ADDR_ADDR, buf_addr);
     mem.write_word(SSD_CMD_ADDR, SSD_CMD_READ);
     if (wait_for_completion() == SSD_STATUS_DONE) {
-        return 0;
+        return Ok(_);
     }
-    return -1;
+    return Err(SsdError::DeviceError);
 }
 
 // Write one block from the buffer at buf_addr to the disk.
-// Returns 0 on success, -1 on error.
-export i32 write_block(i32 block_num, i32 buf_addr) {
+export Result<_, SsdError> write_block(i32 block_num, i32 buf_addr) {
     mem.write_word(SSD_BLOCK_ADDR, block_num);
     mem.write_word(SSD_ADDR_ADDR, buf_addr);
     mem.write_word(SSD_CMD_ADDR, SSD_CMD_WRITE);
     if (wait_for_completion() == SSD_STATUS_DONE) {
-        return 0;
+        return Ok(_);
     }
-    return -1;
+    return Err(SsdError::DeviceError);
 }

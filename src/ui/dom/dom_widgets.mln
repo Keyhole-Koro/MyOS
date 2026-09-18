@@ -848,14 +848,14 @@ export i32 open_menu(i32 x, i32 y, char *items, i32 handler, i32 target) {
     return id;
 }
 
-// Hover moves the highlight; a click picks the row.
 export void menu_hover(i32 px, i32 py) {
     i32 id = dom.get_g_menu_id();
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
-    i32 row = case list_row_at(id, px, py) of { Some(v) -> v; None -> 0 - 1; };
-    i32 next = row + 1;
-    if (row < 0) { next = 0; }
+    i32 next = case list_row_at(id, px, py) of {
+        Some(r) -> r + 1;
+        None -> 0;
+    };
     if (next != n->sel) {
         n->sel = (u16)next;
         dom.damage_node(id);
@@ -865,12 +865,15 @@ export void menu_hover(i32 px, i32 py) {
 export void menu_click(i32 px, i32 py) {
     i32 id = dom.get_g_menu_id();
     if (id == 0) { return; }
-    i32 row = case list_row_at(id, px, py) of { Some(v) -> v; None -> 0 - 1; };
+    Option<i32> row = list_row_at(id, px, py);
     i32 handler = dom.get_g_menu_handler();
     close_menu();
-    if (row >= 0) {
-        if (handler != 0) { handler(row); }
-    }
+    case row of {
+        Some(r) -> ({
+            if (handler != 0) { handler(r); }
+        });
+        None -> _;
+    };
 }
 
 // --- Tab focus ---

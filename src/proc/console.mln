@@ -68,27 +68,30 @@ export i32 bind(i32 pid, i32 output_id) {
 }
 
 export void unbind(i32 pid) {
-    Option<i32> opt = slot_of(pid);
-    i32 i = case opt of { Some(v) -> v; None -> -1; };
-    if (i < 0) { return; }
-    g_pid[i] = 0;
-    g_output[i] = 0;
+    case slot_of(pid) of {
+        Some(i) -> ({
+            g_pid[i] = 0;
+            g_output[i] = 0;
+        });
+        None -> _;
+    };
 }
 
 // The TextArea a process writes to, or 0.
 export i32 output_of(i32 pid) {
-    Option<i32> opt = slot_of(pid);
-    i32 i = case opt of { Some(v) -> v; None -> -1; };
-    if (i < 0) { return 0; }
-    return g_output[i];
+    return case slot_of(pid) of {
+        Some(i) -> g_output[i];
+        None -> 0;
+    };
 }
 
 // Queue one line (plus a newline) as the process's stdin. Bytes that do not
 // fit are dropped.
 export void feed_line(i32 pid, char *line) {
-    Option<i32> opt = slot_of(pid);
-    i32 i = case opt of { Some(v) -> v; None -> -1; };
-    if (i < 0) { return; }
+    i32 i = case slot_of(pid) of {
+        Some(v) -> v;
+        None -> ({ return; });
+    };
     i32 base = g_stdin[i];
     i32 k = 0;
     while (1) {
@@ -122,9 +125,10 @@ i32 on_write(i32 pid, i32 buf, i32 count) {
 }
 
 i32 on_read(i32 pid, i32 buf, i32 count) {
-    Option<i32> opt = slot_of(pid);
-    i32 i = case opt of { Some(v) -> v; None -> -1; };
-    if (i < 0) { return 0; }
+    i32 i = case slot_of(pid) of {
+        Some(v) -> v;
+        None -> ({ return 0; });
+    };
     i32 base = g_stdin[i];
     i32 got = 0;
     while (got < count) {
@@ -150,8 +154,7 @@ export i32 spawn_file(char *path) {
         Err(e) -> ({ fs.close(fd); return 0; });
     };
     if (size <= 0) { fs.close(fd); return 0; }
-    Result<i32, FsError> rewound = fs.seek(fd, 0, 0);
-    case rewound of { Ok(_) -> _; Err(_) -> _; };
+    case fs.seek(fd, 0, 0) of { Ok(_) -> _; Err(_) -> _; };
     i32 buf = heap.alloc(size);
     if (buf == 0) { fs.close(fd); return 0; }
     i32 got = case fs.read(fd, buf, size) of {
@@ -210,10 +213,7 @@ export i32 reap(i32 pid) {
         Some(v) -> v;
         None -> 0;
     };
-    // A discarded aggregate-returning call passes no out-pointer (the
-    // callee would write through a stale register), so bind every Result.
-    Result<_, ProcessError> freed = process.free_proc(pid);
-    case freed of { Ok(_) -> _; Err(_) -> _; };
+    case process.free_proc(pid) of { Ok(_) -> _; Err(_) -> _; };
     unbind(pid);
     return code;
 }

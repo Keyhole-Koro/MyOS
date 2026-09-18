@@ -6,6 +6,7 @@ import fs from "../../src/fs/fs.mln";
 import ssd from "../../src/fs/ssd.mln";
 import { FsError } from "../../src/fs/fs.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { SsdError } from "../../src/fs/ssd.mln";
 
 // Four blocks are enough for MFS metadata plus the first allocated data block.
 i32 g_ram_disk = 0;
@@ -18,7 +19,7 @@ i32 ram_disk_address(i32 block) {
 
 // These have exactly the SSD driver's signature. They are deliberately simple
 // word copies: the test exercises the same out-buffer contract as real DMA.
-i32 ram_disk_read(i32 block, i32 buffer) {
+Result<_, SsdError> ram_disk_read(i32 block, i32 buffer) {
     i32* source = (i32*)ram_disk_address(block);
     i32* destination = (i32*)buffer;
     i32 word = 0;
@@ -27,10 +28,10 @@ i32 ram_disk_read(i32 block, i32 buffer) {
         destination[word] = source[word];
         word = word + 1;
     }
-    return 0;
+    return Ok(_);
 }
 
-i32 ram_disk_write(i32 block, i32 buffer) {
+Result<_, SsdError> ram_disk_write(i32 block, i32 buffer) {
     i32* source = (i32*)buffer;
     i32* destination = (i32*)ram_disk_address(block);
     i32 word = 0;
@@ -39,7 +40,7 @@ i32 ram_disk_write(i32 block, i32 buffer) {
         destination[word] = source[word];
         word = word + 1;
     }
-    return 0;
+    return Ok(_);
 }
 
 i32 is_ok(Result<i32, FsError>* result) {

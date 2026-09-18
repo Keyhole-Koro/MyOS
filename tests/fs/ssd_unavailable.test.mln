@@ -5,12 +5,13 @@ import fs from "../../src/fs/fs.mln";
 import ssd from "../../src/fs/ssd.mln";
 import { FsError } from "../../src/fs/fs.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { SsdError } from "../../src/fs/ssd.mln";
 
 i32 g_failed_reads = 0;
 
-i32 fail_superblock_read(i32 block, i32 buffer) {
+Result<_, SsdError> fail_superblock_read(i32 block, i32 buffer) {
     g_failed_reads = g_failed_reads + 1;
-    return -1;
+    return Err(SsdError::DeviceError);
 }
 
 // A failed superblock read means fs.init leaves the filesystem disabled. This

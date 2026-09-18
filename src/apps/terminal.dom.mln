@@ -181,9 +181,10 @@ void run_line(i32 slot, char *line) {
 // Enter in the command line submits it.
 i32 on_key(i32 id, i32 code, i32 mods) {
     if (code != 13) { return 0; }
-    Option<i32> opt = slot_of_input(id);
-    i32 slot = case opt of { Some(v) -> v; None -> -1; };
-    if (slot < 0) { return 0; }
+    i32 slot = case slot_of_input(id) of {
+        Some(v) -> v;
+        None -> ({ return 0; });
+    };
     char *text = dom.text_of(id);
     i32 k = strbuf.reset(&g_line_buf[0]);
     k = strbuf.append(&g_line_buf[0], 96, k, text);
