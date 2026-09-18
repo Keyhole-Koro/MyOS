@@ -84,7 +84,17 @@ export enum NodeStyle {
 // text=16 x=20 y=22 w=24 h=26 state=28 style=30 on_click=32
 // background_color=36 border_color=40 padding=44 gap=46 color=48 on_key=52
 // on_change=56 cap=60 len=62 cursor=64 radius=66 on_tick=68 interval=72
-// next_due=76 test_id=80 scroll=84 sel=86 sx=88 sy=90 sw=92 sh=94 -> sizeof = 96.
+// next_due=76 test_id=80 scroll=84 sel=86 sx=88 sy=90 sw=92 sh=94
+// owner=96 on_close=100 -> sizeof = 104.
+//
+// Handlers all share one ABI, `void handler(i32 owner, i32 id, i32 arg)`:
+// `owner` is the app instance the node belongs to (see `owner` below), `id`
+// the node, `arg` event data (a key handler gets code | mods << 16). The
+// compiler generates handlers of this shape from `onClick={c->click}` markup
+// and @app methods, so app code never writes it by hand. Handlers are not
+// called where the event is detected: they are queued (push_event) and run
+// by drain_events() at a point the compositor chooses, with g_current_owner
+// set so anything the handler creates is owned by the same app.
 //
 // Public because it is the payload type of get_node(). Mutation still goes
 // through the DOM setters by convention.
@@ -103,19 +113,20 @@ export typedef struct {
     u16 h;
     u16 state;       // STATE_* bitmask
     u16 style;       // STYLE_* bitmask
-    i32 on_click;    // click handler(id) ; 0 = none
+    i32 on_click;    // click handler(owner, id, 0) ; 0 = none
     i32 background_color; // NODE_BOX fill colour (0 is valid black)
     i32 border_color;     // NODE_BOX border colour
     u16 padding;          // NODE_COLUMN/ROW inset, in display pixels
     u16 gap;              // NODE_COLUMN/ROW gap between children, in display pixels
     i32 color;            // foreground/text colour ; 0 = theme default
-    i32 on_key;           // key handler(id, code, mods) for DOWN events ; 0 = default
-    i32 on_change;        // change handler(id): TextInput edits, Checkbox toggles
+    i32 on_key;           // key filter i32(owner, id, code | mods << 16) for DOWN events, run
+                          // inline (it returns 1 to claim the key); 0 = default
+    i32 on_change;        // change handler(owner, id, 0): TextInput edits, Checkbox toggles
     u16 cap;              // TextInput: buffer capacity in bytes (incl. NUL)
     u16 len;              // TextInput: current text length
     u16 cursor;           // TextInput: caret position (0..len)
     u16 radius;           // Panel corner radius, display pixels
-    i32 on_tick;          // Timer handler(id)
+    i32 on_tick;          // Timer handler(owner, id, 0)
     i32 interval;         // Timer period in scheduler ticks
     i32 next_due;         // Timer: tick at which it next fires
     char *test_id;        // stable automation identity; 0 = none
@@ -125,9 +136,11 @@ export typedef struct {
     u16 sy;
     u16 sw;
     u16 sh;
+    i32 owner;            // app instance (a struct pointer) this node belongs to; 0 = system
+    i32 on_close;         // Window: handler(owner, id, 0) when the user closes it; 0 = just remove
 } Node;
 
-export i32 NODE_SIZE = 96;
+export i32 NODE_SIZE = 104;
 
 // Damage rectangles: the areas that changed since the last render, in
 // display coordinates. render_scene repaints each one under a clip. Keeping
@@ -163,6 +176,22 @@ export i32 g_launcher = 0;        // handler() for the taskbar's launcher button
 export i32 g_menu_id = 0;         // the open popup menu, or 0
 export i32 g_menu_handler = 0;    // handler(index) for the open menu
 export i32 g_menu_target = 0;     // the window a window-menu acts on (0 for the desktop menu)
+
+// The app instance whose code is running right now (a handler drained from
+// the event queue, or a view() being mounted); create_node stamps it into
+// each new node's `owner`, so dialogs and timers an app makes on the fly are
+// swept with it by remove_owned(). 0 while the system itself runs.
+export i32 g_current_owner = 0;
+
+// Installed by the app framework: i32 filter(owner, code, mods) sees every
+// key DOWN before the focused widget and returns 1 to claim it (shortcuts).
+export i32 g_key_filter = 0;
+
+// Pending handler calls: 4 words each (handler, owner, id, arg).
+export i32 EVENT_MAX = 64;
+export i32 g_events[256];
+export i32 g_event_head = 0;
+export i32 g_event_tail = 0;
 
 // Up to 256 nodes for now to keep memory small
 // TODO: grow this table and Node.id to u32 when we need more than 256 nodes.
@@ -272,10 +301,95 @@ export i32 create_node(i32 kind, char *name) {
     n->sy = 0;
     n->sw = 0;
     n->sh = 0;
+    n->owner = g_current_owner;
+    n->on_close = 0;
 
     g_node_table[id] = n;
     touch();
     return id;
+}
+
+// --- ownership ------------------------------------------------------------------------
+
+export i32 owner_of(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return 0; }
+    return n->owner;
+}
+
+// Re-stamp a subtree with `owner`, for trees built before the owner existed.
+export void set_owner(i32 id, i32 owner) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    n->owner = owner;
+    i32 child = n->first_child;
+    while (child != 0) {
+        set_owner(child, owner);
+        Node *c = node_ptr(child);
+        if (c == 0) { child = 0; } else { child = c->next_sibling; }
+    }
+}
+
+export void set_key_filter(i32 handler) { g_key_filter = handler; }
+export i32 key_filter() { return g_key_filter; }
+
+export i32 current_owner() { return g_current_owner; }
+export void set_current_owner(i32 owner) { g_current_owner = owner; }
+
+// Delete every node an app instance owns: its windows, any dialog it opened
+// and its timers. Ids are walked in order; a node freed as part of an
+// earlier subtree simply reads back as absent.
+export void remove_owned(i32 owner) {
+    if (owner == 0) { return; }
+    i32 id = 1;
+    while (id < g_next_node_id) {
+        Node *n = node_ptr(id);
+        if (n != 0) {
+            if (n->owner == owner) { remove_node(id); }
+        }
+        id++;
+    }
+}
+
+// --- event queue ----------------------------------------------------------------------
+
+// Queue a handler call. A full queue drops the event: the alternative,
+// running it inline, is exactly what the queue exists to avoid.
+export void push_event(i32 handler, i32 owner, i32 id, i32 arg) {
+    if (handler == 0) { return; }
+    i32 next = g_event_tail + 1;
+    if (next >= EVENT_MAX) { next = 0; }
+    if (next == g_event_head) { return; }
+    i32 at = g_event_tail * 4;
+    g_events[at] = handler;
+    g_events[at + 1] = owner;
+    g_events[at + 2] = id;
+    g_events[at + 3] = arg;
+    g_event_tail = next;
+}
+
+export i32 has_events() {
+    if (g_event_head == g_event_tail) { return 0; }
+    return 1;
+}
+
+// Run every queued handler, in order, each with g_current_owner set to the
+// app it belongs to. Handlers may queue further events; those run in the
+// same pass.
+export void drain_events() {
+    while (g_event_head != g_event_tail) {
+        i32 at = g_event_head * 4;
+        i32 handler = g_events[at];
+        i32 owner = g_events[at + 1];
+        i32 id = g_events[at + 2];
+        i32 arg = g_events[at + 3];
+        g_event_head = g_event_head + 1;
+        if (g_event_head >= EVENT_MAX) { g_event_head = 0; }
+        i32 outer = g_current_owner;
+        g_current_owner = owner;
+        handler(owner, id, arg);
+        g_current_owner = outer;
+    }
 }
 
 // --- scalar queries -------------------------------------------------------------
@@ -750,16 +864,24 @@ export void set_on_change(i32 id, i32 handler) {
     n->on_change = handler;
 }
 
-export void fire_change(Node *n) {
-    i32 handler = n->on_change;
-    if (handler != 0) {
-        i32 id = n->id;
-        handler(id);
-    }
+export void set_on_close(i32 id, i32 handler) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    n->on_close = handler;
 }
 
-// Invoke a node's click handler, if any. Checkboxes toggle first, so the
-// handler observes the new state. Returns 1 if a handler ran, else 0.
+export i32 on_close_of(i32 id) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return 0; }
+    return n->on_close;
+}
+
+export void fire_change(Node *n) {
+    push_event(n->on_change, n->owner, n->id, 0);
+}
+
+// Queue a node's click handler, if any. Checkboxes toggle first, so the
+// handler observes the new state. Returns 1 if a handler was queued, else 0.
 export i32 dispatch_click(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return 0; }
@@ -768,9 +890,8 @@ export i32 dispatch_click(i32 id) {
         set_state_flag(id, NodeState::CHECKED, now == 0);
         fire_change(n);
     }
-    i32 handler = n->on_click;
-    if (handler != 0) {
-        handler(id);
+    if (n->on_click != 0) {
+        push_event(n->on_click, n->owner, id, 0);
         return 1;
     }
     return 0;

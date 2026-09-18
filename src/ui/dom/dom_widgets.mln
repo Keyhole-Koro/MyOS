@@ -84,7 +84,15 @@ export void activate_topmost() {
     dom.damage_node(dom.get_g_taskbar_id());
 }
 
+// The user closed a window. A window with an on_close handler is handed to
+// its app (queued, so the app framework runs the handler and then removes
+// everything the instance owns); any other window is removed here.
 export void close_window(i32 win) {
+    i32 handler = dom.on_close_of(win);
+    if (handler != 0) {
+        dom.push_event(handler, dom.owner_of(win), win, 0);
+        return;
+    }
     dom.remove_node(win);
     activate_topmost();
 }
@@ -705,8 +713,7 @@ export void list_click(i32 id, i32 px, i32 py) {
     i32 was = n->sel - 1;
     list_select(id, row);
     if (row == was) {
-        i32 handler = n->on_click;
-        if (handler != 0) { handler(id); }
+        dom.push_event(n->on_click, n->owner, id, 0);
     } else {
         dom.fire_change(n);
     }
@@ -733,8 +740,7 @@ export EditResult list_handle(Node *n, i32 type, i32 code) {
     if (code == KEY_END) { list_select(id, count - 1); dom.fire_change(n); return EditResult::Moved; }
     if (code == KEY_ENTER) {
         if (sel >= 0) {
-            i32 handler = n->on_click;
-            if (handler != 0) { handler(id); }
+            dom.push_event(n->on_click, n->owner, id, 0);
         }
         return EditResult::Moved;
     }
@@ -962,6 +968,12 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
             focus_next(mods & MOD_SHIFT);
             return;
         }
+        // App shortcuts (@key) for the active window's app go first.
+        i32 filter = dom.key_filter();
+        if (filter != 0) {
+            i32 claimed = filter(dom.owner_of(dom.get_g_active_window()), code, mods);
+            if (claimed != 0) { return; }
+        }
     }
     Node *n = dom.node_ptr(dom.get_g_focus_id());
     if (n == 0) { return; }
@@ -969,7 +981,9 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
     if (type == EVT_DOWN) {
         i32 handler = n->on_key;
         if (handler != 0) {
-            i32 claimed = handler(id, code, mods);
+            // Runs inline, unlike the queued handlers: it decides whether
+            // the key goes on to the widget, which cannot wait.
+            i32 claimed = handler(n->owner, id, code | (mods << 16));
             if (claimed != 0) { return; }
         }
     }
@@ -1041,8 +1055,8 @@ export void set_input_text(i32 id, char *s) {
 
 // --- timers --------------------------------------------------------------------------------------
 
-// Fire every registered timer whose period has elapsed. The compositor calls
-// this once per pass; handlers run on the compositor task.
+// Queue every registered timer whose period has elapsed. The compositor
+// calls this once per pass and drains the queue afterwards.
 export void tick() {
     i32 *g_timer_ids = dom.get_g_timer_ids();
     i32 now = scheduler.ticks();
@@ -1053,8 +1067,7 @@ export void tick() {
         if (t != 0) {
             if (now >= t->next_due) {
                 t->next_due = now + t->interval;
-                i32 handler = t->on_tick;
-                if (handler != 0) { handler(id); }
+                dom.push_event(t->on_tick, t->owner, id, 0);
             }
         }
         i++;

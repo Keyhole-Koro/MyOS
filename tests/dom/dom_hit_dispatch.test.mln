@@ -9,9 +9,10 @@ import heap from "../../../MyKernel/src/mm/heap.mln";
 
 // Pins the interaction contract the compositor relies on: it holds no node ids
 // and starts every interaction from a hit test, so what must hold is that
-// find_at returns the node under a point and dispatch_click runs that node's
-// own handler. Two buttons are mounted so a hit can be wrong rather than
-// merely absent.
+// find_at returns the node under a point and dispatch_click queues that node's
+// own handler, which drain_events then runs. Two buttons are mounted so a hit
+// can be wrong rather than merely absent. Handlers set directly with
+// set_on_click take the raw handler ABI, (owner, id, arg).
 //
 // Coordinates handed to create_* are logical (1024x768) and relative to the
 // parent; a window's children start below its title bar (MYOS-014). Input
@@ -23,23 +24,23 @@ i32 g_hits_c = 0;
 i32 g_hits_d = 0;
 i32 g_changes = 0;
 
-void on_a(i32 id) {
+void on_a(i32 owner, i32 id, i32 arg) {
     g_hits_a = g_hits_a + 1;
 }
 
-void on_b(i32 id) {
+void on_b(i32 owner, i32 id, i32 arg) {
     g_hits_b = g_hits_b + 1;
 }
 
-void on_c(i32 id) {
+void on_c(i32 owner, i32 id, i32 arg) {
     g_hits_c = g_hits_c + 1;
 }
 
-void on_d(i32 id) {
+void on_d(i32 owner, i32 id, i32 arg) {
     g_hits_d = g_hits_d + 1;
 }
 
-void on_change(i32 id) {
+void on_change(i32 owner, i32 id, i32 arg) {
     g_changes = g_changes + 1;
 }
 
@@ -49,6 +50,7 @@ i32 click_at(i32 x, i32 y) {
     i32 hit = dom.find_at(x, y);
     if (hit != 0) {
         dom.dispatch_click(hit);
+        dom.drain_events();
     }
     return hit;
 }
@@ -173,6 +175,7 @@ void dom_hit_dispatch() {
     dom.append_child(win2, cb);
     assert.assert_true(dom.is_checked(cb) == 0, "checkbox starts unchecked");
     dom.dispatch_click(cb);
+    dom.drain_events();
     assert.assert_true(dom.is_checked(cb) == 1, "click checks it");
     assert.assert_true(g_changes == 1, "on_change fired once");
 
@@ -185,6 +188,7 @@ void dom_hit_dispatch() {
     dom_widgets.dispatch_key_event(3, 'i', 0);
     dom_widgets.dispatch_key_event(1, 8, 0);   // backspace
     dom_widgets.dispatch_key_event(3, 'o', 0);
+    dom.drain_events();
     char *typed = dom.text_of(field);
     assert.assert_true(typed[0] == 'h', "first typed char");
     assert.assert_true(typed[1] == 'o', "backspace then insert");

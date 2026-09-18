@@ -1,0 +1,159 @@
+package ui;
+
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+import dom from "../ui/dom/dom.mln";
+import dom_widgets from "../ui/dom/dom_widgets.mln";
+import graphics from "../ui/graphics.mln";
+import app from "app.mln";
+
+// The UI an application is allowed to talk to. Apps import this and the
+// element vocabulary (dom_elements.mln, for markup) and nothing else from
+// the UI server, so the surface an app depends on is this file.
+//
+// Every argument and result is an i32 or a char*: a node id, a handler, a
+// count, a string. Nothing here takes or returns a struct, an Option or a
+// Node pointer. That is deliberate -- an app running as a user process will
+// reach the same functions through syscalls, and this is the shape a syscall
+// can carry. "Absent" is -1 for indexes and 0 for ids and pointers.
+
+// --- text -------------------------------------------------------------------------------------
+
+export void set_text(i32 id, char *s) { dom.set_text(id, s); }
+export char* text_of(i32 id) { return dom.text_of(id); }
+
+// Labels keep a pointer to their text rather than a copy, so formatted text
+// needs a buffer that outlives the call. set_text_fmt keeps one per label
+// (96 bytes, allocated on first use) and formats `fmt` into it: `%d` takes
+// the next i32 argument, `%s` the next as a char*, `%%` is a percent sign.
+i32 FMT_SLOTS = 32;
+i32 FMT_CAP = 96;
+i32 g_fmt_ids[32];
+i32 g_fmt_bufs[32];
+i32 g_fmt_count = 0;
+
+char* fmt_buffer(i32 id) {
+    i32 i = 0;
+    while (i < g_fmt_count) {
+        if (g_fmt_ids[i] == id) { return (char*)g_fmt_bufs[i]; }
+        i++;
+    }
+    if (g_fmt_count >= FMT_SLOTS) { return (char*)0; }
+    i32 buf = heap.alloc(FMT_CAP);
+    if (buf == 0) { return (char*)0; }
+    g_fmt_ids[g_fmt_count] = id;
+    g_fmt_bufs[g_fmt_count] = buf;
+    g_fmt_count++;
+    return (char*)buf;
+}
+
+export void set_text_fmt(i32 id, char *fmt, i32 a, i32 b) {
+    char *buf = fmt_buffer(id);
+    if (buf == 0) { dom.set_text(id, fmt); return; }
+    i32 n = strbuf.reset(buf);
+    i32 next = 0;
+    i32 i = 0;
+    while (fmt[i] != 0) {
+        i32 c = fmt[i] & 0xFF;
+        if (c == '%') {
+            i32 spec = fmt[i + 1] & 0xFF;
+            i32 value = a;
+            if (next == 1) { value = b; }
+            if (spec == 'd') {
+                n = strbuf.append_i32(buf, FMT_CAP, n, value);
+                next++;
+                i = i + 2;
+            } else if (spec == 's') {
+                if (value != 0) { n = strbuf.append(buf, FMT_CAP, n, (char*)value); }
+                next++;
+                i = i + 2;
+            } else if (spec == '%') {
+                n = strbuf.push(buf, FMT_CAP, n, '%');
+                i = i + 2;
+            } else {
+                n = strbuf.push(buf, FMT_CAP, n, c);
+                i++;
+            }
+        } else {
+            n = strbuf.push(buf, FMT_CAP, n, c);
+            i++;
+        }
+    }
+    dom.set_text(id, buf);
+}
+
+// --- widgets --------------------------------------------------------------------------------
+
+export i32 is_checked(i32 id) { return dom.is_checked(id); }
+export void set_checked(i32 id, i32 on) { dom.set_checked(id, on); }
+
+export void input_set(i32 id, char *s) { dom_widgets.set_input_text(id, s); }
+export void area_append(i32 id, char *s) { dom_widgets.append_text(id, s); }
+export void area_clear(i32 id) { dom_widgets.clear_text_area(id); }
+export i32 area_lines(i32 id) { return dom_widgets.text_area_line_count(id); }
+
+export void list_set_items(i32 id, char *items) { dom_widgets.list_set_items(id, items); }
+export i32 list_count(i32 id) { return dom_widgets.list_count(id); }
+
+// Selected row, or -1.
+export i32 list_selected(i32 id) {
+    i32 row = case dom_widgets.list_selected(id) of {
+        Some(v) -> v;
+        None -> -1;
+    };
+    return row;
+}
+
+// Copy row `index`'s text into `out` (at most `cap` bytes incl. NUL);
+// returns its length, or -1 for no such row.
+export i32 list_item(i32 id, i32 index, char *out, i32 cap) {
+    i32 len = case dom_widgets.list_item(id, index, out, cap) of {
+        Some(v) -> v;
+        None -> -1;
+    };
+    return len;
+}
+
+// --- focus and windows ------------------------------------------------------------------------
+
+export void focus(i32 id) { dom_widgets.set_focus(id); }
+export void focus_window(i32 win) { dom_widgets.focus_window(win); }
+
+// Close a window the app opened itself (a dialog). The app's own main
+// window is closed by the framework when the user closes it.
+export void close(i32 win) {
+    dom.remove_node(win);
+    dom_widgets.activate_topmost();
+}
+
+export i32 window_of(i32 id) { return dom.window_of(id); }
+export i32 window_x(i32 win) { return dom.node_x(win) / dom.ui_scale(); }
+export i32 window_y(i32 win) { return dom.node_y(win) / dom.ui_scale(); }
+
+// Mount a tree the app built (a dialog) on the desktop and focus it.
+export void show(i32 win) {
+    dom.append_child(dom.desktop_id(), win);
+    dom_widgets.focus_window(win);
+}
+
+// Name a node for automation (dom-tester locators).
+export void test_id(i32 id, char *name) { dom.set_test_id(id, name); }
+
+// --- keys ---------------------------------------------------------------------------------------
+
+// Simulate a key on the focused node; `type` 1 = down, 3 = char.
+export void send_key(i32 type, i32 code, i32 mods) { dom_widgets.dispatch_key_event(type, code, mods); }
+
+// A raw key filter on one node: i32 handler(owner, id, code | mods << 16),
+// run inline before the widget sees the key; return 1 to claim it.
+export void set_key_filter(i32 id, i32 handler) { dom.set_on_key(id, handler); }
+
+// --- colours -----------------------------------------------------------------------------------
+
+export i32 rgb(i32 r, i32 g, i32 b) { return graphics.rgb(r, g, b); }
+
+// --- other apps ---------------------------------------------------------------------------------
+
+// Hand a path to whichever app declares @open; returns its window or 0.
+export i32 open(char *path) { return app.open(path); }

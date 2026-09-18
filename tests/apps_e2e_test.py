@@ -80,7 +80,7 @@ def main() -> int:
             wait_text_contains(term_out, "readme.txt")
 
             # 2. The editor saves a new file to the disk.
-            launch_app(os, 2)  # Editor
+            launch_app(os, 1)  # Editor (menu is alphabetical: Counter, Editor, Files, Notes, Terminal)
             editor = os.get_by_role("window", name="Editor")
             expect(editor).to_be_visible()
             # The editor opens with "untitled.txt" in the name field; clear it
@@ -99,7 +99,7 @@ def main() -> int:
 
             # 3. The file manager lists the disk, including the file the
             #    editor just wrote -- proof the save reached the disk image.
-            launch_app(os, 1)  # Files
+            launch_app(os, 2)  # Files
             files = os.get_by_role("window", name="Files")
             expect(files).to_be_visible()
             os.get_by_role("button", name="Refresh").click()

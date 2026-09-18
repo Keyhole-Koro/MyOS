@@ -1,0 +1,311 @@
+package app;
+
+import debug from "../../../MyKernel/src/debug/debug.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import bytes from "../../../../toolchain/MyStdLib/text/bytes.mln";
+import str from "../../../../toolchain/MyStdLib/str.mln";
+import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
+import dom from "../ui/dom/dom.mln";
+import dom_widgets from "../ui/dom/dom_widgets.mln";
+import dom_render from "../ui/dom/dom_render.mln";
+import graphics from "../ui/graphics.mln";
+
+// Application framework: the registry of installed apps and the instances
+// running on the desktop.
+//
+// An app is a struct marked `@app` in its own file. The compiler turns it
+// into a descriptor table -- `__app_Counter_desc()` -- of i32 words, and
+// that table is all this package sees (the layout is fixed in
+// toolchain/MyLangCompiler/docs/grammar.md, "Attributes and applications"):
+//
+//   [0] name        [1] flags (1 = single instance)   [2] instance size
+//   [3] init(self)  [4] view(self) -> window          [5] open handler | 0
+//   [6] on_close | 0  [7] task | 0  [8] timer count  [9] key count
+//   [10..] (interval, handler) x timers, then (mods, code, handler) x keys
+//
+// Every handler is `void (i32 owner, i32 id, i32 arg)`; `owner` is the
+// instance pointer this package allocates in mount(). The build generates
+// apps_manifest.mln, which hands every descriptor to add(); boot wires
+// launch_menu() to the taskbar and dispatch_key() to the keyboard.
+//
+// An instance owns every DOM node created while its code runs (dom.mln's
+// g_current_owner), so closing its window sweeps dialogs and timers with
+// it. Descriptors and instances are fixed-size tables, like the rest of the
+// kernel's bookkeeping.
+
+// --- descriptor words -----------------------------------------------------------------------
+
+i32 D_NAME = 0;
+i32 D_FLAGS = 1;
+i32 D_SIZE = 2;
+i32 D_INIT = 3;
+i32 D_VIEW = 4;
+i32 D_OPEN = 5;
+i32 D_ON_CLOSE = 6;
+i32 D_TASK = 7;
+i32 D_TIMER_COUNT = 8;
+i32 D_KEY_COUNT = 9;
+i32 D_FIXED = 10;
+i32 FLAG_SINGLE = 1;
+
+// --- tables ----------------------------------------------------------------------------------
+
+i32 APPS_MAX = 16;
+i32 g_desc[16];        // i32* descriptor tables, in menu order
+i32 g_app_count = 0;
+
+i32 INSTANCES_MAX = 32;
+i32 g_inst_self[32];   // instance pointer (0 = free slot)
+i32 g_inst_desc[32];   // its descriptor
+i32 g_inst_win[32];    // its main window
+i32 g_inst_count = 0;  // slots in use, including freed ones below the high-water mark
+
+char g_menu_buf[256];  // "\n"-joined app names for the launcher menu
+char g_open_path[64];  // path handed to an @open handler (copied: the caller's buffer may go away)
+
+i32 desc_word(i32 desc, i32 index) {
+    i32 *t = (i32*)desc;
+    return t[index];
+}
+
+// --- registry --------------------------------------------------------------------------------
+
+export void add(i32 *desc) {
+    if (g_app_count >= APPS_MAX) {
+        debug.println("app: registry full");
+        return;
+    }
+    g_desc[g_app_count] = (i32)desc;
+    g_app_count++;
+}
+
+export i32 count() { return g_app_count; }
+
+export char* app_name(i32 index) {
+    if (index < 0) { return ""; }
+    if (index >= g_app_count) { return ""; }
+    return (char*)desc_word(g_desc[index], D_NAME);
+}
+
+// --- instances -------------------------------------------------------------------------------
+
+i32 slot_of_owner(i32 owner) {
+    i32 i = 0;
+    while (i < g_inst_count) {
+        if (g_inst_self[i] == owner) { return i; }
+        i++;
+    }
+    return -1;
+}
+
+i32 slot_of_desc(i32 desc) {
+    i32 i = 0;
+    while (i < g_inst_count) {
+        if (g_inst_self[i] != 0) {
+            if (g_inst_desc[i] == desc) { return i; }
+        }
+        i++;
+    }
+    return -1;
+}
+
+i32 free_slot() {
+    i32 i = 0;
+    while (i < g_inst_count) {
+        if (g_inst_self[i] == 0) { return i; }
+        i++;
+    }
+    if (g_inst_count >= INSTANCES_MAX) { return -1; }
+    g_inst_count++;
+    return g_inst_count - 1;
+}
+
+// The instance whose window this is, or 0.
+export i32 owner_of_window(i32 win) {
+    i32 i = 0;
+    while (i < g_inst_count) {
+        if (g_inst_win[i] == win) { return g_inst_self[i]; }
+        i++;
+    }
+    return 0;
+}
+
+// Create an instance of `desc`, build its window and put it on the desktop.
+// Returns the window id, or 0 when out of slots or memory.
+i32 mount(i32 desc) {
+    i32 slot = free_slot();
+    if (slot < 0) {
+        debug.println("app: too many instances");
+        return 0;
+    }
+    i32 size = desc_word(desc, D_SIZE);
+    i32 self = heap.alloc(size);
+    if (self == 0) {
+        debug.println("app: out of memory");
+        return 0;
+    }
+    bytes.zero((char*)self, size);
+    i32 init = desc_word(desc, D_INIT);
+    init(self);
+
+    // Everything view() creates -- and everything the app creates later from
+    // its handlers -- is stamped with `self`.
+    i32 outer = dom.current_owner();
+    dom.set_current_owner(self);
+    i32 view = desc_word(desc, D_VIEW);
+    i32 win = view(self);
+    if (win != 0) {
+        dom.set_owner(win, self);
+        dom.set_on_close(win, window_closed);
+        dom.append_child(dom.desktop_id(), win);
+    }
+    i32 timers = desc_word(desc, D_TIMER_COUNT);
+    i32 w = D_FIXED;
+    i32 i = 0;
+    while (i < timers) {
+        dom_widgets.create_timer(desc_word(desc, w), desc_word(desc, w + 1));
+        w = w + 2;
+        i++;
+    }
+    dom.set_current_owner(outer);
+
+    g_inst_self[slot] = self;
+    g_inst_desc[slot] = desc;
+    g_inst_win[slot] = win;
+    if (win != 0) { dom_widgets.focus_window(win); }
+    return win;
+}
+
+// The on_close handler every app window carries: run the app's @on_close,
+// then remove everything the instance owns and free it.
+void window_closed(i32 owner, i32 win, i32 arg) {
+    i32 slot = slot_of_owner(owner);
+    if (slot < 0) {
+        dom.remove_node(win);
+        dom_widgets.activate_topmost();
+        return;
+    }
+    i32 on_close = desc_word(g_inst_desc[slot], D_ON_CLOSE);
+    if (on_close != 0) { on_close(owner, win, 0); }
+    dom.remove_owned(owner);
+    heap.free(owner);
+    g_inst_self[slot] = 0;
+    g_inst_desc[slot] = 0;
+    g_inst_win[slot] = 0;
+    dom_widgets.activate_topmost();
+}
+
+// Start the app at `index`; a single-instance app that is already running is
+// brought to the front instead. Returns the window id.
+export i32 launch(i32 index) {
+    if (index < 0) { return 0; }
+    if (index >= g_app_count) { return 0; }
+    i32 desc = g_desc[index];
+    if ((desc_word(desc, D_FLAGS) & FLAG_SINGLE) != 0) {
+        i32 slot = slot_of_desc(desc);
+        if (slot >= 0) {
+            dom_widgets.focus_window(g_inst_win[slot]);
+            return g_inst_win[slot];
+        }
+    }
+    return mount(desc);
+}
+
+// Start the app called `name` (as the launcher shows it); 0 if there is none.
+export i32 launch_named(char *name) {
+    i32 i = 0;
+    while (i < g_app_count) {
+        if (str.eq(app_name(i), name) != 0) { return launch(i); }
+        i++;
+    }
+    return 0;
+}
+
+// Hand `path` to an app with an @open method: the running instance of a
+// single-instance app, otherwise a fresh one. Returns 0 when no app opens
+// files.
+export i32 open(char *path) {
+    i32 i = 0;
+    while (i < g_app_count) {
+        i32 desc = g_desc[i];
+        i32 handler = desc_word(desc, D_OPEN);
+        if (handler != 0) {
+            i32 slot = -1;
+            if ((desc_word(desc, D_FLAGS) & FLAG_SINGLE) != 0) { slot = slot_of_desc(desc); }
+            i32 win = 0;
+            if (slot >= 0) {
+                win = g_inst_win[slot];
+                dom_widgets.focus_window(win);
+            } else {
+                win = mount(desc);
+                slot = slot_of_desc(desc);
+            }
+            if (slot < 0) { return 0; }
+            str.ncopy(&g_open_path[0], path, 64);
+            dom.push_event(handler, g_inst_self[slot], win, (i32)(&g_open_path[0]));
+            return win;
+        }
+        i++;
+    }
+    return 0;
+}
+
+// --- launcher menu ---------------------------------------------------------------------------
+
+export char* menu_items() {
+    i32 n = strbuf.reset(&g_menu_buf[0]);
+    i32 i = 0;
+    while (i < g_app_count) {
+        if (i > 0) { n = strbuf.append(&g_menu_buf[0], 256, n, "\n"); }
+        n = strbuf.append(&g_menu_buf[0], 256, n, app_name(i));
+        i++;
+    }
+    return &g_menu_buf[0];
+}
+
+// Menu handler(index): the same table order as menu_items().
+export void on_menu(i32 index) {
+    launch(index);
+}
+
+// Taskbar launcher: pop the app menu up above the button.
+export void launch_menu() {
+    i32 s = dom.ui_scale();
+    i32 rows = g_app_count;
+    if (rows < 1) { rows = 1; }
+    i32 y = graphics.display_height() - dom_widgets.taskbar_height() - (rows * 34 + 20) * s;
+    dom_widgets.open_menu(8 * s, y, menu_items(), on_menu, 0);
+}
+
+// --- keyboard shortcuts ----------------------------------------------------------------------
+
+// Key filter installed on the DOM: a DOWN event whose (mods, code) matches a
+// @key of the active window's app is queued to that handler and claimed.
+export i32 dispatch_key(i32 owner, i32 code, i32 mods) {
+    if (owner == 0) { return 0; }
+    i32 slot = slot_of_owner(owner);
+    if (slot < 0) { return 0; }
+    i32 desc = g_inst_desc[slot];
+    i32 w = D_FIXED + desc_word(desc, D_TIMER_COUNT) * 2;
+    i32 keys = desc_word(desc, D_KEY_COUNT);
+    i32 i = 0;
+    while (i < keys) {
+        if (desc_word(desc, w) == mods) {
+            if (desc_word(desc, w + 1) == code) {
+                dom.push_event(desc_word(desc, w + 2), owner, g_inst_win[slot], code | (mods << 16));
+                return 1;
+            }
+        }
+        w = w + 3;
+        i++;
+    }
+    return 0;
+}
+
+// Wire the framework to the desktop: taskbar launcher, desktop menu and the
+// keyboard filter. Call once after dom.init() and after the manifest has
+// added every app.
+export void install() {
+    dom_render.set_launcher(launch_menu);
+    dom.set_key_filter(dispatch_key);
+}

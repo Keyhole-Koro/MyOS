@@ -186,70 +186,96 @@ export i32 create_list(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
 // parameter of the same name, and children passed to append_child. The element
 // vocabulary therefore lives here rather than in the compiler: adding an
 // element means adding a function, and its parameters are its properties.
+//
+// A parameter with a default is an optional property: position defaults to
+// the parent's origin (which is what a child of a Column or Row wants, since
+// the container places it), sizes to something sensible, handlers to none.
+// `testId` names the node for automation. Handler parameters (on*) receive
+// functions with the dispatcher ABI, `void (i32 owner, i32 id, i32 arg)`;
+// the compiler wraps methods and plain handlers into it, see
+// toolchain/MyLangCompiler/docs/source-modifiers.md.
 // ---------------------------------------------------------------------------
 
-export i32 Window(char *title, i32 x, i32 y, i32 w, i32 h) {
-    return create_window(title, x, y, w, h);
+// Children of an element are attached with the `append_child` in scope;
+// re-exported here so a markup file needs only this package.
+export void append_child(i32 parent, i32 child) { dom.append_child(parent, child); }
+
+void tag(i32 id, char *testId) {
+    if (testId[0] != 0) { dom.set_test_id(id, testId); }
 }
 
-export i32 Button(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
+export i32 Window(char *title, i32 x = 0, i32 y = 0, i32 w = 400, i32 h = 300, char *testId = "") {
+    i32 id = create_window(title, x, y, w, h);
+    tag(id, testId);
+    return id;
+}
+
+export i32 Button(char *text, i32 x = 0, i32 y = 0, i32 w = 90, i32 h = 34, i32 onClick = 0, char *testId = "") {
     i32 id = create_button(text, x, y, w, h);
     dom.set_on_click(id, onClick);
+    tag(id, testId);
     return id;
 }
 
 // Accent-coloured call to action.
-export i32 PrimaryButton(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
+export i32 PrimaryButton(char *text, i32 x = 0, i32 y = 0, i32 w = 90, i32 h = 34, i32 onClick = 0, char *testId = "") {
     i32 id = create_button(text, x, y, w, h);
     dom.set_on_click(id, onClick);
     dom.set_style(id, NodeStyle::PRIMARY);
+    tag(id, testId);
     return id;
 }
 
-export i32 Text(char *text, i32 x, i32 y) {
-    return create_text(text, x, y);
+export i32 Text(char *text, i32 x = 0, i32 y = 0, char *testId = "") {
+    i32 id = create_text(text, x, y);
+    tag(id, testId);
+    return id;
 }
 
 // Text with an explicit colour (graphics.rgb(); 0 = theme default) and weight.
-export i32 Label(char *text, i32 x, i32 y, i32 color, i32 bold) {
+export i32 Label(char *text, i32 x = 0, i32 y = 0, i32 color = 0, i32 bold = 0, char *testId = "") {
     i32 id = create_text(text, x, y);
     if (bold != 0) { dom.set_style(id, NodeStyle::BOLD); }
     dom.set_color(id, color);
+    tag(id, testId);
     return id;
 }
 
-export i32 Box(i32 x, i32 y, i32 w, i32 h,
-               i32 background, i32 border) {
+export i32 Box(i32 x = 0, i32 y = 0, i32 w = 100, i32 h = 100,
+               i32 background = 0, i32 border = 0) {
     return create_box(x, y, w, h, background, border);
 }
 
-export i32 Panel(i32 x, i32 y, i32 w, i32 h, i32 radius) {
+export i32 Panel(i32 x = 0, i32 y = 0, i32 w = 100, i32 h = 100, i32 radius = 0) {
     return create_panel(x, y, w, h, radius);
 }
 
-export i32 Column(i32 x, i32 y, i32 w, i32 h,
-                  i32 padding, i32 gap) {
+export i32 Column(i32 x = 0, i32 y = 0, i32 w = 100, i32 h = 100,
+                  i32 padding = 0, i32 gap = 0) {
     return create_column(x, y, w, h, padding, gap);
 }
 
-export i32 Row(i32 x, i32 y, i32 w, i32 h,
-               i32 padding, i32 gap) {
+export i32 Row(i32 x = 0, i32 y = 0, i32 w = 100, i32 h = 34,
+               i32 padding = 0, i32 gap = 0) {
     return create_row(x, y, w, h, padding, gap);
 }
 
-export i32 TextInput(char *placeholder, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 onChange) {
+export i32 TextInput(char *placeholder, i32 x = 0, i32 y = 0, i32 w = 200, i32 h = 34, i32 capacity = 64, i32 onChange = 0, char *testId = "") {
     i32 id = create_text_input(placeholder, x, y, w, h, capacity);
     dom.set_on_change(id, onChange);
+    tag(id, testId);
     return id;
 }
 
-export i32 Checkbox(char *text, i32 x, i32 y, i32 checked, i32 onClick) {
+export i32 Checkbox(char *text, i32 x = 0, i32 y = 0, i32 checked = 0, i32 onClick = 0, char *testId = "") {
     i32 id = create_checkbox(text, x, y, checked);
     dom.set_on_click(id, onClick);
+    dom.set_hit_testable(id, 1); // toggles by itself even with no handler
+    tag(id, testId);
     return id;
 }
 
-export i32 Separator(i32 x, i32 y, i32 w) {
+export i32 Separator(i32 x = 0, i32 y = 0, i32 w = 100) {
     return create_separator(x, y, w);
 }
 
@@ -257,18 +283,21 @@ export i32 Timer(i32 interval, i32 onTick) {
     return dom_widgets.create_timer(interval, onTick);
 }
 
-export i32 TextArea(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 readonly, i32 onChange) {
+export i32 TextArea(char *name, i32 x = 0, i32 y = 0, i32 w = 300, i32 h = 200, i32 capacity = 1024, i32 readonly = 0, i32 onChange = 0, char *testId = "") {
     i32 id = create_text_area(name, x, y, w, h, capacity, readonly);
     dom.set_on_change(id, onChange);
+    tag(id, testId);
     return id;
 }
 
 // onChange fires when the selection moves, onActivate (stored as the click
 // handler) when a row is clicked again or Enter is pressed.
-export i32 List(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 onChange, i32 onActivate) {
+export i32 List(char *name, i32 x = 0, i32 y = 0, i32 w = 300, i32 h = 200, i32 capacity = 1024, i32 onChange = 0, i32 onActivate = 0, char *testId = "") {
     i32 id = create_list(name, x, y, w, h, capacity);
     dom.set_on_change(id, onChange);
     dom.set_on_click(id, onActivate);
+    dom.set_hit_testable(id, 1); // rows select on click even with no handler
+    tag(id, testId);
     return id;
 }
 

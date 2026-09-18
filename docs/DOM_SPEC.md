@@ -546,3 +546,27 @@ checked/hitTestableを含める。host側は`MyOS` / strict `Locator` / `expect`
   stdout 書き込みとの競合で以前は文字化けした）。TextArea を跨ぐ描画/追記は
   コンポジタ側を割込み禁止で相互排他にする（プロセス側 syscall は元々割込み禁止）。
 - グローバル `char* = "リテラル"` は null になるため、メニュー文字列等は関数返り値で渡す。
+
+## MYOS-016（2026-09-18）: アプリフレームワーク導入で変わった契約
+
+- **ハンドラ ABI**: `on_click` / `on_change` / `on_tick` は
+  `void handler(i32 owner, i32 id, i32 arg)` に統一。`on_key` は
+  `i32 filter(i32 owner, i32 id, i32 code | mods << 16)` で、これだけ即時実行
+  （戻り値 1 で claim）。markup / `@app` 経由のハンドラはコンパイラが
+  この形に包むので、手書きするのは `dom.set_on_click` 等を直接呼ぶ場合のみ。
+- **イベントキュー**: `dispatch_click` / `fire_change` / `tick` / List の
+  activate はハンドラを呼ばず `dom.push_event` に積む。`compositor.run()` が
+  入力処理とタイマの後に `dom.drain_events()` でまとめて実行する。テストで
+  同期的に結果を見るときは dispatch のあとに `drain_events()` を呼ぶ。
+- **Node**: `owner`（i32、所有アプリインスタンス、0 = system）と `on_close`
+  （Window のみ）を追加、`NODE_SIZE` は 96 → 104。`create_node` は
+  `g_current_owner` を `owner` に刻む（`drain_events` がハンドラ実行中に設定）。
+  `set_owner(id, owner)` は部分木を再刻印、`remove_owned(owner)` は所有ノードを
+  全削除。`dom_widgets.close_window` は `on_close` があればキューに積んで戻り、
+  ノードの削除は framework（`app.mln`）に任せる。
+- **キーフィルタ**: `dom.set_key_filter(fn)`。`dispatch_key_event` が DOWN の先頭で
+  `fn(owner_of(active_window), code, mods)` を呼び、1 なら widget に渡さない
+  （`@key` ショートカット）。
+- **要素関数** (`dom_elements.mln`): 位置・サイズ・ハンドラにデフォルト値、
+  `testId` プロパティ、`append_child` の再 export。`Checkbox` / `List` は
+  ハンドラ無しでも hit-testable。
