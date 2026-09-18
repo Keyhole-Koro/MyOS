@@ -202,7 +202,7 @@ i32 on_spawn(i32 user_path) {
 export i32 has_exited(i32 pid) {
     Option<ProcessState> state = process.get_state(pid);
     return case state of {
-        Some(s) -> case s of { Zombie -> 1; _ -> 0; };
+        Some(s) -> case s of { Zombie(_) -> 1; _ -> 0; };
         None -> 1;
     };
 }
