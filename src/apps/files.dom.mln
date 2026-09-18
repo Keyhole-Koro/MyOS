@@ -65,7 +65,7 @@ void (Files *f) refresh(i32 id) {
         i32 idx = -1;
         case res of {
             Ok(v) -> ({ idx = case v of { Some(n) -> n; None -> -1; }; });
-            Err(e) -> ({ ui.set_text(f->status, "disk error"); return; });
+            Err(_) -> ({ ui.set_text(f->status, "disk error"); return; });
         };
         if (idx < 0) { break; }
         if (count > 0) { k = strbuf.append(&g_items[0], 1024, k, "\n"); }

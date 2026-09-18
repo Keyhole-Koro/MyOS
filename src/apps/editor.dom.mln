@@ -46,14 +46,14 @@ void (Editor *e) open(char *path) {
     ui.focus(e->area);
     i32 fd = case fs.open(path) of {
         Ok(v) -> v;
-        Err(err) -> ({ ui.set_text(e->status, "new file"); return; });
+        Err(_) -> ({ ui.set_text(e->status, "new file"); return; });
     };
     char chunk[128];
     i32 total = 0;
     while (1) {
         i32 got = case fs.read(fd, (i32)(&chunk[0]), 127) of {
             Ok(v) -> v;
-            Err(err) -> 0;
+            Err(_) -> 0;
         };
         if (got <= 0) { break; }
         chunk[got] = (char)0;
@@ -79,13 +79,13 @@ void (Editor *e) save(i32 id) {
     case removed of { Ok(_) -> _; Err(_) -> _; };
     i32 fd = case fs.create(path) of {
         Ok(v) -> v;
-        Err(err) -> ({ ui.set_text(e->status, "save failed: cannot create file"); return; });
+        Err(_) -> ({ ui.set_text(e->status, "save failed: cannot create file"); return; });
     };
     i32 written = 0;
     if (len > 0) {
         written = case fs.write(fd, (i32)text, len) of {
             Ok(v) -> v;
-            Err(err) -> 0;
+            Err(_) -> 0;
         };
     }
     fs.close(fd);
