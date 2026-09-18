@@ -32,7 +32,7 @@ Option<i32> slot_of_input(i32 input_id) {
     i32 i = 0;
     while (i < g_count) {
         if (g_in[i] == input_id) { return Some(i); }
-        i = i + 1;
+        i++;
     }
     return None;
 }
@@ -41,7 +41,7 @@ Option<i32> slot_of_window(i32 win) {
     i32 i = 0;
     while (i < g_count) {
         if (g_win[i] == win) { return Some(i); }
-        i = i + 1;
+        i++;
     }
     return None;
 }
@@ -137,11 +137,11 @@ char* split_arg(char *line) {
     while (line[i] != 0) {
         if (line[i] == ' ') {
             line[i] = (char)0;
-            i = i + 1;
-            while (line[i] == ' ') { i = i + 1; }
+            i++;
+            while (line[i] == ' ') { i++; }
             return &line[i];
         }
-        i = i + 1;
+        i++;
     }
     return &line[i];
 }
@@ -220,7 +220,7 @@ void on_poll(i32 id) {
                 say(i, &g_line_buf[0]);
             }
         }
-        i = i + 1;
+        i++;
     }
 }
 

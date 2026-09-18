@@ -382,7 +382,7 @@ export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
             damage_union_into(i, x0, y0, x1, y1);
             return;
         }
-        i = i + 1;
+        i++;
     }
     if (g_damage_count < DAMAGE_MAX) {
         g_damage_x0[g_damage_count] = x0;
@@ -931,7 +931,7 @@ export void free_subtree(i32 id) {
             g_timer_ids[i] = g_timer_ids[g_timer_count - 1];
             g_timer_count = g_timer_count - 1;
         } else {
-            i = i + 1;
+            i++;
         }
     }
     if (owns_buffer(n) != 0) {

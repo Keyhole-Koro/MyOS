@@ -274,7 +274,7 @@ export void input_delete_at(Node *n, i32 at) {
     i32 i = at;
     while (i < len - 1) {
         buf[i] = buf[i + 1];
-        i = i + 1;
+        i++;
     }
     buf[len - 1] = (char)0;
     n->len = (u16)(len - 1);
@@ -344,7 +344,7 @@ export i32 line_of(Node *n, i32 at) {
     i32 i = 0;
     while (i < at) {
         if (buf[i] == 10) { line = line + 1; }
-        i = i + 1;
+        i++;
     }
     return line;
 }
@@ -358,7 +358,7 @@ export i32 line_start(Node *n, i32 line) {
     while (cur < line) {
         if (i >= len) { return len; }
         if (buf[i] == 10) { cur = cur + 1; }
-        i = i + 1;
+        i++;
     }
     return i;
 }
@@ -370,7 +370,7 @@ export i32 line_len_at(Node *n, i32 start) {
     i32 i = start;
     while (i < len) {
         if (buf[i] == 10) { return i - start; }
-        i = i + 1;
+        i++;
     }
     return len - start;
 }
@@ -519,7 +519,7 @@ export void append_text(i32 id, char *s) {
         i32 i = 0;
         while (drop + i < len) {
             buf[i] = buf[drop + i];
-            i = i + 1;
+            i++;
         }
         len = len - drop;
         if (len < 0) { len = 0; }
@@ -529,7 +529,7 @@ export void append_text(i32 id, char *s) {
         if (len + 1 >= cap) { break; }
         buf[len] = s[i];
         len = len + 1;
-        i = i + 1;
+        i++;
     }
     buf[len] = (char)0;
     n->len = (u16)len;
@@ -561,7 +561,7 @@ export void append_bytes(i32 id, i32 addr, i32 count) {
                 n = 0;
             }
         }
-        i = i + 1;
+        i++;
     }
     tmp[n] = (char)0;
     if (n > 0) { append_text(id, &tmp[0]); }
@@ -623,7 +623,7 @@ export void list_set_items(i32 id, char *items) {
     while (items[i] != 0) {
         if (i + 1 >= cap) { break; }
         buf[i] = items[i];
-        i = i + 1;
+        i++;
     }
     buf[i] = (char)0;
     n->len = (u16)i;
@@ -661,7 +661,7 @@ export Option<i32> list_item(i32 id, i32 index, char *out, i32 cap) {
     while (i < llen) {
         if (i + 1 >= cap) { break; }
         out[i] = buf[start + i];
-        i = i + 1;
+        i++;
     }
     out[i] = (char)0;
     return Some(i);
@@ -784,7 +784,7 @@ export i32 open_menu(i32 x, i32 y, char *items, i32 handler, i32 target) {
         } else {
             line_w = line_w + 1;
         }
-        i = i + 1;
+        i++;
     }
     i32 lh = graphics.text_height(0, s);
     i32 pad = 8 * s;
@@ -932,7 +932,7 @@ export void focus_next(i32 backwards) {
             cur = Some(i);
             break;
         }
-        i = i + 1;
+        i++;
     }
 
     i32 next_idx = 0;
@@ -1028,7 +1028,7 @@ export void set_input_text(i32 id, char *s) {
     while (s[i] != 0) {
         if (i + 1 >= cap) { break; }
         buf[i] = s[i];
-        i = i + 1;
+        i++;
     }
     buf[i] = (char)0;
     n->len = (u16)i;
@@ -1055,7 +1055,7 @@ export void tick() {
                 if (handler != 0) { handler(id); }
             }
         }
-        i = i + 1;
+        i++;
     }
 }
 

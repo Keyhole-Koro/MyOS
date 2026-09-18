@@ -185,7 +185,7 @@ export void copy_line(char *buf, i32 start, i32 llen, char *out, i32 cap) {
     while (i < llen) {
         if (i + 1 >= cap) { break; }
         out[i] = buf[start + i];
-        i = i + 1;
+        i++;
     }
     out[i] = (char)0;
 }
@@ -604,7 +604,7 @@ export TaskbarTarget taskbar_target_at(i32 px, i32 py) {
         if (px >= ex) {
             if (px < ex + ew) { return TaskbarTarget::Window(win); }
         }
-        index = index + 1;
+        index++;
         win = next_window_after(win);
     }
     return TaskbarTarget::Miss;
@@ -803,7 +803,7 @@ export void render_scene() {
         dom.set_g_painting_all(0);
         graphics.set_clip(dom.get_g_paint_x0(), dom.get_g_paint_y0(), dom.get_g_paint_x1() - dom.get_g_paint_x0(), dom.get_g_paint_y1() - dom.get_g_paint_y0());
         paint_desktop();
-        i = i + 1;
+        i++;
     }
     dom.set_g_painting_all(1);
     graphics.clear_clip();

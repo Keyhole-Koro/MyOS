@@ -70,7 +70,7 @@ char* selected_name() {
     while (item[i] != 0) {
         if (item[i] == ' ') { break; }
         g_selected[i] = item[i];
-        i = i + 1;
+        i++;
         if (i >= fs.NAME_MAX - 1) { break; }
     }
     g_selected[i] = (char)0;
