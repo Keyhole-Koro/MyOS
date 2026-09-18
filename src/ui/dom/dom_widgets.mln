@@ -924,20 +924,38 @@ export void focus_next(i32 backwards) {
     g_focus_ring_count = 0;
     collect_focusable(win);
     if (g_focus_ring_count == 0) { return; }
-    i32 idx = 0 - 1;
+
+    Option<i32> cur = None;
     i32 i = 0;
     while (i < g_focus_ring_count) {
-        if (g_focus_ring[i] == dom.get_g_focus_id()) { idx = i; }
+        if (g_focus_ring[i] == dom.get_g_focus_id()) {
+            cur = Some(i);
+            break;
+        }
         i = i + 1;
     }
-    if (backwards != 0) {
-        idx = idx - 1;
-        if (idx < 0) { idx = g_focus_ring_count - 1; }
-    } else {
-        idx = idx + 1;
-        if (idx >= g_focus_ring_count) { idx = 0; }
-    }
-    set_focus(g_focus_ring[idx]);
+
+    i32 next_idx = 0;
+    case cur of {
+        Some(idx) -> ({
+            if (backwards != 0) {
+                if (idx == 0) { next_idx = g_focus_ring_count - 1; }
+                else { next_idx = idx - 1; }
+            } else {
+                if (idx + 1 >= g_focus_ring_count) { next_idx = 0; }
+                else { next_idx = idx + 1; }
+            }
+        });
+        None -> ({
+            if (backwards != 0) {
+                next_idx = g_focus_ring_count - 1;
+            } else {
+                next_idx = 0;
+            }
+        });
+    };
+
+    set_focus(g_focus_ring[next_idx]);
 }
 
 // Route one keyboard event (type = keyboard.EVT_*, code = key code or
