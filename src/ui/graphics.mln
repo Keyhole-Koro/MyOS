@@ -1,6 +1,7 @@
 package graphics;
 
 import display_config from "display_config.mln";
+import ui_config from "ui_config.mln";
 import font from "font8x8.mln";
 import font_sans from "font_sans.mln";
 import str from "../../../../toolchain/MyStdLib/str.mln";
@@ -10,10 +11,18 @@ export i32 VRAM_BASE = 0x30000000;
 // Imported MyLang functions link across packages reliably, so keep display
 // geometry behind calls to the shared configuration rather than duplicating
 // numeric globals in this package.
+/**
+ * Retrieves the screen width in pixels from hardware display config.
+ * @return Screen width.
+ */
 export i32 display_width() {
     return display_config.width();
 }
 
+/**
+ * Retrieves the screen height in pixels from hardware display config.
+ * @return Screen height.
+ */
 export i32 display_height() {
     return display_config.height();
 }
@@ -50,17 +59,19 @@ i32 DMA2D_CMD_ROUND_RECT = 8;
 i32 DMA2D_CMD_ROUND_RECT_OUTLINE = 9;
 i32 DMA2D_CMD_SHADOW = 10;
 
-// Present the back buffer: copy everything drawn since the last present to the
-// visible front buffer in one shot, so partially-drawn frames never appear.
-// Call once per frame after drawing the whole scene.
+/**
+ * Swaps back buffer to front buffer, presenting the rendered frame.
+ */
 export void present() {
     i32* swap = (i32*)DISPLAY_SWAP_ADDR;
     *swap = 1;
 }
 
-// Hardware cursor: the display controller composites the pointer sprite over
-// the frame at scan-out. Moving it is two register writes, and it never lands
-// in VRAM, so the scene underneath does not have to be redrawn to erase it.
+/**
+ * Sets the hardware cursor position.
+ * @param x Cursor screen X coordinate.
+ * @param y Cursor screen Y coordinate.
+ */
 export void set_cursor(i32 x, i32 y) {
     i32* cx = (i32*)CURSOR_X_ADDR;
     i32* cy = (i32*)CURSOR_Y_ADDR;
@@ -68,6 +79,10 @@ export void set_cursor(i32 x, i32 y) {
     *cy = y;
 }
 
+/**
+ * Shows or hides the hardware cursor sprite.
+ * @param on 1 to show, 0 to hide.
+ */
 export void show_cursor(i32 on) {
     i32* ctrl = (i32*)CURSOR_CTRL_ADDR;
     *ctrl = on;
@@ -79,28 +94,62 @@ export void show_cursor(i32 on) {
 // colours with rgba() or with_alpha().
 // ---------------------------------------------------------------------------
 
+/**
+ * Packs red, green, blue color channels into an RGB integer (alpha = 0).
+ * @param r Red component (0-255).
+ * @param g Green component (0-255).
+ * @param b Blue component (0-255).
+ * @return Packed RGB integer (0x00RRGGBB).
+ */
 export i32 rgb(i32 r, i32 g, i32 b) {
     return r * 65536 + g * 256 + b;
 }
 
+/**
+ * Packs red, green, blue, and alpha channels into an RGBA integer.
+ * @param r Red component (0-255).
+ * @param g Green component (0-255).
+ * @param b Blue component (0-255).
+ * @param a Alpha component (0-255).
+ * @return Packed ARGB integer (0xAARRGGBB).
+ */
 export i32 rgba(i32 r, i32 g, i32 b, i32 a) {
     return (a << 24) | rgb(r, g, b);
 }
 
+/**
+ * Replaces the alpha channel of a packed color.
+ * @param color Source color.
+ * @param a New alpha value (0-255).
+ * @return Color with updated alpha channel.
+ */
 export i32 with_alpha(i32 color, i32 a) {
     return (a << 24) | (color & 0xFFFFFF);
 }
 
+/**
+ * Extracts the 8-bit alpha component from a packed ARGB color.
+ * @param color Packed ARGB color.
+ * @return Alpha component (0-255).
+ */
 export i32 alpha_of(i32 color) {
     return (color >> 24) & 0xFF;
 }
 
+/** Extracts the 8-bit red component (0-255) from a color. */
 export i32 red_of(i32 color) { return (color >> 16) & 0xFF; }
+/** Extracts the 8-bit green component (0-255) from a color. */
 export i32 green_of(i32 color) { return (color >> 8) & 0xFF; }
+/** Extracts the 8-bit blue component (0-255) from a color. */
 export i32 blue_of(i32 color) { return color & 0xFF; }
 
-// Linear blend of two colours, t in 0..255 (0 = c0, 255 = c1). Alpha is
-// dropped; callers re-attach one with with_alpha if they need it.
+/**
+ * Computes a linear interpolation between two colors by factor `t`.
+ * @param c0 First color (t=0).
+ * @param c1 Second color (t=255).
+ * @param t Blend weight in range 0..255.
+ * @return Interpolated RGB color.
+ */
 export i32 mix(i32 c0, i32 c1, i32 t) {
     if (t <= 0) { return c0 & 0xFFFFFF; }
     if (t >= 255) { return c1 & 0xFFFFFF; }
@@ -110,11 +159,22 @@ export i32 mix(i32 c0, i32 c1, i32 t) {
     return rgb(r, g, b);
 }
 
-// Move a colour toward black / white by `amount` (0..255).
+/**
+ * Darkens a color toward black by the given amount.
+ * @param color Source color.
+ * @param amount Amount to darken (0-255).
+ * @return Darkened color.
+ */
 export i32 darken(i32 color, i32 amount) {
     return mix(color, rgb(0, 0, 0), amount);
 }
 
+/**
+ * Lightens a color toward white by the given amount.
+ * @param color Source color.
+ * @param amount Amount to lighten (0-255).
+ * @return Lightened color.
+ */
 export i32 lighten(i32 color, i32 amount) {
     return mix(color, rgb(255, 255, 255), amount);
 }
@@ -131,20 +191,23 @@ i32 g_clip_y0 = 0;
 i32 g_clip_x1 = 0;
 i32 g_clip_y1 = 0;
 
-i32 CLIP_DEPTH = 16;
 i32 g_clip_stack_x0[16];
 i32 g_clip_stack_y0[16];
 i32 g_clip_stack_x1[16];
 i32 g_clip_stack_y1[16];
 i32 g_clip_sp = 0;
 
+/**
+ * Initializes the graphics clip stack and clears the clipping rectangle.
+ */
 export void init() {
     clear_clip();
     g_clip_sp = 0;
 }
 
-// Mirror the clip into the accelerator's scissor registers, so shapes drawn
-// by DMA2D (rounded rects, shadows) are clipped without being reshaped.
+/**
+ * Copies the software clipping rectangle into hardware DMA2D scissor registers.
+ */
 void sync_scissor() {
     i32* x0 = (i32*)DMA2D_CLIP_X0_ADDR;
     i32* y0 = (i32*)DMA2D_CLIP_Y0_ADDR;
@@ -156,6 +219,13 @@ void sync_scissor() {
     *y1 = g_clip_y1;
 }
 
+/**
+ * Sets the active clipping rectangle to the given screen coordinates.
+ * @param x Origin X coordinate.
+ * @param y Origin Y coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ */
 export void set_clip(i32 x, i32 y, i32 w, i32 h) {
     i32 width = display_config.width();
     i32 height = display_config.height();
@@ -174,6 +244,9 @@ export void set_clip(i32 x, i32 y, i32 w, i32 h) {
     sync_scissor();
 }
 
+/**
+ * Resets the active clipping rectangle to cover the entire screen.
+ */
 export void clear_clip() {
     g_clip_x0 = 0;
     g_clip_y0 = 0;
@@ -182,11 +255,15 @@ export void clear_clip() {
     sync_scissor();
 }
 
-// Intersect the clip with (x, y, w, h), remembering the old one for pop_clip.
-// Overflowing the stack keeps clipping (the intersection still applies) but
-// the matching pop restores the outermost saved clip rather than panicking.
+/**
+ * Intersects the active clip rectangle with (x, y, w, h) and pushes the previous clip onto the clip stack.
+ * @param x Origin X coordinate.
+ * @param y Origin Y coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ */
 export void push_clip(i32 x, i32 y, i32 w, i32 h) {
-    if (g_clip_sp < CLIP_DEPTH) {
+    if (g_clip_sp < ui_config.CLIP_DEPTH) {
         g_clip_stack_x0[g_clip_sp] = g_clip_x0;
         g_clip_stack_y0[g_clip_sp] = g_clip_y0;
         g_clip_stack_x1[g_clip_sp] = g_clip_x1;
@@ -202,11 +279,14 @@ export void push_clip(i32 x, i32 y, i32 w, i32 h) {
     sync_scissor();
 }
 
+/**
+ * Pops and restores the previous clipping rectangle from the clip stack.
+ */
 export void pop_clip() {
     if (g_clip_sp <= 0) { return; }
     g_clip_sp--;
     i32 i = g_clip_sp;
-    if (i >= CLIP_DEPTH) { i = CLIP_DEPTH - 1; }
+    if (i >= ui_config.CLIP_DEPTH) { i = ui_config.CLIP_DEPTH - 1; }
     g_clip_x0 = g_clip_stack_x0[i];
     g_clip_y0 = g_clip_stack_y0[i];
     g_clip_x1 = g_clip_stack_x1[i];
@@ -214,7 +294,10 @@ export void pop_clip() {
     sync_scissor();
 }
 
-// True if the clip rectangle is empty (nothing can be drawn).
+/**
+ * Checks whether the active clipping rectangle is empty.
+ * @return 1 if clip rectangle is empty, 0 otherwise.
+ */
 export i32 clip_is_empty() {
     if (g_clip_x1 <= g_clip_x0) { return 1; }
     if (g_clip_y1 <= g_clip_y0) { return 1; }
@@ -229,6 +312,14 @@ i32 g_cl_y = 0;
 i32 g_cl_w = 0;
 i32 g_cl_h = 0;
 
+/**
+ * Intersects a target rectangle with the current clipping bounds, storing result in g_cl_*.
+ * @param x Left coordinate of rectangle.
+ * @param y Top coordinate of rectangle.
+ * @param w Width of rectangle.
+ * @param h Height of rectangle.
+ * @return 1 if any portion is visible within clip, 0 if completely culled.
+ */
 i32 clip_rect(i32 x, i32 y, i32 w, i32 h) {
     i32 x0 = x;
     i32 y0 = y;
@@ -250,6 +341,14 @@ i32 clip_rect(i32 x, i32 y, i32 w, i32 h) {
 // ---------------------------------------------------------------------------
 // DMA2D submission. dest is the already-clipped rectangle (g_cl_*).
 // ---------------------------------------------------------------------------
+
+/**
+ * Configures the destination VRAM address, dimensions, and stride for DMA2D.
+ * @param x Horizontal start pixel.
+ * @param y Vertical start pixel.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ */
 void dma_dest(i32 x, i32 y, i32 w, i32 h) {
     i32 width = display_config.width();
     i32* dest = (i32*)DMA2D_DEST_ADDR;
@@ -262,27 +361,42 @@ void dma_dest(i32 x, i32 y, i32 w, i32 h) {
     *ds = width;
 }
 
-// Shape commands take the unclipped rectangle (the scissor trims it), but
-// the destination address must stay inside VRAM: a rectangle that starts
-// above or left of the display is shifted in and shrunk instead, which the
-// scissor cannot do for us. The shape's corners move with it, which only
-// matters for the few pixels of a corner already off-screen.
+/**
+ * Clamps negative coordinates before configuring DMA2D destination for shapes.
+ * @param x Horizontal start pixel.
+ * @param y Vertical start pixel.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ */
 void dma_dest_shape(i32 x, i32 y, i32 w, i32 h) {
     if (x < 0) { w = w + x; x = 0; }
     if (y < 0) { h = h + y; y = 0; }
     dma_dest(x, y, w, h);
 }
 
+/**
+ * Sets the primary 32-bit ARGB color in the DMA2D color register.
+ * @param color 32-bit ARGB color value.
+ */
 void dma_color(i32 color) {
     i32* c = (i32*)DMA2D_COLOR_ADDR;
     *c = color;
 }
 
+/**
+ * Sets the secondary 32-bit ARGB color in the DMA2D color2 register.
+ * @param color 32-bit ARGB color value.
+ */
 void dma_color2(i32 color) {
     i32* c = (i32*)DMA2D_COLOR2_ADDR;
     *c = color;
 }
 
+/**
+ * Configures the source buffer address and stride in DMA2D registers.
+ * @param addr Memory address of source buffer.
+ * @param stride Row stride in bytes or pixels.
+ */
 void dma_src(i32 addr, i32 stride) {
     i32* s = (i32*)DMA2D_SRC_ADDR;
     i32* ss = (i32*)DMA2D_SRC_STRIDE_ADDR;
@@ -290,6 +404,11 @@ void dma_src(i32 addr, i32 stride) {
     *ss = stride;
 }
 
+/**
+ * Sets corner radius and spread parameters in DMA2D shape registers.
+ * @param radius Corner radius in pixels.
+ * @param spread Blur spread in pixels.
+ */
 void dma_shape(i32 radius, i32 spread) {
     i32* r = (i32*)DMA2D_RADIUS_ADDR;
     i32* sp = (i32*)DMA2D_SPREAD_ADDR;
@@ -297,12 +416,23 @@ void dma_shape(i32 radius, i32 spread) {
     *sp = spread;
 }
 
+/**
+ * Writes command code to DMA2D command register to trigger hardware execution.
+ * @param cmd DMA2D command code (e.g. DMA2D_CMD_SOLID_FILL).
+ */
 void dma_run(i32 cmd) {
     i32* c = (i32*)DMA2D_CMD_ADDR;
     *c = cmd;
 }
 
-// True if (x, y, w, h) misses the clip entirely (nothing to draw).
+/**
+ * Tests whether a rectangle lies entirely outside the active clipping window.
+ * @param x Left coordinate.
+ * @param y Top coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ * @return 1 if completely outside clip, 0 if it touches or intersects.
+ */
 i32 outside_clip(i32 x, i32 y, i32 w, i32 h) {
     if (x + w <= g_clip_x0) { return 1; }
     if (y + h <= g_clip_y0) { return 1; }
@@ -315,7 +445,12 @@ i32 outside_clip(i32 x, i32 y, i32 w, i32 h) {
 // Pixels and rectangles.
 // ---------------------------------------------------------------------------
 
-// Write a single pixel, bounds-checked against the clip.
+/**
+ * Writes a single pixel to the back buffer, clipped against the active clip rectangle.
+ * @param x Screen X coordinate.
+ * @param y Screen Y coordinate.
+ * @param color 24-bit RGB or 32-bit ARGB pixel color.
+ */
 export void put_pixel(i32 x, i32 y, i32 color) {
     if (x < g_clip_x0) { return; }
     if (y < g_clip_y0) { return; }
@@ -326,7 +461,12 @@ export void put_pixel(i32 x, i32 y, i32 color) {
     *ptr = color;
 }
 
-// Read a pixel back from the back buffer (0 outside the display).
+/**
+ * Reads a pixel color back from the back buffer.
+ * @param x Screen X coordinate.
+ * @param y Screen Y coordinate.
+ * @return 32-bit pixel color, or 0 if outside display bounds.
+ */
 export i32 get_pixel(i32 x, i32 y) {
     if (x < 0) { return 0; }
     if (y < 0) { return 0; }
@@ -337,7 +477,12 @@ export i32 get_pixel(i32 x, i32 y) {
     return *ptr;
 }
 
-// Blend one pixel with the colour's alpha (software; use for edges only).
+/**
+ * Blends a single translucent pixel into the back buffer.
+ * @param x Screen X coordinate.
+ * @param y Screen Y coordinate.
+ * @param color ARGB color containing alpha component.
+ */
 export void blend_pixel(i32 x, i32 y, i32 color) {
     i32 a = alpha_of(color);
     if (a == 0) { return; }
@@ -351,6 +496,14 @@ export void blend_pixel(i32 x, i32 y, i32 color) {
     *ptr = mix(*ptr, color, a);
 }
 
+/**
+ * Fills a solid rectangle using hardware DMA2D acceleration.
+ * @param x Origin X coordinate.
+ * @param y Origin Y coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ * @param color 24-bit RGB color.
+ */
 export void fill_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
     if (clip_rect(x, y, w, h) == 0) { return; }
     dma_dest(g_cl_x, g_cl_y, g_cl_w, g_cl_h);
@@ -358,8 +511,14 @@ export void fill_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
     dma_run(DMA2D_CMD_FILL);
 }
 
-// Fill with a translucent colour (alpha in the top byte). Alpha 0 draws
-// nothing, 255 is an opaque fill.
+/**
+ * Fills a rectangle with an alpha-blended color using hardware DMA2D acceleration.
+ * @param x Origin X coordinate.
+ * @param y Origin Y coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ * @param color 32-bit ARGB color with alpha in the top byte.
+ */
 export void blend_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
     i32 a = alpha_of(color);
     if (a == 0) { return; }
@@ -370,9 +529,15 @@ export void blend_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
     dma_run(DMA2D_CMD_BLEND_FILL);
 }
 
-// Vertical gradient: c0 on the top row fading to c1 on the bottom row. When
-// the clip cuts rows off, the end colours are re-derived so the visible part
-// matches what an unclipped fill would have shown.
+/**
+ * Draws a vertical linear color gradient from c0 (top) to c1 (bottom).
+ * @param x Origin X coordinate.
+ * @param y Origin Y coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ * @param c0 Top color.
+ * @param c1 Bottom color.
+ */
 export void fill_gradient_v(i32 x, i32 y, i32 w, i32 h, i32 c0, i32 c1) {
     if (h <= 0) { return; }
     if (w <= 0) { return; }
@@ -387,7 +552,15 @@ export void fill_gradient_v(i32 x, i32 y, i32 w, i32 h, i32 c0, i32 c1) {
     dma_run(DMA2D_CMD_GRADIENT_V);
 }
 
-// Horizontal gradient: c0 at the left edge fading to c1 at the right edge.
+/**
+ * Draws a horizontal linear color gradient from c0 (left) to c1 (right).
+ * @param x Origin X coordinate.
+ * @param y Origin Y coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ * @param c0 Left color.
+ * @param c1 Right color.
+ */
 export void fill_gradient_h(i32 x, i32 y, i32 w, i32 h, i32 c0, i32 c1) {
     if (w <= 0) { return; }
     if (h <= 0) { return; }
@@ -398,9 +571,15 @@ export void fill_gradient_h(i32 x, i32 y, i32 w, i32 h, i32 c0, i32 c1) {
     dma_run(DMA2D_CMD_GRADIENT_H);
 }
 
-// Copy a w x h block of the back buffer from (sx, sy) to (dx, dy). The
-// accelerator stages the source, so overlapping rectangles copy correctly
-// (a window being dragged over its old position).
+/**
+ * Copies a rectangular region of the back buffer to another position using DMA2D.
+ * @param sx Source X coordinate.
+ * @param sy Source Y coordinate.
+ * @param dx Destination X coordinate.
+ * @param dy Destination Y coordinate.
+ * @param w Region width in pixels.
+ * @param h Region height in pixels.
+ */
 export void copy_rect(i32 sx, i32 sy, i32 dx, i32 dy, i32 w, i32 h) {
     if (clip_rect(dx, dy, w, h) == 0) { return; }
     i32 width = display_config.width();
@@ -411,9 +590,16 @@ export void copy_rect(i32 sx, i32 sy, i32 dx, i32 dy, i32 w, i32 h) {
     dma_run(DMA2D_CMD_COPY);
 }
 
-// Blend an 8-bit coverage mask (row-major bytes at `src`, `stride` bytes per
-// row) onto the screen with `color`. Clipping shifts the source origin so the
-// visible part of the mask lines up.
+/**
+ * Blends an 8-bit coverage mask onto the display with the given color using DMA2D.
+ * @param src Address of row-major 8-bit mask buffer.
+ * @param stride Row stride in bytes of the mask buffer.
+ * @param x Destination X coordinate.
+ * @param y Destination Y coordinate.
+ * @param w Mask width in pixels.
+ * @param h Mask height in pixels.
+ * @param color 24-bit RGB tint color.
+ */
 export void mask_blit(i32 src, i32 stride, i32 x, i32 y, i32 w, i32 h, i32 color) {
     if (clip_rect(x, y, w, h) == 0) { return; }
     i32 off_x = g_cl_x - x;
@@ -424,9 +610,15 @@ export void mask_blit(i32 src, i32 stride, i32 x, i32 y, i32 w, i32 h, i32 color
     dma_run(DMA2D_CMD_MASK_A8);
 }
 
-// Draw a w x h block of 0xAARRGGBB pixels from RAM at `src` (row-major,
-// `stride` pixels per row) with per-pixel alpha. Pixels with alpha 0 leave
-// the background alone, so non-rectangular sprites composite cleanly.
+/**
+ * Copies an ARGB image from memory to the display with per-pixel alpha blending.
+ * @param src Address of row-major 32-bit ARGB pixel buffer.
+ * @param stride Row stride in pixels of source buffer.
+ * @param x Destination X coordinate.
+ * @param y Destination Y coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ */
 export void blit_alpha(i32 src, i32 stride, i32 x, i32 y, i32 w, i32 h) {
     if (clip_rect(x, y, w, h) == 0) { return; }
     i32 off_x = g_cl_x - x;
@@ -436,6 +628,14 @@ export void blit_alpha(i32 src, i32 stride, i32 x, i32 y, i32 w, i32 h) {
     dma_run(DMA2D_CMD_COPY_BLEND);
 }
 
+/**
+ * Draws the outline of a 1-pixel rectangle.
+ * @param x Origin X coordinate.
+ * @param y Origin Y coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ * @param color 24-bit RGB outline color.
+ */
 export void draw_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
     fill_rect(x, y, w, 1, color);
     fill_rect(x, y + h - 1, w, 1, color);
@@ -443,9 +643,15 @@ export void draw_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
     fill_rect(x + w - 1, y, 1, h, color);
 }
 
-// Draw a rectangle border whose thickness follows the UI scale. This keeps
-// the border visually proportional when a logical 1024x768 UI is shown on a
-// higher-resolution display.
+/**
+ * Draws a rectangle border whose thickness scales with UI scale.
+ * @param x Origin X coordinate.
+ * @param y Origin Y coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ * @param color 24-bit RGB outline color.
+ * @param scale Border thickness scaling factor.
+ */
 export void draw_rect_scaled(i32 x, i32 y, i32 w, i32 h, i32 color, i32 scale) {
     if (scale < 1) { scale = 1; }
     fill_rect(x, y, w, scale, color);
@@ -464,12 +670,21 @@ export void draw_rect_scaled(i32 x, i32 y, i32 w, i32 h, i32 color, i32 scale) {
 // the device.
 // ---------------------------------------------------------------------------
 
+/**
+ * Returns the absolute value of an integer.
+ * @param v Input signed integer.
+ * @return Absolute value.
+ */
 i32 iabs(i32 v) {
     if (v < 0) { return -v; }
     return v;
 }
 
-// Integer square root (floor).
+/**
+ * Computes integer square root (floor).
+ * @param n Non-negative integer.
+ * @return Integer square root.
+ */
 export i32 isqrt(i32 n) {
     if (n <= 0) { return 0; }
     i32 res = 0;
@@ -487,8 +702,15 @@ export i32 isqrt(i32 n) {
     return res;
 }
 
-// Rounded rectangle with anti-aliased corners. Alpha in `color` is honoured
-// (0 = nothing, 255 or rgb() = opaque).
+/**
+ * Fills a rounded rectangle with anti-aliased corners using DMA2D acceleration.
+ * @param x Origin X coordinate.
+ * @param y Origin Y coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ * @param r Corner radius in pixels.
+ * @param color 24-bit RGB or 32-bit ARGB fill color.
+ */
 export void fill_round_rect(i32 x, i32 y, i32 w, i32 h, i32 r, i32 color) {
     if (w <= 0) { return; }
     if (h <= 0) { return; }
@@ -505,7 +727,16 @@ export void fill_round_rect(i32 x, i32 y, i32 w, i32 h, i32 r, i32 color) {
     dma_run(DMA2D_CMD_ROUND_RECT);
 }
 
-// Rounded outline of thickness t (drawn inside the rectangle).
+/**
+ * Draws a rounded rectangle outline using DMA2D acceleration.
+ * @param x Origin X coordinate.
+ * @param y Origin Y coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ * @param r Corner radius in pixels.
+ * @param t Outline thickness in pixels.
+ * @param color Outline color.
+ */
 export void draw_round_rect(i32 x, i32 y, i32 w, i32 h, i32 r, i32 t, i32 color) {
     if (w <= 0) { return; }
     if (h <= 0) { return; }
@@ -517,9 +748,17 @@ export void draw_round_rect(i32 x, i32 y, i32 w, i32 h, i32 r, i32 t, i32 color)
     dma_run(DMA2D_CMD_ROUND_RECT_OUTLINE);
 }
 
-// Soft drop shadow of a rounded rectangle: opaque `alpha` at the edge,
-// fading to nothing `size` pixels out, offset down by `offset_y`. The
-// rectangle itself is expected to be painted on top afterwards.
+/**
+ * Draws a soft drop shadow behind a rounded rectangle using DMA2D acceleration.
+ * @param x Origin X coordinate.
+ * @param y Origin Y coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ * @param r Corner radius in pixels.
+ * @param size Shadow blur/spread size in pixels.
+ * @param offset_y Vertical shadow offset in pixels.
+ * @param alpha Maximum shadow opacity (0-255).
+ */
 export void draw_shadow(i32 x, i32 y, i32 w, i32 h, i32 r, i32 size, i32 offset_y, i32 alpha) {
     if (size < 1) { return; }
     if (w <= 0) { return; }
@@ -536,8 +775,14 @@ export void draw_shadow(i32 x, i32 y, i32 w, i32 h, i32 r, i32 size, i32 offset_
 // Lines and circles (software, put_pixel based).
 // ---------------------------------------------------------------------------
 
-// Draw a line from (x0, y0) to (x1, y1) using Bresenham's algorithm. Handles
-// any slope, including horizontal/vertical and steep lines.
+/**
+ * Draws a line between two points using Bresenham's algorithm.
+ * @param x0 Starting X coordinate.
+ * @param y0 Starting Y coordinate.
+ * @param x1 Ending X coordinate.
+ * @param y1 Ending Y coordinate.
+ * @param color Line color.
+ */
 export void draw_line(i32 x0, i32 y0, i32 x1, i32 y1, i32 color) {
     i32 dx = iabs(x1 - x0);
     i32 dy = iabs(y1 - y0);
@@ -564,8 +809,13 @@ export void draw_line(i32 x0, i32 y0, i32 x1, i32 y1, i32 color) {
     }
 }
 
-// Draw a circle outline of radius r centered at (cx, cy) using the midpoint
-// circle algorithm (8-way symmetry).
+/**
+ * Draws a circle outline using the midpoint circle algorithm.
+ * @param cx Center X coordinate.
+ * @param cy Center Y coordinate.
+ * @param r Circle radius.
+ * @param color Circle outline color.
+ */
 export void draw_circle(i32 cx, i32 cy, i32 r, i32 color) {
     i32 x = r;
     i32 y = 0;
@@ -589,8 +839,13 @@ export void draw_circle(i32 cx, i32 cy, i32 r, i32 color) {
     }
 }
 
-// Fill a solid disc of radius r centered at (cx, cy). Draws each scanline as a
-// horizontal fill_rect (DMA2D-accelerated).
+/**
+ * Fills a solid disc using horizontal scanline fills.
+ * @param cx Center X coordinate.
+ * @param cy Center Y coordinate.
+ * @param r Circle radius.
+ * @param color Disc fill color.
+ */
 export void fill_circle(i32 cx, i32 cy, i32 r, i32 color) {
     i32 dy = -r;
     while (dy <= r) {
@@ -606,8 +861,13 @@ export void fill_circle(i32 cx, i32 cy, i32 r, i32 color) {
     }
 }
 
-// Anti-aliased filled disc: a rounded rectangle whose radius is half its
-// size. Diameter is 2r.
+/**
+ * Fills an anti-aliased disc using hardware rounded rectangle acceleration.
+ * @param cx Center X coordinate.
+ * @param cy Center Y coordinate.
+ * @param r Radius in pixels.
+ * @param color Disc fill color.
+ */
 export void fill_disc(i32 cx, i32 cy, i32 r, i32 color) {
     fill_round_rect(cx - r, cy - r, 2 * r, 2 * r, r, color);
 }
@@ -618,19 +878,35 @@ export void fill_disc(i32 cx, i32 cy, i32 r, i32 color) {
 // heavier face, `scale` (1 or 2) the size matching the UI scale.
 // ---------------------------------------------------------------------------
 
-// (A cross-package call nested inside another's argument list does not
-// resolve, hence the locals.)
+/**
+ * Returns the line height in pixels for proportional font_sans.
+ * @param bold Non-zero for bold typeface, 0 for regular.
+ * @param scale Font scaling factor (1 or 2).
+ * @return Line height in pixels.
+ */
 export i32 text_height(i32 bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     return font_sans.line_height(face);
 }
 
+/**
+ * Returns the font ascent in pixels from top of line box to baseline.
+ * @param bold Non-zero for bold typeface, 0 for regular.
+ * @param scale Font scaling factor (1 or 2).
+ * @return Ascent in pixels.
+ */
 export i32 text_ascent(i32 bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     return font_sans.ascent(face);
 }
 
-// Width in pixels of s in the given face (advance widths summed).
+/**
+ * Calculates the total width in pixels of a string rendered in font_sans.
+ * @param s Pointer to null-terminated string.
+ * @param bold Non-zero for bold typeface.
+ * @param scale Scaling factor.
+ * @return String advance width in pixels.
+ */
 export i32 text_width(char* s, i32 bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     i32 w = 0;
@@ -646,7 +922,14 @@ export i32 text_width(char* s, i32 bold, i32 scale) {
     return w;
 }
 
-// Width of the first `n` characters, for caret placement in text fields.
+/**
+ * Calculates the width in pixels of the first `n` characters of a string.
+ * @param s Pointer to null-terminated string.
+ * @param n Number of characters to measure.
+ * @param bold Non-zero for bold typeface.
+ * @param scale Scaling factor.
+ * @return Width in pixels.
+ */
 export i32 text_width_n(char* s, i32 n, i32 bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     i32 w = 0;
@@ -663,7 +946,16 @@ export i32 text_width_n(char* s, i32 n, i32 bold, i32 scale) {
     return w;
 }
 
-// Draw one glyph with its line box's top-left at (x, y); returns the advance.
+/**
+ * Renders a single anti-aliased font_sans glyph and returns its horizontal advance.
+ * @param x Left position of line box.
+ * @param y Top position of line box.
+ * @param ch ASCII character code.
+ * @param color Text color.
+ * @param bold Non-zero for bold.
+ * @param scale Scaling factor.
+ * @return Horizontal advance in pixels.
+ */
 export i32 draw_glyph(i32 x, i32 y, i32 ch, i32 color, i32 bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     i32 w = font_sans.width(face, ch);
@@ -679,7 +971,15 @@ export i32 draw_glyph(i32 x, i32 y, i32 ch, i32 color, i32 bold, i32 scale) {
     return font_sans.advance(face, ch);
 }
 
-// Draw a NUL-terminated string. Newline returns to x and drops one line.
+/**
+ * Draws a null-terminated string using anti-aliased proportional font_sans.
+ * @param x Origin X coordinate.
+ * @param y Origin Y coordinate.
+ * @param s String to draw.
+ * @param color Text color.
+ * @param bold Non-zero for bold typeface.
+ * @param scale Scaling factor.
+ */
 export void draw_label(i32 x, i32 y, char* s, i32 color, i32 bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     i32 line_h = font_sans.line_height(face);
@@ -706,13 +1006,31 @@ export void draw_label(i32 x, i32 y, char* s, i32 color, i32 bold, i32 scale) {
     }
 }
 
-// Draw s horizontally centred in [x, x + w) with its line box top at y.
+/**
+ * Draws a string horizontally centered within a given bounding width.
+ * @param x Box left X coordinate.
+ * @param y Box top Y coordinate.
+ * @param w Bounding width in pixels.
+ * @param s String to draw.
+ * @param color Text color.
+ * @param bold Non-zero for bold.
+ * @param scale Scaling factor.
+ */
 export void draw_label_centered(i32 x, i32 y, i32 w, char* s, i32 color, i32 bold, i32 scale) {
     i32 tw = text_width(s, bold, scale);
     draw_label(x + (w - tw) / 2, y, s, color, bold, scale);
 }
 
-// Draw s vertically centred in a box of height h whose top is y.
+/**
+ * Draws a string vertically centered within a given bounding height.
+ * @param x Box left X coordinate.
+ * @param y Box top Y coordinate.
+ * @param h Bounding height in pixels.
+ * @param s String to draw.
+ * @param color Text color.
+ * @param bold Non-zero for bold.
+ * @param scale Scaling factor.
+ */
 export void draw_label_vcentered(i32 x, i32 y, i32 h, char* s, i32 color, i32 bold, i32 scale) {
     i32 th = text_height(bold, scale);
     draw_label(x, y + (h - th) / 2, s, color, bold, scale);
@@ -723,9 +1041,13 @@ export void draw_label_vcentered(i32 x, i32 y, i32 h, char* s, i32 color, i32 bo
 // and as a fallback; UI code uses draw_label above.
 // ---------------------------------------------------------------------------
 
-// Per-pixel glyph draw for the edge case where a character straddles the clip
-// boundary. Slower than the direct-to-VRAM path, but only runs for the few
-// glyphs on the edge of a damaged region.
+/**
+ * Draws a clipped 8x8 character pixel-by-pixel using put_pixel.
+ * @param x Left pixel coordinate.
+ * @param y Top pixel coordinate.
+ * @param ch ASCII character code.
+ * @param fg 32-bit ARGB foreground color.
+ */
 void draw_char_clipped(i32 x, i32 y, i32 ch, i32 fg) {
     i32 row = 0;
     while (row < 8) {
@@ -742,9 +1064,14 @@ void draw_char_clipped(i32 x, i32 y, i32 ch, i32 fg) {
     }
 }
 
-// Draw a single 8x8 glyph at (x, y). Set pixels use `fg`; if `bg` differs from
-// `fg` the cell background is filled with `bg` first (opaque text). Pass
-// bg == fg for transparent rendering.
+/**
+ * Draws a single 8x8 bitmap character glyph.
+ * @param x Screen X coordinate.
+ * @param y Screen Y coordinate.
+ * @param ch ASCII character code.
+ * @param fg Foreground color.
+ * @param bg Background color (set equal to fg for transparent background).
+ */
 export void draw_char(i32 x, i32 y, i32 ch, i32 fg, i32 bg) {
     if (bg != fg) {
         fill_rect(x, y, 8, 8, bg);
@@ -785,8 +1112,14 @@ export void draw_char(i32 x, i32 y, i32 ch, i32 fg, i32 bg) {
     }
 }
 
-// Draw a NUL-terminated string starting at (x, y), advancing 8 px per glyph.
-// Newline (0x0A) moves to the next line and back to the starting x.
+/**
+ * Draws a null-terminated string using the legacy 8x8 bitmap font.
+ * @param x Origin X coordinate.
+ * @param y Origin Y coordinate.
+ * @param s String to draw.
+ * @param fg Foreground text color.
+ * @param bg Background fill color (equal to fg for transparent).
+ */
 export void draw_text(i32 x, i32 y, char* s, i32 fg, i32 bg) {
     i32 cx = x;
     i32 cy = y;
@@ -805,8 +1138,15 @@ export void draw_text(i32 x, i32 y, char* s, i32 fg, i32 bg) {
     }
 }
 
-// Draw a single glyph magnified by `scale` (each font pixel becomes a
-// scale x scale block). scale == 1 matches draw_char.
+/**
+ * Draws an 8x8 bitmap glyph magnified by integer `scale`.
+ * @param x Screen X coordinate.
+ * @param y Screen Y coordinate.
+ * @param ch ASCII character code.
+ * @param fg Foreground color.
+ * @param bg Background color.
+ * @param scale Integer scaling factor.
+ */
 export void draw_char_scaled(i32 x, i32 y, i32 ch, i32 fg, i32 bg, i32 scale) {
     if (scale < 1) { scale = 1; }
     if (bg != fg) {
@@ -827,8 +1167,15 @@ export void draw_char_scaled(i32 x, i32 y, i32 ch, i32 fg, i32 bg, i32 scale) {
     }
 }
 
-// Draw a NUL-terminated string magnified by `scale`, advancing 8*scale px per
-// glyph. Newline returns to the starting x and drops one scaled line.
+/**
+ * Draws a string with the 8x8 font magnified by integer `scale`.
+ * @param x Origin X coordinate.
+ * @param y Origin Y coordinate.
+ * @param s String to draw.
+ * @param fg Foreground color.
+ * @param bg Background color.
+ * @param scale Scaling factor.
+ */
 export void draw_text_scaled(i32 x, i32 y, char* s, i32 fg, i32 bg, i32 scale) {
     if (scale < 1) { scale = 1; }
     i32 cx = x;
@@ -848,8 +1195,15 @@ export void draw_text_scaled(i32 x, i32 y, char* s, i32 fg, i32 bg, i32 scale) {
     }
 }
 
-// Draw a signed 32-bit integer in base 10 at (x, y). Returns the x coordinate
-// just past the last glyph so callers can chain draws.
+/**
+ * Renders a 32-bit signed integer in base-10 decimal using 8x8 bitmap font.
+ * @param x Screen X coordinate.
+ * @param y Screen Y coordinate.
+ * @param value Integer value to display.
+ * @param fg Text color.
+ * @param bg Background color.
+ * @return X coordinate immediately following the rendered number.
+ */
 export i32 draw_int(i32 x, i32 y, i32 value, i32 fg, i32 bg) {
     // str.itoa already does the sign, the zero case, and the digit-order
     // reversal (11 bytes covers "-2147483648" plus the terminator); this just
@@ -869,8 +1223,14 @@ export i32 draw_int(i32 x, i32 y, i32 value, i32 fg, i32 bg) {
     return cx;
 }
 
-// Copy a w x h block of 32-bit pixels from a source buffer (row-major, one i32
-// per pixel) to the screen at (x, y). `src` points at the top-left pixel.
+/**
+ * Blits a block of raw 32-bit pixels directly from memory to the screen.
+ * @param x Destination X coordinate.
+ * @param y Destination Y coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ * @param src Reference to row-major pixel array.
+ */
 export void blit(i32 x, i32 y, i32 w, i32 h, ref i32 src) {
     i32 row = 0;
     while (row < h) {
@@ -883,8 +1243,15 @@ export void blit(i32 x, i32 y, i32 w, i32 h, ref i32 src) {
     }
 }
 
-// Like blit, but pixels equal to `key_color` are treated as transparent and
-// left untouched, so non-rectangular sprites composite over the background.
+/**
+ * Blits a block of 32-bit pixels with transparency color keying.
+ * @param x Destination X coordinate.
+ * @param y Destination Y coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ * @param src Reference to row-major pixel array.
+ * @param key_color Color value treated as transparent.
+ */
 export void blit_key(i32 x, i32 y, i32 w, i32 h, ref i32 src, i32 key_color) {
     i32 row = 0;
     while (row < h) {

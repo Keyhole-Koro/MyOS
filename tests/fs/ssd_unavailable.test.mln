@@ -2,6 +2,7 @@ import assert from "../../../../toolchain/MyStdLib/assert.mln";
 import mock from "../../../../toolchain/MyLangTestKit/runtime/facade.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import fs from "../../src/fs/fs.mln";
+import fs_config from "../../src/fs/fs_config.mln";
 import ssd from "../../src/fs/ssd.mln";
 import { FsError } from "../../src/fs/fs.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
@@ -21,7 +22,7 @@ void fs_disabled_when_ssd_init_read_fails() {
     heap.init();
 
     mock.spy(ssd.read_block)
-        .when(fs.SB_BLOCK, mock.any())
+        .when(fs_config.SB_BLOCK, mock.any())
         .call(fail_superblock_read);
 
     fs.init();
@@ -37,6 +38,6 @@ void fs_disabled_when_ssd_init_read_fails() {
     assert.assert_true(disabled == 1, "SSD init failure disables filesystem");
     assert.assert_true(g_failed_reads == 1, "fake SSD failure is invoked once");
     assert.assert_true(mock.calls(ssd.read_block) == 1, "fs init reads superblock once");
-    assert.assert_true(mock.called_with(ssd.read_block, fs.SB_BLOCK, mock.any()),
+    assert.assert_true(mock.called_with(ssd.read_block, fs_config.SB_BLOCK, mock.any()),
                        "fs init reads the superblock");
 }

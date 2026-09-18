@@ -21,6 +21,11 @@ i32 g_opened = 0;
 
 char g_echo_buf[768]; // 8 slots x 96 bytes
 
+/**
+ * Looks up the instance slot index corresponding to a text input field ID.
+ * @param field_id TextInput node ID.
+ * @return Option containing the slot index if found, or None.
+ */
 Option<i32> echo_for(i32 field_id) {
     i32 i = 0;
     while (i < g_count) {
@@ -30,7 +35,10 @@ Option<i32> echo_for(i32 field_id) {
     return None;
 }
 
-// TextInput onChange: rewrite "You typed: ..." for this instance.
+/**
+ * Change handler for note text fields: updates the instance's echo preview label.
+ * @param id TextInput node ID that changed.
+ */
 void on_change(i32 id) {
     i32 slot = case echo_for(id) of { Some(v) -> v; None -> ({ return; }); };
     char *buf = &g_echo_buf[slot * 96];
@@ -43,6 +51,10 @@ void on_change(i32 id) {
     dom.set_text(g_echo_ids[slot], buf);
 }
 
+/**
+ * Click handler for the Clear button: clears both title and body input fields.
+ * @param id Button node ID.
+ */
 void on_clear(i32 id) {
     // The Clear button's parent Row sits under the Column that holds the
     // title field: Column > [Text, TextInput, TextInput, Separator, Checkbox,
@@ -57,11 +69,21 @@ void on_clear(i32 id) {
     on_change(title);
 }
 
+/**
+ * Click handler for the completion checkbox.
+ * @param id Checkbox node ID.
+ */
 void on_done(i32 id) {
     // Nothing to do beyond the checkbox toggling itself; kept as a handler so
     // the node is hit-testable (set_on_click marks it) and dumps show it.
 }
 
+/**
+ * Constructs the declarative DOM subtree for a Notes window instance.
+ * @param x Horizontal window position in logical pixels.
+ * @param y Vertical window position in logical pixels.
+ * @return Root Window node ID.
+ */
 i32 build_ui(i32 x, i32 y) {
     i32 muted = graphics.rgb(0x6B, 0x72, 0x80);
     return <Window title="Notes" x={x} y={y} w={380} h={330}>
@@ -79,8 +101,10 @@ i32 build_ui(i32 x, i32 y) {
     </Window>;
 }
 
-// Mount a new Notes window, cascading each instance down and right. Returns
-// the window id, or 0 when the instance table is full.
+/**
+ * Mounts a new cascaded Notes window instance to the desktop.
+ * @return Window node ID, or 0 if the maximum instance limit is reached.
+ */
 export i32 mount() {
     if (g_count >= INSTANCES) { return 0; }
     i32 offset = 28 * g_opened;

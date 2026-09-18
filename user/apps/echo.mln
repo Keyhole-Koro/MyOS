@@ -2,7 +2,10 @@ package app;
 
 import ulib from "../lib/ulib.mln";
 
-// Interactive: echoes each line typed into the terminal until "quit".
+/**
+ * User application entry point: echoes terminal input lines until "quit".
+ * @return Exit code 0.
+ */
 export i32 main() {
     char line[96];
     ulib.println("echo: type lines, 'quit' to exit");

@@ -19,12 +19,22 @@ import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
 // Theme values are fetched into locals before use because a cross-package
 // call nested inside another package's argument list does not resolve.
 
+/**
+ * Resolves foreground text color for a node, returning fallback if unset (0).
+ * @param n Pointer to DOM Node.
+ * @param fallback Default RGB color if node color is 0.
+ * @return Resolved RGB color.
+ */
 export i32 node_fg(Node *n, i32 fallback) {
     i32 c = n->color;
     if (c != 0) { return c; }
     return fallback;
 }
 
+/**
+ * Renders a WINDOW node including drop shadow, title bar, chrome buttons, resize grip, and border.
+ * @param n Pointer to Window Node.
+ */
 export void draw_window(Node *n) {
     i32 s = dom.ui_scale();
     i32 x = n->x;
@@ -126,6 +136,10 @@ export void draw_window(Node *n) {
     graphics.draw_round_rect(x, y, w, h, r, s, border);
 }
 
+/**
+ * Renders a BUTTON node with hover, press, focus ring, and primary styling.
+ * @param n Pointer to Button Node.
+ */
 export void draw_button(Node *n) {
     i32 s = dom.ui_scale();
     i32 x = n->x;
@@ -170,10 +184,14 @@ export void draw_button(Node *n) {
 // All three are rows of text inside a rounded box; the list and menu add a
 // selection/hover highlight, the text area a caret.
 
-// Copy line bytes [start, start+llen) into out (bounded, NUL-terminated).
-// The renderer runs on the compositor task while append_text can run from a
-// syscall on the kernel task; terminating the shared buffer in place to draw
-// a line raced with those writes and corrupted the text, so drawing copies.
+/**
+ * Copies a slice of text bytes into a null-terminated destination buffer for safe rendering.
+ * @param buf Source text buffer.
+ * @param start Start byte offset in source.
+ * @param llen Number of bytes to copy.
+ * @param out Destination output buffer.
+ * @param cap Destination buffer capacity.
+ */
 export void copy_line(char *buf, i32 start, i32 llen, char *out, i32 cap) {
     i32 i = 0;
     while (i < llen) {
@@ -184,6 +202,11 @@ export void copy_line(char *buf, i32 start, i32 llen, char *out, i32 cap) {
     out[i] = (char)0;
 }
 
+/**
+ * Renders the background card and border for multi-row container controls.
+ * @param n Pointer to DOM Node.
+ * @param focused Non-zero if control has keyboard focus.
+ */
 export void draw_rows_box(Node *n, i32 focused) {
     i32 s = dom.ui_scale();
     i32 r = theme.input_radius() * s;
@@ -198,6 +221,10 @@ export void draw_rows_box(Node *n, i32 focused) {
     graphics.draw_round_rect(n->x, n->y, n->w, n->h, r, bw, border);
 }
 
+/**
+ * Renders a multi-line TEXT_AREA node, including text lines and cursor caret.
+ * @param n Pointer to TextArea Node.
+ */
 export void draw_text_area(Node *n) {
     i32 s = dom.ui_scale();
     i32 state = n->state;
@@ -259,7 +286,13 @@ export void draw_text_area(Node *n) {
     }
 }
 
-// Rows with an optional highlighted one (`hl` = row index or -1).
+/**
+ * Renders text rows for List or Menu controls with an optional highlighted selection row.
+ * @param n Pointer to DOM Node.
+ * @param hl Index of row to highlight, or -1.
+ * @param hl_color Background RGB color for highlight.
+ * @param hl_fg Foreground text RGB color for highlight.
+ */
 export void draw_rows(Node *n, i32 hl, i32 hl_color, i32 hl_fg) {
     i32 s = dom.ui_scale();
     i32 x = n->x;
@@ -296,6 +329,10 @@ export void draw_rows(Node *n, i32 hl, i32 hl_color, i32 hl_fg) {
     graphics.pop_clip();
 }
 
+/**
+ * Renders a LIST control showing item rows and selected item highlight.
+ * @param n Pointer to List Node.
+ */
 export void draw_list(Node *n) {
     i32 state = n->state;
     i32 focused = state & NodeState::FOCUSED;
@@ -310,6 +347,10 @@ export void draw_list(Node *n) {
     draw_rows(n, sel, hl, hl_fg);
 }
 
+/**
+ * Renders a floating popup MENU control with drop shadow and hovered item highlight.
+ * @param n Pointer to Menu Node.
+ */
 export void draw_menu(Node *n) {
     i32 s = dom.ui_scale();
     i32 r = theme.button_radius() * s;
@@ -323,6 +364,10 @@ export void draw_menu(Node *n) {
     draw_rows(n, n->sel - 1, hl, hl_fg);
 }
 
+/**
+ * Renders a static TEXT node with left or centered alignment.
+ * @param n Pointer to Text Node.
+ */
 export void draw_text_node(Node *n) {
     if (n->text == 0) { return; }
     i32 s = dom.ui_scale();
@@ -337,6 +382,10 @@ export void draw_text_node(Node *n) {
     }
 }
 
+/**
+ * Renders a single-line TEXT_INPUT control with placeholder or text and blinking caret.
+ * @param n Pointer to TextInput Node.
+ */
 export void draw_text_input(Node *n) {
     i32 s = dom.ui_scale();
     i32 x = n->x;
@@ -380,6 +429,10 @@ export void draw_text_input(Node *n) {
     graphics.pop_clip();
 }
 
+/**
+ * Renders a CHECKBOX control with box, checkmark, and label text.
+ * @param n Pointer to Checkbox Node.
+ */
 export void draw_checkbox(Node *n) {
     i32 s = dom.ui_scale();
     i32 x = n->x;
@@ -432,6 +485,10 @@ export void draw_checkbox(Node *n) {
     }
 }
 
+/**
+ * Renders a rounded card PANEL container.
+ * @param n Pointer to Panel Node.
+ */
 export void draw_panel(Node *n) {
     i32 s = dom.ui_scale();
     i32 bg = theme.panel_bg();
@@ -447,9 +504,11 @@ export void draw_panel(Node *n) {
 // laid out arithmetically at draw and hit time rather than as child nodes,
 // so the bar never has to be rebuilt when windows come and go.
 
-// The desktop window with the smallest id greater than `after` (0 = first);
-// 0 when there is none. Walks the desktop's children, so a closed window
-// drops out and ids keep creation order.
+/**
+ * Finds the next window child ID in the desktop hierarchy with an ID greater than `after`.
+ * @param after Window DOM Node ID lower bound (0 for first).
+ * @return Next window DOM Node ID, or 0 if none.
+ */
 export i32 next_window_after(i32 after) {
     i32 best = 0;
     i32 child_id = dom.first_child(dom.get_g_desktop_node_id());
@@ -469,6 +528,11 @@ export i32 next_window_after(i32 after) {
     return best;
 }
 
+/**
+ * Computes the X coordinate of the taskbar entry for a given window index.
+ * @param index 0-based window index.
+ * @return Screen X coordinate in display pixels.
+ */
 export i32 taskbar_entry_x(i32 index) {
     i32 s = dom.ui_scale();
     i32 launcher = theme.taskbar_launcher_w() * s;
@@ -476,6 +540,9 @@ export i32 taskbar_entry_x(i32 index) {
     return 8 * s + launcher + 8 * s + index * (ew + 6 * s);
 }
 
+/**
+ * Formats current system uptime into "HH:MM:SS" inside g_clock_buf.
+ */
 export void format_clock() {
     i32 *_damage_x0 = dom.get_g_damage_x0();
     i32 *_damage_y0 = dom.get_g_damage_y0();
@@ -500,6 +567,10 @@ export void format_clock() {
     _clock_buf[8] = (char)0;
 }
 
+/**
+ * Renders the desktop taskbar, launcher button, window list entries, and clock.
+ * @param n Pointer to Taskbar Node.
+ */
 export void draw_taskbar(Node *n) {
     i32 *_damage_x0 = dom.get_g_damage_x0();
     i32 *_damage_y0 = dom.get_g_damage_y0();
@@ -570,7 +641,12 @@ export enum TaskbarTarget {
     Window(i32),
 }
 
-// The window whose taskbar entry is at (px, py), or Miss; Launcher for the launcher.
+/**
+ * Hit tests display point (px, py) on the taskbar to identify what was clicked.
+ * @param px Screen X coordinate.
+ * @param py Screen Y coordinate.
+ * @return TaskbarTarget (Miss, Launcher, or Window(id)).
+ */
 export TaskbarTarget taskbar_target_at(i32 px, i32 py) {
     Node *n = dom.node_ptr(dom.get_g_taskbar_id());
     if (n == 0) { return TaskbarTarget::Miss; }
@@ -595,8 +671,11 @@ export TaskbarTarget taskbar_target_at(i32 px, i32 py) {
     return TaskbarTarget::Miss;
 }
 
-// Handle a click on the taskbar: activate the window whose entry was hit, or
-// run the launcher handler.
+/**
+ * Handles mouse click on the taskbar, focusing clicked window or running launcher.
+ * @param px Click X coordinate.
+ * @param py Click Y coordinate.
+ */
 export void taskbar_click(i32 px, i32 py) {
     case taskbar_target_at(px, py) of {
         Window(target) -> dom_widgets.focus_window(target);
@@ -608,15 +687,25 @@ export void taskbar_click(i32 px, i32 py) {
     };
 }
 
+/**
+ * Registers an application launcher callback for the taskbar launcher button.
+ * @param handler Function pointer to launcher callback: fn().
+ */
 export void set_launcher(i32 handler) {
     dom.set_g_launcher(handler);
 }
 
-// Redraw the clock (called by a timer once a second).
+/**
+ * Invalidates the taskbar node area to refresh the clock display.
+ */
 export void refresh_taskbar() {
     dom.damage_node(dom.get_g_taskbar_id());
 }
 
+/**
+ * Dispatches node drawing to the kind-specific drawing routine.
+ * @param n Pointer to DOM Node to render.
+ */
 export void draw_node(Node *n) {
     i32 kind = n->kind;
     i32 x = n->x;
@@ -655,9 +744,11 @@ export void draw_node(Node *n) {
     // Structural nodes (root/system/process/...) draw nothing.
 }
 
-// True if a node's painted area overlaps the damage region. Nodes that do not
-// are skipped without drawing: the clip rectangle would discard their pixels
-// anyway, but only after paying for the fill work that produced them.
+/**
+ * Checks if a node's full extent intersects the current paint damage rectangle.
+ * @param n Pointer to DOM Node.
+ * @return 1 if node overlaps damage area or full repaint active, 0 otherwise.
+ */
 export i32 node_in_damage(Node *n) {
     if (dom.get_g_painting_all() != 0) { return 1; } // full repaint: draw everything
     dom.node_extent(n);
@@ -668,9 +759,10 @@ export i32 node_in_damage(Node *n) {
     return 1;
 }
 
-
-// Render node_id and its descendants. Skips invisible subtrees. Sibling order
-// is paint order, so later children appear on top.
+/**
+ * Recursively renders a DOM node and its descendants respecting damage clipping.
+ * @param node_id DOM Node ID to render.
+ */
 export void render(i32 node_id) {
     i32 *_damage_x0 = dom.get_g_damage_x0();
     i32 *_damage_y0 = dom.get_g_damage_y0();
@@ -704,8 +796,9 @@ export void render(i32 node_id) {
     if (clip != 0) { graphics.pop_clip(); }
 }
 
-// Paint the desktop: wallpaper, every window in z-order, then the taskbar on
-// top. Honours the current clip, so render_scene can call it for a region.
+/**
+ * Paints the desktop background gradient, all desktop child windows, taskbar, and active menu.
+ */
 export void paint_desktop() {
     i32 top = theme.desktop_top();
     i32 bottom = theme.desktop_bottom();
@@ -724,8 +817,9 @@ export void paint_desktop() {
     if (dom.get_g_menu_id() != 0) { render(dom.get_g_menu_id()); }
 }
 
-// Repaint every node, ignoring the damage region. Used for the first frame and
-// whenever a caller wants an unconditional repaint.
+/**
+ * Performs an unconditional full screen repaint of the desktop and clears damage.
+ */
 export void render_all() {
     i32 *_damage_x0 = dom.get_g_damage_x0();
     i32 *_damage_y0 = dom.get_g_damage_y0();
@@ -741,11 +835,9 @@ export void render_all() {
     dom.clear_damage();
 }
 
-// Repaint just the damaged region: everything that overlaps it is redrawn
-// under a clip, nodes outside it are skipped entirely -- a hover highlight
-// redraws one button, not the whole screen. Falls back to a full repaint when
-// nothing is marked, so a caller that never damages anything still gets a
-// correct frame.
+/**
+ * Repaints only damaged regions using clip rectangles, falling back to full repaint if empty.
+ */
 export void render_scene() {
     i32 *_damage_x0 = dom.get_g_damage_x0();
     i32 *_damage_y0 = dom.get_g_damage_y0();
@@ -779,6 +871,9 @@ export void render_scene() {
     dom.clear_damage();
 }
 
+/**
+ * Renders the current desktop scene and presents the backbuffer to the physical display.
+ */
 export void render_desktop() {
     render_scene();
     graphics.present();

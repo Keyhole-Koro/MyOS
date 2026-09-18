@@ -1,0 +1,26 @@
+package ui_config;
+
+// ============================================================================
+// MyOS GUI / DOM / Compositor Configuration & Resource Limits
+// ============================================================================
+
+// --- Display Geometry ---
+// Default fallback geometry. Device geometry is reported by display registers.
+export i32 BASE_DISPLAY_WIDTH  = 1024;
+export i32 BASE_DISPLAY_HEIGHT = 768;
+
+// --- Window Manager & Interaction ---
+export i32 GRIP_SIZE          = 16; // Logical pixel size for window resize grip
+export i32 FOCUS_MAX          = 64; // Maximum focusable UI widgets
+
+// --- Rendering & Compositor Limits ---
+export i32 DAMAGE_MAX         = 8;  // Maximum damage rectangles tracked per frame
+export i32 CLIP_DEPTH         = 16; // Maximum clipping (scissor) stack depth
+
+// --- DOM Tree & Subsystem Limits ---
+export i32 TIMER_MAX          = 16;   // Maximum concurrent registered DOM timers
+export i32 NODE_SIZE          = 96;   // Fixed byte size per DOM node record
+export i32 NODE_TABLE_CAP     = 256;  // Maximum DOM nodes in table (g_node_table)
+
+// --- Application Editor Capacity ---
+export i32 EDITOR_CAP         = 4096; // Text editor / TextInput buffer capacity

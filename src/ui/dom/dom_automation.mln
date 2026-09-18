@@ -14,6 +14,10 @@ import debug from "../../../../MyKernel/src/debug/debug.mln";
 
 // --- human-readable dump -----------------------------------------------------------------
 
+/**
+ * Prints indentation spaces for debug tree dumps.
+ * @param depth Indentation level to print.
+ */
 void print_indent(i32 depth) {
     i32 i = 0;
     while (i < depth) {
@@ -22,9 +26,12 @@ void print_indent(i32 depth) {
     }
 }
 
-// Print "[role=R x=.. y=.. w=.. h=.. vis en ho pr fo ht ck]" for nodes that
-// carry UI props. Structural nodes (role=0, no bounds, no state) print
-// nothing extra.
+/**
+ * Prints formatted UI properties for a DOM node to the debug console.
+ *
+ * Structural nodes with role 0, no bounds, and zero state print nothing.
+ * @param id DOM node ID.
+ */
 void dump_props(i32 id) {
     i32 role = dom.role_of(id);
     i32 w = dom.node_w(id);
@@ -48,6 +55,11 @@ void dump_props(i32 id) {
     debug.print("]");
 }
 
+/**
+ * Recursively prints a DOM node and its descendants to the debug console.
+ * @param id DOM node ID to dump.
+ * @param depth Current indentation depth in the tree.
+ */
 void dump_node(i32 id, i32 depth) {
     print_indent(depth);
     debug.printf("Node(id=%i, kind=%i) ", id, case dom.kind_of(id) of { Some(v) -> v; None -> -1; });
@@ -67,6 +79,9 @@ void dump_node(i32 id, i32 depth) {
     }
 }
 
+/**
+ * Dumps the entire kernel DOM node tree to the debug console.
+ */
 export void dump() {
     debug.println("--- Kernel Object Tree ---");
     dump_node(dom.root_node_id(), 0);
@@ -79,6 +94,10 @@ export void dump() {
 
 i32 g_automation_first = 1;
 
+/**
+ * Transmits a raw string to the automation MMIO transport.
+ * @param s Null-terminated string to send.
+ */
 void automation_raw(char *s) {
     if (s == 0) { return; }
     while (*s != 0) {
@@ -87,6 +106,10 @@ void automation_raw(char *s) {
     }
 }
 
+/**
+ * Transmits an integer as ASCII digits over the automation transport.
+ * @param value Integer value to transmit.
+ */
 void automation_i32(i32 value) {
     if (value == 0) { automation_transport.putc('0'); return; }
     if (value < 0) { automation_transport.putc('-'); value = -value; }
@@ -104,6 +127,10 @@ void automation_i32(i32 value) {
     }
 }
 
+/**
+ * Transmits an escaped JSON string over the automation transport.
+ * @param s String content to escape and write within quotes.
+ */
 void automation_json_string(char *s) {
     automation_transport.putc('"');
     if (s != 0) {
@@ -119,11 +146,19 @@ void automation_json_string(char *s) {
     automation_transport.putc('"');
 }
 
+/**
+ * Transmits a boolean as "true" or "false" over the automation transport.
+ * @param value Non-zero for true, zero for false.
+ */
 void automation_bool(i32 value) {
     if (value != 0) { automation_raw("true"); }
     else { automation_raw("false"); }
 }
 
+/**
+ * Recursively transmits a DOM node and its descendants as JSON objects.
+ * @param id DOM node ID to serialize.
+ */
 void automation_node(i32 id) {
     if (g_automation_first == 0) { automation_transport.putc(','); }
     g_automation_first = 0;
@@ -153,6 +188,9 @@ void automation_node(i32 id) {
     }
 }
 
+/**
+ * Serializes and transmits the complete DOM tree snapshot as JSON.
+ */
 export void write_automation_snapshot() {
     g_automation_first = 1;
     automation_raw("{\"revision\":"); automation_i32(dom.revision());
@@ -161,6 +199,11 @@ export void write_automation_snapshot() {
     automation_raw("]}");
 }
 
+/**
+ * Performs a hit-test at the given coordinates and transmits the hit node ID as JSON.
+ * @param x Horizontal screen coordinate in logical pixels.
+ * @param y Vertical screen coordinate in logical pixels.
+ */
 export void write_automation_hit_test(i32 x, i32 y) {
     automation_raw("{\"id\":");
     automation_i32(dom.find_at(x, y));

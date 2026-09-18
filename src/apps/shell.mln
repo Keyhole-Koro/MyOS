@@ -8,9 +8,10 @@ import str from "../../../../toolchain/MyStdLib/str.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 
-// Block until a keystroke is available in the serial input queue, yielding the
-// CPU while waiting. The serial IRQ handler fills the queue from hardware RX;
-// reading the queue (not hardware RX) avoids racing the IRQ handler for bytes.
+/**
+ * Blocks until a character is available from the serial input queue, sleeping between polls.
+ * @return Received ASCII character byte.
+ */
 i32 read_char() {
     while (1) {
         case serial.read_input() of {
@@ -20,6 +21,11 @@ i32 read_char() {
     }
 }
 
+/**
+ * Main interactive command line loop for the serial terminal shell.
+ *
+ * Reads user commands over serial RX, handles line editing, and executes built-ins.
+ */
 export void run() {
     debug.println("Starting OS shell...");
     char buf[128];

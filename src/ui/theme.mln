@@ -14,75 +14,133 @@ import graphics from "graphics.mln";
 // focus rings, and a translucent dark taskbar along the bottom edge.
 
 // --- desktop ---------------------------------------------------------------
+/** Desktop gradient top background color. */
 export i32 desktop_top()    { return graphics.rgb(0x2B, 0x3A, 0x5C); }
+/** Desktop gradient bottom background color. */
 export i32 desktop_bottom() { return graphics.rgb(0x0E, 0x14, 0x24); }
 
 // --- accent ----------------------------------------------------------------
+/** Primary UI accent color. */
 export i32 accent()         { return graphics.rgb(0x3B, 0x82, 0xF6); }
+/** Accent color on hover. */
 export i32 accent_hover()   { return graphics.rgb(0x60, 0x9A, 0xF8); }
+/** Accent color when pressed. */
 export i32 accent_pressed() { return graphics.rgb(0x25, 0x63, 0xEB); }
+/** Foreground color displayed on top of accent color. */
 export i32 on_accent()      { return graphics.rgb(0xFF, 0xFF, 0xFF); }
 
 // --- text ------------------------------------------------------------------
+/** Primary text color for light backgrounds. */
 export i32 text_primary()   { return graphics.rgb(0x1F, 0x23, 0x28); }
+/** Secondary/subdued text color. */
 export i32 text_secondary() { return graphics.rgb(0x6B, 0x72, 0x80); }
+/** Disabled text color. */
 export i32 text_disabled()  { return graphics.rgb(0xA0, 0xA6, 0xB0); }
+/** Text color on dark surfaces. */
 export i32 text_on_dark()   { return graphics.rgb(0xF3, 0xF4, 0xF6); }
+/** Dimmed text color on dark surfaces. */
 export i32 text_on_dark_dim() { return graphics.rgb(0xA8, 0xB0, 0xBE); }
 
 // --- window ----------------------------------------------------------------
+/** Window content background color. */
 export i32 window_bg()              { return graphics.rgb(0xF6, 0xF7, 0xF9); }
+/** Active window border color with alpha. */
 export i32 window_border()          { return graphics.rgba(0x00, 0x00, 0x00, 70); }
+/** Inactive window border color with alpha. */
 export i32 window_border_inactive() { return graphics.rgba(0x00, 0x00, 0x00, 45); }
+/** Active window titlebar gradient top color. */
 export i32 titlebar_top()           { return graphics.rgb(0xEC, 0xEE, 0xF2); }
+/** Active window titlebar gradient bottom color. */
 export i32 titlebar_bottom()        { return graphics.rgb(0xDF, 0xE2, 0xE8); }
+/** Inactive window titlebar background color. */
 export i32 titlebar_inactive()      { return graphics.rgb(0xF0, 0xF1, 0xF4); }
+/** Divider line color below window titlebar. */
 export i32 titlebar_divider()       { return graphics.rgba(0x00, 0x00, 0x00, 35); }
+/** Window close button color. */
 export i32 close_button()           { return graphics.rgb(0xFF, 0x5F, 0x57); }
+/** Border ring color around close button. */
 export i32 close_button_ring()      { return graphics.rgba(0x00, 0x00, 0x00, 45); }
+/** Inactive window close button color. */
 export i32 close_button_inactive()  { return graphics.rgb(0xC8, 0xCB, 0xD1); }
+/** Close button hover state color. */
 export i32 close_button_hover()     { return graphics.rgb(0xE0, 0x44, 0x3E); }
+/** Window minimize button color. */
 export i32 minimize_button()        { return graphics.rgb(0xFE, 0xBC, 0x2E); }
+/** Window maximize button color. */
 export i32 maximize_button()        { return graphics.rgb(0x28, 0xC8, 0x40); }
+/** Symbol color inside close button. */
 export i32 close_glyph()            { return graphics.rgb(0x4A, 0x00, 0x00); }
 
+/** Window titlebar height in logical pixels. */
 export i32 titlebar_h()        { return 32; }
+/** Window corner radius in logical pixels. */
 export i32 window_radius()     { return 8; }
+/** Drop shadow blur size in logical pixels. */
 export i32 shadow_size()       { return 12; }
+/** Drop shadow vertical offset in logical pixels. */
 export i32 shadow_offset()     { return 5; }
+/** Drop shadow alpha opacity for active windows. */
 export i32 shadow_alpha()      { return 90; }
+/** Drop shadow alpha opacity for inactive windows. */
 export i32 shadow_alpha_inactive() { return 50; }
 
 // --- controls ----------------------------------------------------------------
+/** Default button surface color. */
 export i32 button_face()         { return graphics.rgb(0xFF, 0xFF, 0xFF); }
+/** Button surface color when hovered. */
 export i32 button_face_hover()   { return graphics.rgb(0xF1, 0xF3, 0xF7); }
+/** Button surface color when pressed. */
 export i32 button_face_pressed() { return graphics.rgb(0xE2, 0xE6, 0xEC); }
+/** Button outline border color. */
 export i32 button_border()       { return graphics.rgba(0x00, 0x00, 0x00, 55); }
+/** Button corner radius in logical pixels. */
 export i32 button_radius()       { return 6; }
 
+/** Panel background color. */
 export i32 panel_bg()      { return graphics.rgb(0xFF, 0xFF, 0xFF); }
+/** Panel border color. */
 export i32 panel_border()  { return graphics.rgba(0x00, 0x00, 0x00, 30); }
+/** Separator line color. */
 export i32 separator()     { return graphics.rgba(0x00, 0x00, 0x00, 30); }
 
+/** Text input background color. */
 export i32 input_bg()            { return graphics.rgb(0xFF, 0xFF, 0xFF); }
+/** Text input border color. */
 export i32 input_border()        { return graphics.rgba(0x00, 0x00, 0x00, 60); }
+/** Text input focused border color. */
 export i32 input_border_focus()  { return accent(); }
+/** Text input placeholder text color. */
 export i32 input_placeholder()   { return text_disabled(); }
+/** Text input caret color. */
 export i32 caret()               { return accent(); }
+/** Text input corner radius in logical pixels. */
 export i32 input_radius()        { return 6; }
+/** Text input horizontal padding in logical pixels. */
 export i32 input_padding_x()     { return 8; }
 
+/** Checkbox size in logical pixels. */
 export i32 checkbox_size()       { return 18; }
+/** Checkbox corner radius in logical pixels. */
 export i32 checkbox_radius()     { return 4; }
+/** Checkbox border color. */
 export i32 checkbox_border()     { return graphics.rgba(0x00, 0x00, 0x00, 80); }
+/** Checkbox background color. */
 export i32 checkbox_bg()         { return graphics.rgb(0xFF, 0xFF, 0xFF); }
 
 // --- taskbar -------------------------------------------------------------------
+/** Taskbar height in logical pixels. */
 export i32 taskbar_h()          { return 40; }
+/** Taskbar background color with alpha. */
 export i32 taskbar_bg()         { return graphics.rgba(0x10, 0x14, 0x1E, 225); }
+/** Top edge highlight line color of taskbar. */
 export i32 taskbar_edge()       { return graphics.rgba(0xFF, 0xFF, 0xFF, 28); }
+/** Taskbar window item background color. */
 export i32 taskbar_entry()      { return graphics.rgba(0xFF, 0xFF, 0xFF, 22); }
+/** Active taskbar window item background color. */
 export i32 taskbar_entry_active() { return graphics.rgba(0xFF, 0xFF, 0xFF, 50); }
+/** Width of a taskbar entry button in logical pixels. */
 export i32 taskbar_entry_w()    { return 168; }
+/** Corner radius of taskbar entry button. */
 export i32 taskbar_entry_radius() { return 6; }
+/** Launcher button width on taskbar. */
 export i32 taskbar_launcher_w() { return 88; }

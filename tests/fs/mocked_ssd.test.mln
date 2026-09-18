@@ -3,6 +3,7 @@ import mock from "../../../../toolchain/MyLangTestKit/runtime/facade.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import mem from "../../../MyKernel/src/mm/mem.mln";
 import fs from "../../src/fs/fs.mln";
+import fs_config from "../../src/fs/fs_config.mln";
 import ssd from "../../src/fs/ssd.mln";
 import { FsError } from "../../src/fs/fs.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
@@ -14,7 +15,7 @@ i32 g_fake_reads = 0;
 i32 g_fake_writes = 0;
 
 i32 ram_disk_address(i32 block) {
-    return g_ram_disk + block * fs.BLOCK_SIZE;
+    return g_ram_disk + block * fs_config.BLOCK_SIZE;
 }
 
 // These have exactly the SSD driver's signature. They are deliberately simple
@@ -54,7 +55,7 @@ i32 result_value(Result<i32, FsError>* result) {
 /*@Test "filesystem runs against a fake RAM SSD" { step: 50000000; }*/
 void filesystem_runs_against_a_fake_ram_ssd() {
     heap.init();
-    g_ram_disk = heap.alloc(fs.BLOCK_SIZE * 4);
+    g_ram_disk = heap.alloc(fs_config.BLOCK_SIZE * 4);
     assert.assert_true(g_ram_disk != 0, "RAM SSD backing allocation succeeds");
 
     // heap memory is not part of the test contract; start with an explicitly
@@ -74,11 +75,11 @@ void filesystem_runs_against_a_fake_ram_ssd() {
         .call(ram_disk_write);
 
     fs.init();
-    assert.assert_true(mem.read_word(ram_disk_address(fs.SB_BLOCK)) == fs.MAGIC,
+    assert.assert_true(mem.read_word(ram_disk_address(fs_config.SB_BLOCK)) == fs_config.MAGIC,
                        "fake write persists the formatted superblock");
     assert.assert_true(g_fake_reads > 0, "fake read fills fs out-buffers");
     assert.assert_true(g_fake_writes > 0, "fake write observes formatting");
-    assert.assert_true(mock.called_with(ssd.write_block, fs.SB_BLOCK, mock.any()),
+    assert.assert_true(mock.called_with(ssd.write_block, fs_config.SB_BLOCK, mock.any()),
                        "format writes the superblock through the fake");
 
     Result<i32, FsError> created = fs.create("ram-file");
@@ -86,7 +87,7 @@ void filesystem_runs_against_a_fake_ram_ssd() {
     i32 fd = result_value(&created);
     assert.assert_true(mock.calls(ssd.read_block) >= 4, "metadata reads are intercepted");
     assert.assert_true(mock.calls(ssd.write_block) >= 4, "metadata writes are intercepted");
-    assert.assert_true(mock.called_with(ssd.read_block, fs.BITMAP_BLOCK, mock.any()),
+    assert.assert_true(mock.called_with(ssd.read_block, fs_config.BITMAP_BLOCK, mock.any()),
                        "create reads the allocation bitmap through the fake");
 
     i32 source = heap.alloc(4);
@@ -108,8 +109,8 @@ void filesystem_runs_against_a_fake_ram_ssd() {
     char* destination_bytes = (char*)destination;
     assert.assert_true(destination_bytes[0] == 'T' && destination_bytes[3] == 'T',
                        "read out-buffer receives persisted bytes");
-    assert.assert_true(mock.called_with(ssd.write_block, fs.DATA_START, mock.any()),
+    assert.assert_true(mock.called_with(ssd.write_block, fs_config.DATA_START, mock.any()),
                        "write reaches the fake data block");
-    assert.assert_true(mock.called_with(ssd.read_block, fs.DATA_START, mock.any()),
+    assert.assert_true(mock.called_with(ssd.read_block, fs_config.DATA_START, mock.any()),
                        "read reaches the fake data block");
 }

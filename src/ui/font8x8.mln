@@ -12,7 +12,16 @@ package font;
 // MyLang cannot read another module's exported globals, only call its
 // functions.
 
+/**
+ * Returns the width of each 8x8 font glyph in pixels.
+ * @return Glyph width (8).
+ */
 export i32 glyph_w() { return 8; }
+
+/**
+ * Returns the height of each 8x8 font glyph in pixels.
+ * @return Glyph height (8).
+ */
 export i32 glyph_h() { return 8; }
 
 char glyphs[760] = {
@@ -113,8 +122,15 @@ char glyphs[760] = {
     0x76, 0xDC, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  // 0x7E '~'
 };
 
-// Return the byte for row `row` (0..7) of glyph `ch`. Out-of-range characters
-// render as blank.
+/**
+ * Returns the byte representing a single row of a glyph bitmap.
+ *
+ * Each bit in the returned byte represents a pixel, with MSB as the leftmost pixel.
+ * Characters outside the ASCII printable range 0x20..0x7E or rows outside 0..7 return 0.
+ * @param ch ASCII character code.
+ * @param row Row index within the glyph (0 to 7).
+ * @return 8-bit row bitmap coverage.
+ */
 export i32 glyph_row(i32 ch, i32 row) {
     if (ch < 0x20) { return 0; }
     if (ch > 0x7E) { return 0; }

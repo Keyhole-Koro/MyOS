@@ -183,7 +183,15 @@ export i32 g_ext_h = 0;
 // Formatted uptime clock for the taskbar.
 export char g_clock_buf[16];
 
+/**
+ * Increments the global DOM revision counter when observable tree changes occur.
+ */
 export void touch() { g_revision = g_revision + 1; }
+
+/**
+ * Returns the current DOM mutation revision number.
+ * @return Monotonically increasing revision counter.
+ */
 export i32 revision() { return g_revision; }
 
 // DOM markup uses logical 1024x768 coordinates. Scale it uniformly to the
@@ -193,6 +201,10 @@ export i32 revision() { return g_revision; }
 export i32 BASE_DISPLAY_WIDTH = 1024;
 export i32 BASE_DISPLAY_HEIGHT = 768;
 
+/**
+ * Calculates the integer UI scaling factor based on current display resolution.
+ * @return Scaling factor (>= 1).
+ */
 export i32 ui_scale() {
     i32 sx = graphics.display_width() / BASE_DISPLAY_WIDTH;
     i32 sy = graphics.display_height() / BASE_DISPLAY_HEIGHT;
@@ -202,11 +214,20 @@ export i32 ui_scale() {
     return scale;
 }
 
+/**
+ * Scales a logical coordinate or dimension by the current UI scale.
+ * @param value Logical pixel value.
+ * @return Scaled physical pixel value.
+ */
 export i32 scale_ui(i32 value) {
     return value * ui_scale();
 }
 
-// Raw NodeId -> Node* boundary; 0 for an invalid or deleted id.
+/**
+ * Returns a direct pointer to the Node struct for the given NodeId, or null if invalid.
+ * @param id DOM Node ID.
+ * @return Pointer to Node struct, or 0.
+ */
 export Node* node_ptr(i32 id) {
     if (id <= 0) { return (Node*)0; }
     if (id >= g_next_node_id) { return (Node*)0; }
@@ -222,10 +243,21 @@ Option<Node*> get_node(i32 id) {
     return Some(node);
 }
 
+/**
+ * Checks whether a DOM node ID exists and is currently allocated.
+ * @param id DOM Node ID.
+ * @return True if node exists, false otherwise.
+ */
 export bool node_exists(i32 id) {
     return node_ptr(id) != 0;
 }
 
+/**
+ * Allocates and initializes a new DOM node of the given kind with default values.
+ * @param kind NodeKind enum variant.
+ * @param name Null-terminated node name string.
+ * @return Newly allocated Node ID.
+ */
 export i32 create_node(i32 kind, char *name) {
     if (g_next_node_id >= 256) {
         debug.panic("dom: out of node ids");
@@ -280,54 +312,92 @@ export i32 create_node(i32 kind, char *name) {
 
 // --- scalar queries -------------------------------------------------------------
 
+/**
+ * Returns the NodeKind of a node, or None if the node ID is invalid.
+ * @param id DOM Node ID.
+ * @return Some(kind) or None.
+ */
 export Option<i32> kind_of(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return None; }
     return Some(n->kind);
 }
 
+/**
+ * Returns the parent node ID of a node.
+ * @param id DOM Node ID.
+ * @return Parent Node ID, or 0 if root or detached.
+ */
 export i32 parent_of(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return 0; }
     return n->parent;
 }
 
+/** Returns the absolute X coordinate in screen pixels of a node. */
 export i32 node_x(i32 id) { Node *n = node_ptr(id); if (n == 0) { return 0; } return n->x; }
+/** Returns the absolute Y coordinate in screen pixels of a node. */
 export i32 node_y(i32 id) { Node *n = node_ptr(id); if (n == 0) { return 0; } return n->y; }
+/** Returns the width in screen pixels of a node. */
 export i32 node_w(i32 id) { Node *n = node_ptr(id); if (n == 0) { return 0; } return n->w; }
+/** Returns the height in screen pixels of a node. */
 export i32 node_h(i32 id) { Node *n = node_ptr(id); if (n == 0) { return 0; } return n->h; }
 
+/**
+ * Returns the text content of a node, or null.
+ * @param id DOM Node ID.
+ * @return Pointer to text string.
+ */
 export char* text_of(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return (char*)0; }
     return (char*)n->text;
 }
 
+/**
+ * Returns the accessibility / automation role of a node.
+ * @param id DOM Node ID.
+ * @return NodeRole value.
+ */
 export i32 role_of(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return 0; }
     return n->role;
 }
 
+/**
+ * Returns the debug / identifier name of a node.
+ * @param id DOM Node ID.
+ * @return Pointer to name string.
+ */
 export char* name_of(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return (char*)0; }
     return (char*)n->name;
 }
 
+/**
+ * Returns the automation test ID of a node.
+ * @param id DOM Node ID.
+ * @return Pointer to test_id string.
+ */
 export char* test_id_of(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return (char*)0; }
     return (char*)n->test_id;
 }
 
+/**
+ * Returns the root node ID of the DOM tree.
+ * @return Root Node ID.
+ */
 export i32 root_node_id() { return g_root_node_id; }
 
-// The automation-visible "value" of a node: a textbox/textarea's current
-// text, empty for anything else. Kept here (rather than computed from
-// role_of()/text_of() by the caller) because comparing against ROLE_* only
-// resolves within this package -- an `export u16` global doesn't resolve as
-// a cross-package symbol (see set_hovered() and friends above).
+/**
+ * Returns the automation-visible value of a node (text content for textbox/textarea).
+ * @param id DOM Node ID.
+ * @return String value of the node, or empty string.
+ */
 export char* automation_value_of(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return ""; }
@@ -339,7 +409,18 @@ export char* automation_value_of(i32 id) {
 
 // --- damage -------------------------------------------------------------------------
 
-// True if [ax0,ax1)x[ay0,ay1) and [bx0,bx1)x[by0,by1) overlap or touch.
+/**
+ * Checks whether two rectangles overlap or touch.
+ * @param ax0 First rectangle left.
+ * @param ay0 First rectangle top.
+ * @param ax1 First rectangle right.
+ * @param ay1 First rectangle bottom.
+ * @param bx0 Second rectangle left.
+ * @param by0 Second rectangle top.
+ * @param bx1 Second rectangle right.
+ * @param by1 Second rectangle bottom.
+ * @return 1 if rectangles touch or overlap, 0 otherwise.
+ */
 export i32 rects_touch(i32 ax0, i32 ay0, i32 ax1, i32 ay1, i32 bx0, i32 by0, i32 bx1, i32 by1) {
     if (ax1 < bx0) { return 0; }
     if (bx1 < ax0) { return 0; }
@@ -348,6 +429,14 @@ export i32 rects_touch(i32 ax0, i32 ay0, i32 ax1, i32 ay1, i32 bx0, i32 by0, i32
     return 1;
 }
 
+/**
+ * Expands a damage rectangle entry to include another bounding box.
+ * @param i Index of damage entry in table.
+ * @param x0 Bounding box left.
+ * @param y0 Bounding box top.
+ * @param x1 Bounding box right.
+ * @param y1 Bounding box bottom.
+ */
 export void damage_union_into(i32 i, i32 x0, i32 y0, i32 x1, i32 y1) {
     if (x0 < g_damage_x0[i]) { g_damage_x0[i] = x0; }
     if (y0 < g_damage_y0[i]) { g_damage_y0[i] = y0; }
@@ -355,10 +444,14 @@ export void damage_union_into(i32 i, i32 x0, i32 y0, i32 x1, i32 y1) {
     if (y1 > g_damage_y1[i]) { g_damage_y1[i] = y1; }
 }
 
-// Add a rectangle to the damage list. Clipped to the display, so callers can
-// pass node bounds without worrying about off-screen nodes. A rectangle
-// that overlaps an existing entry is merged into it; otherwise it gets its
-// own entry while there is room.
+/**
+ * Adds a rectangle to the damage list, clipped to the display.
+ * Merges into an overlapping entry if present, or creates a new entry.
+ * @param x Rectangle X position.
+ * @param y Rectangle Y position.
+ * @param w Rectangle width.
+ * @param h Rectangle height.
+ */
 export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
     i32 display_width = graphics.display_width();
     i32 display_height = graphics.display_height();
@@ -393,8 +486,11 @@ export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
     damage_union_into(0, x0, y0, x1, y1);
 }
 
-// The area a node paints, which for a window includes its drop shadow. The
-// result lands in g_ext_*.
+/**
+ * Calculates the full painted extent of a node (including window shadows).
+ * Results are stored in g_ext_x, g_ext_y, g_ext_w, g_ext_h.
+ * @param n Pointer to DOM Node.
+ */
 export void node_extent(Node *n) {
     i32 x = n->x;
     i32 y = n->y;
@@ -415,7 +511,10 @@ export void node_extent(Node *n) {
     g_ext_h = h;
 }
 
-// Mark a node's own area as needing repaint.
+/**
+ * Marks a node's full extent as needing repaint.
+ * @param id DOM Node ID.
+ */
 export void damage_node(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -423,22 +522,39 @@ export void damage_node(i32 id) {
     damage_rect(g_ext_x, g_ext_y, g_ext_w, g_ext_h);
 }
 
+/**
+ * Checks whether any damaged regions exist.
+ * @return 1 if damage regions exist, 0 otherwise.
+ */
 export i32 has_damage() {
     if (g_damage_count > 0) { return 1; }
     return 0;
 }
 
+/**
+ * Clears the damage region list.
+ */
 export void clear_damage() {
     g_damage_count = 0;
 }
 
 // --- text metrics ---------------------------------------------------------------------
 
+/**
+ * Checks if a node uses bold text styling.
+ * @param n Pointer to DOM Node.
+ * @return 1 if bold, 0 otherwise.
+ */
 export i32 text_bold(Node *n) {
     if ((n->style & NodeStyle::BOLD) != 0) { return 1; }
     return 0;
 }
 
+/**
+ * Computes rendered text width for a node based on UI scale and bold flag.
+ * @param n Pointer to DOM Node.
+ * @return Rendered text width in pixels.
+ */
 export i32 text_width_of(Node *n) {
     if (n->text == 0) { return 0; }
     i32 bold = text_bold(n);
@@ -446,6 +562,11 @@ export i32 text_width_of(Node *n) {
     return graphics.text_width((char*)n->text, bold, s);
 }
 
+/**
+ * Computes rendered text height for a node based on UI scale and bold flag.
+ * @param n Pointer to DOM Node.
+ * @return Rendered text height in pixels.
+ */
 export i32 text_height_of(Node *n) {
     i32 bold = text_bold(n);
     i32 s = ui_scale();
@@ -454,7 +575,12 @@ export i32 text_height_of(Node *n) {
 
 // --- layout ---------------------------------------------------------------------------------
 
-// Move a subtree by (dx, dy) without damage bookkeeping (callers damage).
+/**
+ * Translates a subtree by (dx, dy) without damage bookkeeping.
+ * @param id DOM Node ID.
+ * @param dx Horizontal offset.
+ * @param dy Vertical offset.
+ */
 export void offset_subtree(i32 id, i32 dx, i32 dy) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -468,7 +594,12 @@ export void offset_subtree(i32 id, i32 dx, i32 dy) {
     }
 }
 
-// Move a child (and its subtree) so its top-left is at (x, y).
+/**
+ * Positions a child node and its subtree at absolute coordinates (x, y).
+ * @param child_id DOM Node ID of the child.
+ * @param x Target X coordinate.
+ * @param y Target Y coordinate.
+ */
 export void place_child(i32 child_id, i32 x, i32 y) {
     Node *child = node_ptr(child_id);
     if (child == 0) { return; }
@@ -482,13 +613,16 @@ export void place_child(i32 child_id, i32 x, i32 y) {
     damage_node(child_id);
 }
 
-// Lay out direct children top-to-bottom. Child widths and heights remain their
-// own props; Column owns only their x/y positions. Nested containers are
-// relaid after their origin moves so their descendants follow along as well.
-// A zero-height child consumes no vertical space, which keeps structural
-// nodes inert in a layout (Text carries its measured height).
+/**
+ * Recursively updates layout for container nodes (COLUMN or ROW).
+ * @param n Pointer to container Node.
+ */
 export void relayout_container(Node *n);
 
+/**
+ * Lays out direct children of a column container top-to-bottom.
+ * @param column Pointer to Column Node.
+ */
 export void relayout_column(Node *column) {
     i32 child_x = column->x + column->padding;
     i32 cursor_y = column->y + column->padding;
@@ -508,7 +642,10 @@ export void relayout_column(Node *column) {
     }
 }
 
-// Lay out direct children left-to-right, top-aligned.
+/**
+ * Lays out direct children of a row container left-to-right, top-aligned.
+ * @param row Pointer to Row Node.
+ */
 export void relayout_row(Node *row) {
     i32 cursor_x = row->x + row->padding;
     i32 child_y = row->y + row->padding;
@@ -528,6 +665,10 @@ export void relayout_row(Node *row) {
     }
 }
 
+/**
+ * Dispatches layout calculation for a container node to relayout_column or relayout_row.
+ * @param n Pointer to container Node.
+ */
 export void relayout_container(Node *n) {
     i32 k = n->kind;
     if (k == NodeKind::COLUMN) { relayout_column(n); }
@@ -536,8 +677,14 @@ export void relayout_container(Node *n) {
 
 // --- prop accessors ---------------------------------------------------------------------
 
-// Set absolute bounds. Moving/resizing a container moves its direct
-// children; changing a child's size inside one reflows the following siblings.
+/**
+ * Sets absolute bounds for a node, reflowing layouts and damaging old and new areas.
+ * @param id DOM Node ID.
+ * @param x Left coordinate.
+ * @param y Top coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ */
 export void set_bounds(i32 id, i32 x, i32 y, i32 w, i32 h) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -555,8 +702,12 @@ export void set_bounds(i32 id, i32 x, i32 y, i32 w, i32 h) {
     touch();
 }
 
-// Translate a node and everything under it, keeping damage in sync. This is
-// what dragging a window calls.
+/**
+ * Translates a node and its entire subtree by (dx, dy) with damage tracking.
+ * @param id DOM Node ID.
+ * @param dx Horizontal delta.
+ * @param dy Vertical delta.
+ */
 export void move_node(i32 id, i32 dx, i32 dy) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -566,6 +717,11 @@ export void move_node(i32 id, i32 dx, i32 dy) {
     touch();
 }
 
+/**
+ * Sets the text content of a node, updating bounds for TEXT nodes and triggering damage.
+ * @param id DOM Node ID.
+ * @param text Null-terminated text string.
+ */
 export void set_text(i32 id, char *text) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -585,6 +741,11 @@ export void set_text(i32 id, char *text) {
     touch();
 }
 
+/**
+ * Sets the accessibility / automation role of a node.
+ * @param id DOM Node ID.
+ * @param role NodeRole value.
+ */
 export void set_role(i32 id, i32 role) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -592,8 +753,11 @@ export void set_role(i32 id, i32 role) {
     touch();
 }
 
-// Stable, non-user-facing identity for a locator. Do not derive this from
-// visible text, because labels may be localized or change as state updates.
+/**
+ * Sets the automation test identifier for a node.
+ * @param id DOM Node ID.
+ * @param test_id Test identifier string.
+ */
 export void set_test_id(i32 id, char *test_id) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -601,8 +765,12 @@ export void set_test_id(i32 id, char *test_id) {
     touch();
 }
 
-// Box colours: raw graphics.rgb() values, the same construction API as the
-// renderer's.
+/**
+ * Sets background and border colors of a node.
+ * @param id DOM Node ID.
+ * @param background Background color (RGB).
+ * @param border Border color (RGB).
+ */
 export void set_colors(i32 id, i32 background, i32 border) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -611,7 +779,11 @@ export void set_colors(i32 id, i32 background, i32 border) {
     n->border_color = border;
 }
 
-// Foreground/text colour. 0 restores the theme default.
+/**
+ * Sets foreground/text color of a node (0 restores theme default).
+ * @param id DOM Node ID.
+ * @param color Text color (RGB).
+ */
 export void set_color(i32 id, i32 color) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -619,6 +791,11 @@ export void set_color(i32 id, i32 color) {
     damage_node(id);
 }
 
+/**
+ * Sets the text style flags (e.g. NodeStyle::BOLD) for a node.
+ * @param id DOM Node ID.
+ * @param style Style bitmask.
+ */
 export void set_style(i32 id, i32 style) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -630,8 +807,12 @@ export void set_style(i32 id, i32 style) {
     damage_node(id);
 }
 
-// Set the inset and inter-child gap of a Column/Row, then immediately
-// recompute its children so changing these props is observable.
+/**
+ * Sets padding and gap for a COLUMN/ROW node and updates layout.
+ * @param id DOM Node ID.
+ * @param padding Inset padding in pixels.
+ * @param gap Gap between children in pixels.
+ */
 export void set_column_layout(i32 id, i32 padding, i32 gap) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -640,9 +821,12 @@ export void set_column_layout(i32 id, i32 padding, i32 gap) {
     relayout_container(n);
 }
 
-// True if changing `flag` on this node changes how it looks. Only controls
-// draw differently when hovered or pressed, so flagging a label as hovered
-// must not damage its area; windows repaint when focus changes (title bar).
+/**
+ * Checks whether changing a state flag alters node visual appearance.
+ * @param n Pointer to DOM Node.
+ * @param flag NodeState flag.
+ * @return 1 if visible appearance changes, 0 otherwise.
+ */
 export i32 state_is_visible(Node *n, i32 flag) {
     i32 kind = n->kind;
     if (flag == NodeState::HOVERED) {
@@ -670,7 +854,12 @@ export i32 state_is_visible(Node *n, i32 flag) {
     return 1; // visibility, checked and everything else always matter
 }
 
-// Set (on != 0) or clear (on == 0) one STATE_* bit.
+/**
+ * Sets or clears an individual state flag bit on a node.
+ * @param id DOM Node ID.
+ * @param flag NodeState bitmask.
+ * @param on Non-zero to set flag, 0 to clear.
+ */
 export void set_state_flag(i32 id, i32 flag, i32 on) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -689,7 +878,12 @@ export void set_state_flag(i32 id, i32 flag, i32 on) {
     }
 }
 
-// Return 1 if the given STATE_* bit is set, else 0.
+/**
+ * Tests whether a specific state flag bit is set on a node.
+ * @param id DOM Node ID.
+ * @param flag NodeState bitmask.
+ * @return 1 if flag is set, 0 otherwise.
+ */
 export i32 get_state_flag(i32 id, i32 flag) {
     Node *n = node_ptr(id);
     if (n == 0) { return 0; }
@@ -698,33 +892,106 @@ export i32 get_state_flag(i32 id, i32 flag) {
     return 0;
 }
 
-// Named state setters. Other packages can't pass dom.STATE_* as an argument (an
-// `export u16` global doesn't resolve as a cross-package symbol), so these expose
-// the common flags by name. `on` is 0 to clear, non-zero to set.
+/**
+ * Sets or clears the HOVERED state flag on a node.
+ * @param id DOM Node ID.
+ * @param on Non-zero to set, 0 to clear.
+ */
 export void set_hovered(i32 id, i32 on) { set_state_flag(id, NodeState::HOVERED, on); }
+
+/**
+ * Sets or clears the PRESSED state flag on a node.
+ * @param id DOM Node ID.
+ * @param on Non-zero to set, 0 to clear.
+ */
 export void set_pressed(i32 id, i32 on) { set_state_flag(id, NodeState::PRESSED, on); }
+
+/**
+ * Sets or clears the VISIBLE state flag on a node.
+ * @param id DOM Node ID.
+ * @param on Non-zero to set, 0 to clear.
+ */
 export void set_visible(i32 id, i32 on) { set_state_flag(id, NodeState::VISIBLE, on); }
+
+/**
+ * Sets or clears the HIT_TESTABLE state flag on a node.
+ * @param id DOM Node ID.
+ * @param on Non-zero to set, 0 to clear.
+ */
 export void set_hit_testable(i32 id, i32 on) { set_state_flag(id, NodeState::HIT_TESTABLE, on); }
+
+/**
+ * Sets or clears the CHECKED state flag on a checkbox node.
+ * @param id DOM Node ID.
+ * @param on Non-zero to set, 0 to clear.
+ */
 export void set_checked(i32 id, i32 on) { set_state_flag(id, NodeState::CHECKED, on); }
+
+/**
+ * Checks if a node has the CHECKED state flag set.
+ * @param id DOM Node ID.
+ * @return 1 if checked, 0 otherwise.
+ */
 export i32 is_checked(i32 id) { return get_state_flag(id, NodeState::CHECKED); }
+
+/**
+ * Checks if a node has the VISIBLE state flag set.
+ * @param id DOM Node ID.
+ * @return 1 if visible, 0 otherwise.
+ */
 export i32 is_visible(i32 id) { return get_state_flag(id, NodeState::VISIBLE); }
+
+/**
+ * Checks if a node has the ENABLED state flag set.
+ * @param id DOM Node ID.
+ * @return 1 if enabled, 0 otherwise.
+ */
 export i32 is_enabled(i32 id) { return get_state_flag(id, NodeState::ENABLED); }
+
+/**
+ * Checks if a node has the FOCUSED state flag set.
+ * @param id DOM Node ID.
+ * @return 1 if focused, 0 otherwise.
+ */
 export i32 is_focused(i32 id) { return get_state_flag(id, NodeState::FOCUSED); }
+
+/**
+ * Checks if a node has the HIT_TESTABLE state flag set.
+ * @param id DOM Node ID.
+ * @return 1 if hit-testable, 0 otherwise.
+ */
 export i32 is_hit_testable(i32 id) { return get_state_flag(id, NodeState::HIT_TESTABLE); }
+
+/**
+ * Checks if a node has the HOVERED state flag set.
+ * @param id DOM Node ID.
+ * @return 1 if hovered, 0 otherwise.
+ */
 export i32 is_hovered(i32 id) { return get_state_flag(id, NodeState::HOVERED); }
+
+/**
+ * Checks if a node has the PRESSED state flag set.
+ * @param id DOM Node ID.
+ * @return 1 if pressed, 0 otherwise.
+ */
 export i32 is_pressed(i32 id) { return get_state_flag(id, NodeState::PRESSED); }
 
-// Raw state bitmask. Meaningless to a caller without the STATE_* flags
-// (an `export u16` global doesn't resolve as a cross-package symbol), but
-// useful as an "does this node have any interesting state at all" check.
+/**
+ * Returns raw state bitmask of a node.
+ * @param id DOM Node ID.
+ * @return State flags bitmask.
+ */
 export i32 state_of(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return 0; }
     return n->state;
 }
 
-// Store a click handler (a function pointer, passed as i32) on a node. The
-// handler is invoked by dispatch_click via an indirect call. 0 clears it.
+/**
+ * Stores a click handler function pointer on a node and marks it hit-testable.
+ * @param id DOM Node ID.
+ * @param handler Function pointer to click callback.
+ */
 export void set_on_click(i32 id, i32 handler) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -732,24 +999,43 @@ export void set_on_click(i32 id, i32 handler) {
     set_hit_testable(id, handler != 0);
 }
 
+/**
+ * Returns the click handler function pointer of a node.
+ * @param id DOM Node ID.
+ * @return Function pointer to click handler, or 0.
+ */
 export i32 get_on_click(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return 0; }
     return n->on_click;
 }
 
+/**
+ * Stores a keyboard event handler function pointer on a node.
+ * @param id DOM Node ID.
+ * @param handler Function pointer to key event handler.
+ */
 export void set_on_key(i32 id, i32 handler) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
     n->on_key = handler;
 }
 
+/**
+ * Stores a value change handler function pointer on a node.
+ * @param id DOM Node ID.
+ * @param handler Function pointer to change event handler.
+ */
 export void set_on_change(i32 id, i32 handler) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
     n->on_change = handler;
 }
 
+/**
+ * Invokes the value change handler of a node if registered.
+ * @param n Pointer to DOM Node.
+ */
 export void fire_change(Node *n) {
     i32 handler = n->on_change;
     if (handler != 0) {
@@ -758,8 +1044,11 @@ export void fire_change(Node *n) {
     }
 }
 
-// Invoke a node's click handler, if any. Checkboxes toggle first, so the
-// handler observes the new state. Returns 1 if a handler ran, else 0.
+/**
+ * Invokes a node's click handler, toggling checkbox state if applicable.
+ * @param id DOM Node ID.
+ * @return 1 if a handler was executed, 0 otherwise.
+ */
 export i32 dispatch_click(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return 0; }
@@ -778,9 +1067,11 @@ export i32 dispatch_click(i32 id) {
 
 // --- tree structure -----------------------------------------------------------------------
 
-// Where a parent's children are positioned from: a window's content area
-// starts below its title bar, everything else at its own origin. Result in
-// g_ext_x / g_ext_y.
+/**
+ * Computes origin offset for children within a parent node (below window titlebar).
+ * Results are stored in g_ext_x and g_ext_y.
+ * @param parent Pointer to parent Node.
+ */
 export void content_origin(Node *parent) {
     g_ext_x = parent->x;
     g_ext_y = parent->y;
@@ -789,6 +1080,11 @@ export void content_origin(Node *parent) {
     }
 }
 
+/**
+ * Appends a child node to a parent node, shifting coordinates and updating layout.
+ * @param parent_id DOM Node ID of parent.
+ * @param child_id DOM Node ID of child to append.
+ */
 export void append_child(i32 parent_id, i32 child_id) {
     Node *parent = node_ptr(parent_id);
     Node *child = node_ptr(child_id);
@@ -826,7 +1122,10 @@ export void append_child(i32 parent_id, i32 child_id) {
     touch();
 }
 
-// Unlink a node from its parent's child list (no damage, no free).
+/**
+ * Unlinks a node from its parent's sibling linked-list without freeing or damaging.
+ * @param n Pointer to DOM Node.
+ */
 export void unlink(Node *n) {
     Node *parent = node_ptr(n->parent);
     if (parent == 0) { return; }
@@ -849,8 +1148,10 @@ export void unlink(Node *n) {
     n->next_sibling = 0;
 }
 
-// Re-link a node as the last child of its parent: last is painted last, so
-// this raises it above its siblings.
+/**
+ * Moves a node to be the last child of its parent, painting it on top of siblings.
+ * @param id DOM Node ID.
+ */
 export void bring_to_front(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -873,8 +1174,11 @@ export void bring_to_front(i32 id) {
     touch();
 }
 
-// Nodes whose `text` is a heap buffer they allocated (TextInput/TextArea/
-// List/Menu); everyone else points at a string the caller owns.
+/**
+ * Checks if a node owns its text buffer in heap memory.
+ * @param n Pointer to DOM Node.
+ * @return 1 if node owns text buffer, 0 otherwise.
+ */
 export i32 owns_buffer(Node *n) {
     i32 k = n->kind;
     if (k == NodeKind::TEXT_INPUT) { return 1; }
@@ -884,6 +1188,10 @@ export i32 owns_buffer(Node *n) {
     return 0;
 }
 
+/**
+ * Recursively frees a node's subtree from memory and drops timers/focus.
+ * @param id DOM Node ID.
+ */
 export void free_subtree(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -915,8 +1223,10 @@ export void free_subtree(i32 id) {
     heap.free((i32)n);
 }
 
-// Delete a node and its subtree: unlink from the parent, invalidate the slot
-// (ids are never reused), free the memory, and drop any focus it held.
+/**
+ * Removes a node and its entire subtree from DOM, damaging old area and freeing memory.
+ * @param id DOM Node ID.
+ */
 export void remove_node(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -926,30 +1236,49 @@ export void remove_node(i32 id) {
     touch();
 }
 
-// Return the id of the fixed desktop node created by init(); UI attaches here.
+/**
+ * Returns the node ID of the root desktop node.
+ * @return Desktop DOM Node ID.
+ */
 export i32 desktop_id() {
     return g_desktop_node_id;
 }
 
+/**
+ * Returns the node ID of the system taskbar node.
+ * @return Taskbar DOM Node ID, or 0 if not created.
+ */
 export i32 taskbar_id() {
     return g_taskbar_id;
 }
 
-// Tree navigation. Return 0 when there is no such node.
+/**
+ * Returns the node ID of the first child of a node.
+ * @param id DOM Node ID.
+ * @return First child DOM Node ID, or 0 if none.
+ */
 export i32 first_child(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return 0; }
     return n->first_child;
 }
 
+/**
+ * Returns the node ID of the next sibling of a node.
+ * @param id DOM Node ID.
+ * @return Next sibling DOM Node ID, or 0 if none.
+ */
 export i32 next_sibling(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return 0; }
     return n->next_sibling;
 }
 
-// The window containing a node (or the node itself if it is a window); 0 if
-// it is not inside one.
+/**
+ * Returns the enclosing WINDOW node ID for a given node.
+ * @param id DOM Node ID.
+ * @return Window DOM Node ID, or 0 if not inside a window.
+ */
 export i32 window_of(i32 id) {
     i32 cur = id;
     while (cur != 0) {
@@ -963,70 +1292,142 @@ export i32 window_of(i32 id) {
 
 
 // Getters and Setters
+/** Gets NODE_SIZE constant. @return Node structure size in bytes. */
 export i32 get_NODE_SIZE() { return NODE_SIZE; }
+/** Sets NODE_SIZE constant. @param v New node size. */
 export void set_NODE_SIZE(i32 v) { NODE_SIZE = v; }
+/** Gets DAMAGE_MAX constant. @return Maximum number of tracked damage rectangles. */
 export i32 get_DAMAGE_MAX() { return DAMAGE_MAX; }
+/** Sets DAMAGE_MAX constant. @param v New max damage rect count. */
 export void set_DAMAGE_MAX(i32 v) { DAMAGE_MAX = v; }
+/** Gets pointer to g_damage_x0 array. @return Pointer to damage rect left coordinates. */
 export i32 *get_g_damage_x0() { return &g_damage_x0[0]; }
+/** Gets pointer to g_damage_y0 array. @return Pointer to damage rect top coordinates. */
 export i32 *get_g_damage_y0() { return &g_damage_y0[0]; }
+/** Gets pointer to g_damage_x1 array. @return Pointer to damage rect right coordinates. */
 export i32 *get_g_damage_x1() { return &g_damage_x1[0]; }
+/** Gets pointer to g_damage_y1 array. @return Pointer to damage rect bottom coordinates. */
 export i32 *get_g_damage_y1() { return &g_damage_y1[0]; }
+/** Gets current damage rect count. @return Number of active damage rectangles. */
 export i32 get_g_damage_count() { return g_damage_count; }
+/** Sets current damage rect count. @param v New damage rect count. */
 export void set_g_damage_count(i32 v) { g_damage_count = v; }
+/** Gets current paint clipping left coordinate. @return Paint clip X0. */
 export i32 get_g_paint_x0() { return g_paint_x0; }
+/** Sets current paint clipping left coordinate. @param v New paint clip X0. */
 export void set_g_paint_x0(i32 v) { g_paint_x0 = v; }
+/** Gets current paint clipping top coordinate. @return Paint clip Y0. */
 export i32 get_g_paint_y0() { return g_paint_y0; }
+/** Sets current paint clipping top coordinate. @param v New paint clip Y0. */
 export void set_g_paint_y0(i32 v) { g_paint_y0 = v; }
+/** Gets current paint clipping right coordinate. @return Paint clip X1. */
 export i32 get_g_paint_x1() { return g_paint_x1; }
+/** Sets current paint clipping right coordinate. @param v New paint clip X1. */
 export void set_g_paint_x1(i32 v) { g_paint_x1 = v; }
+/** Gets current paint clipping bottom coordinate. @return Paint clip Y1. */
 export i32 get_g_paint_y1() { return g_paint_y1; }
+/** Sets current paint clipping bottom coordinate. @param v New paint clip Y1. */
 export void set_g_paint_y1(i32 v) { g_paint_y1 = v; }
+/** Gets full repaint flag. @return 1 if full repaint is active, 0 otherwise. */
 export i32 get_g_painting_all() { return g_painting_all; }
+/** Sets full repaint flag. @param v Non-zero to force full repaint. */
 export void set_g_painting_all(i32 v) { g_painting_all = v; }
+/** Gets next available node ID. @return Next node ID counter value. */
 export i32 get_g_next_node_id() { return g_next_node_id; }
+/** Sets next available node ID. @param v Counter value to set. */
 export void set_g_next_node_id(i32 v) { g_next_node_id = v; }
+/** Gets current DOM tree revision counter. @return Revision counter. */
 export i32 get_g_revision() { return g_revision; }
+/** Sets current DOM tree revision counter. @param v Revision value to set. */
 export void set_g_revision(i32 v) { g_revision = v; }
+/** Gets root node ID. @return Root node ID. */
 export i32 get_g_root_node_id() { return g_root_node_id; }
+/** Sets root node ID. @param v Node ID to set as root. */
 export void set_g_root_node_id(i32 v) { g_root_node_id = v; }
+/** Gets desktop container node ID. @return Desktop container node ID. */
 export i32 get_g_desktop_node_id() { return g_desktop_node_id; }
+/** Sets desktop container node ID. @param v Node ID to set as desktop. */
 export void set_g_desktop_node_id(i32 v) { g_desktop_node_id = v; }
+/** Gets taskbar node ID. @return Taskbar node ID. */
 export i32 get_g_taskbar_id() { return g_taskbar_id; }
+/** Sets taskbar node ID. @param v Node ID to set as taskbar. */
 export void set_g_taskbar_id(i32 v) { g_taskbar_id = v; }
+/** Gets timers container node ID. @return Timers node ID. */
 export i32 get_g_timers_node_id() { return g_timers_node_id; }
+/** Sets timers container node ID. @param v Node ID to set as timers container. */
 export void set_g_timers_node_id(i32 v) { g_timers_node_id = v; }
+/** Gets active window node ID. @return Active window node ID. */
 export i32 get_g_active_window() { return g_active_window; }
+/** Sets active window node ID. @param v Window node ID to activate. */
 export void set_g_active_window(i32 v) { g_active_window = v; }
+
+/**
+ * Returns the currently active top-level window node ID.
+ * @return Active window DOM Node ID, or 0 if none.
+ */
 export i32 active_window() { return g_active_window; }
+/** Gets focused node ID. @return Focused node ID. */
 export i32 get_g_focus_id() { return g_focus_id; }
+/** Sets focused node ID. @param v Node ID to focus. */
 export void set_g_focus_id(i32 v) { g_focus_id = v; }
+/** Gets launcher callback function pointer. @return Launcher function pointer. */
 export i32 get_g_launcher() { return g_launcher; }
+/** Sets launcher callback function pointer. @param v Function pointer to launcher. */
 export void set_g_launcher(i32 v) { g_launcher = v; }
+/** Gets open menu node ID. @return Menu node ID, or 0 if closed. */
 export i32 get_g_menu_id() { return g_menu_id; }
+/** Sets open menu node ID. @param v Menu node ID. */
 export void set_g_menu_id(i32 v) { g_menu_id = v; }
+/** Gets menu click callback handler pointer. @return Function pointer to menu handler. */
 export i32 get_g_menu_handler() { return g_menu_handler; }
+/** Sets menu click callback handler pointer. @param v Function pointer to menu handler. */
 export void set_g_menu_handler(i32 v) { g_menu_handler = v; }
+/** Gets target node ID associated with current menu. @return Target node ID. */
 export i32 get_g_menu_target() { return g_menu_target; }
+/** Sets target node ID associated with current menu. @param v Target node ID. */
 export void set_g_menu_target(i32 v) { g_menu_target = v; }
+/** Gets TIMER_MAX constant. @return Maximum number of active timers. */
 export i32 get_TIMER_MAX() { return TIMER_MAX; }
+/** Sets TIMER_MAX constant. @param v Max timer count to set. */
 export void set_TIMER_MAX(i32 v) { TIMER_MAX = v; }
+/** Gets pointer to g_timer_ids array. @return Pointer to timer ID table. */
 export i32 *get_g_timer_ids() { return &g_timer_ids[0]; }
+/** Gets current active timer count. @return Number of registered timers. */
 export i32 get_g_timer_count() { return g_timer_count; }
+/** Sets current active timer count. @param v Timer count to set. */
 export void set_g_timer_count(i32 v) { g_timer_count = v; }
+/** Gets extent calculation scratch X. @return Extent scratch X. */
 export i32 get_g_ext_x() { return g_ext_x; }
+/** Sets extent calculation scratch X. @param v Scratch X coordinate. */
 export void set_g_ext_x(i32 v) { g_ext_x = v; }
+/** Gets extent calculation scratch Y. @return Extent scratch Y. */
 export i32 get_g_ext_y() { return g_ext_y; }
+/** Sets extent calculation scratch Y. @param v Scratch Y coordinate. */
 export void set_g_ext_y(i32 v) { g_ext_y = v; }
+/** Gets extent calculation scratch width. @return Extent scratch width. */
 export i32 get_g_ext_w() { return g_ext_w; }
+/** Sets extent calculation scratch width. @param v Scratch width. */
 export void set_g_ext_w(i32 v) { g_ext_w = v; }
+/** Gets extent calculation scratch height. @return Extent scratch height. */
 export i32 get_g_ext_h() { return g_ext_h; }
+/** Sets extent calculation scratch height. @param v Scratch height. */
 export void set_g_ext_h(i32 v) { g_ext_h = v; }
+/** Gets pointer to formatted taskbar clock string buffer. @return Clock buffer pointer. */
 export char *get_g_clock_buf() { return &g_clock_buf[0]; }
+/** Gets baseline display width constant. @return Baseline display width in logical pixels. */
 export i32 get_BASE_DISPLAY_WIDTH() { return BASE_DISPLAY_WIDTH; }
+/** Sets baseline display width constant. @param v New baseline display width. */
 export void set_BASE_DISPLAY_WIDTH(i32 v) { BASE_DISPLAY_WIDTH = v; }
+/** Gets baseline display height constant. @return Baseline display height in logical pixels. */
 export i32 get_BASE_DISPLAY_HEIGHT() { return BASE_DISPLAY_HEIGHT; }
+/** Sets baseline display height constant. @param v New baseline display height. */
 export void set_BASE_DISPLAY_HEIGHT(i32 v) { BASE_DISPLAY_HEIGHT = v; }
 
+/**
+ * Checks whether a node clips its children to its bounding box.
+ * @param n Pointer to DOM Node.
+ * @return 1 if container clips children, 0 otherwise.
+ */
 export i32 clips_children(Node *n) {
     i32 k = n->kind;
     if (k == NodeKind::WINDOW) { return 1; }
@@ -1036,7 +1437,13 @@ export i32 clips_children(Node *n) {
 
 // --- hit-test --------------------------------------------------------------------------------------
 
-// True if (px, py) is inside a node's bounds. Nodes with zero size never hit.
+/**
+ * Checks whether a point (px, py) is inside a node's bounding rectangle.
+ * @param n Pointer to DOM Node.
+ * @param px Target X coordinate.
+ * @param py Target Y coordinate.
+ * @return 1 if point is inside node bounds, 0 otherwise.
+ */
 export i32 node_contains(Node *n, i32 px, i32 py) {
     i32 x = n->x;
     i32 y = n->y;
@@ -1051,9 +1458,13 @@ export i32 node_contains(Node *n, i32 px, i32 py) {
     return 1;
 }
 
-// Return the id of the topmost visible node in node_id's subtree whose bounds
-// contain (px, py), or 0 if none. Later siblings are on top (paint order), so
-// the last hit among the children wins over earlier ones and over the parent.
+/**
+ * Finds topmost hit-testable and visible node within a subtree at (px, py).
+ * @param node_id Root of subtree to hit-test.
+ * @param px Target X coordinate.
+ * @param py Target Y coordinate.
+ * @return Hit DOM Node ID, or 0 if no match.
+ */
 export i32 hit_test(i32 node_id, i32 px, i32 py) {
     Node *n = node_ptr(node_id);
     if (n == 0) { return 0; }
@@ -1083,8 +1494,13 @@ export i32 hit_test(i32 node_id, i32 px, i32 py) {
     return found;
 }
 
-// Return the topmost UI node under (x, y), searching the whole desktop. 0 if
-// none. The taskbar is always on top.
+/**
+ * Finds the topmost interactive UI node at display position (x, y).
+ * Searches menus, taskbar, and desktop windows/widgets in z-order.
+ * @param x Screen X coordinate.
+ * @param y Screen Y coordinate.
+ * @return Topmost DOM Node ID, or 0 if background.
+ */
 export i32 find_at(i32 x, i32 y) {
     if (g_menu_id != 0) {
         i32 m = hit_test(g_menu_id, x, y);
@@ -1112,6 +1528,9 @@ export i32 find_at(i32 x, i32 y) {
 
 // --- init ------------------------------------------------------------------------------------------
 
+/**
+ * Initializes graphics subsystem and constructs the initial DOM tree hierarchy.
+ */
 export void init() {
     graphics.init();
     i32 root = create_node(NodeKind::ROOT, "root");
@@ -1148,8 +1567,10 @@ export void init() {
     g_taskbar_id = 0;
 }
 
-// Add the taskbar to the desktop. Separate from init() so tests that only
-// need a bare tree keep the layout they expect.
+/**
+ * Creates and docks the taskbar at the bottom of the desktop screen.
+ * @return Taskbar DOM Node ID.
+ */
 export i32 create_taskbar() {
     if (g_taskbar_id != 0) { return g_taskbar_id; }
     i32 s = ui_scale();

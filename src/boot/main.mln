@@ -35,20 +35,27 @@ import editor from "../apps/editor.dom.mln";
 // The direction here is one-way: MyOS reaches into MyKernel for heap,
 // scheduler, irq and debug, and nothing in MyKernel points back.
 
+/**
+ * Prints the initial kernel boot banner message to the debug console.
+ */
 void kernel_boot_banner() {
     debug.println("kernel: boot");
 }
 
+/**
+ * Initializes architecture-specific kernel subsystems including heap memory.
+ */
 void kernel_arch_init() {
     debug.println("kernel: arch init");
     heap.init();
     debug.println("kernel: heap ready");
 }
 
-// Paging for the kernel itself: an identity page directory covering RAM,
-// the kernel stack, MMIO and VRAM. User processes get their own directory
-// (with the same identity mapping) from the loader; keeping paging on from
-// here means the kernel runs the same way with or without processes.
+/**
+ * Sets up kernel identity paging and activates the MMU page directory.
+ *
+ * Panics if page directory allocation or identity mapping fails.
+ */
 void enable_kernel_paging() {
     i32 kpd = case mmu.create_page_directory() of {
         Some(p) -> p;
@@ -62,13 +69,16 @@ void enable_kernel_paging() {
     mmu.enable_paging(kpd);
 }
 
-// The app menu, reached from the taskbar's MyOS button and by right-clicking
-// the desktop. Indexes match MENU_ITEMS line by line.
-// A global char* cannot be initialized with a string-literal address
-// (the compiler emits a null pointer), so the menu text comes from a
-// function returning the literal instead.
+/**
+ * Returns newline-separated names of default desktop applications for the app menu.
+ * @return String literal containing menu item labels.
+ */
 char* menu_items() { return "Terminal\nFiles\nEditor\nNotes\nCounter"; }
 
+/**
+ * Launches and focuses an application window corresponding to the given menu item index.
+ * @param index Application index (0=Terminal, 1=Files, 2=Editor, 3=Notes, 4=Counter).
+ */
 void open_app(i32 index) {
     i32 win = 0;
     if (index == 0) { win = terminal.mount(); }
@@ -79,18 +89,28 @@ void open_app(i32 index) {
     if (win != 0) { dom_widgets.focus_window(win); }
 }
 
-// Taskbar launcher: pop the app menu up above the button.
+/**
+ * Opens the application launcher popup menu above the taskbar button.
+ */
 void launch_menu() {
     i32 s = dom.ui_scale();
     i32 y = graphics.display_height() - dom_widgets.taskbar_height() - 190 * s;
     dom_widgets.open_menu(8 * s, y, menu_items(), open_app, 0);
 }
 
-// Once a second: redraw the taskbar so its uptime clock advances.
+/**
+ * Periodic timer callback that triggers taskbar clock and uptime display refreshes.
+ * @param id Timer node ID.
+ */
 void on_clock(i32 id) {
     dom_render.refresh_taskbar();
 }
 
+/**
+ * Performs full system initialization and enters the compositor event loop.
+ *
+ * Sets up MMU, DOM, filesystem, default applications, timers, scheduler, and IRQs.
+ */
 void kernel_init() {
     kernel_boot_banner();
     kernel_arch_init();
@@ -110,9 +130,9 @@ void kernel_init() {
     // builds a tree and attaches it to the desktop; the last one mounted is
     // made the active window.
     counter.mount();
-    notes.mount();
-    i32 term = terminal.mount();
-    dom_widgets.focus_window(term);
+    terminal.mount();
+    i32 notes_win = notes.mount();
+    dom_widgets.focus_window(notes_win);
     dom_automation.dump();
 
     // Paint the desktop once before interrupts are enabled. render_all()
@@ -140,6 +160,10 @@ void kernel_init() {
     compositor.run();
 }
 
+/**
+ * System entry point invoked after low-level bootloader initialization.
+ * @return Exit code (always 0).
+ */
 i32 kernel_main() {
     kernel_init();
     return 0;

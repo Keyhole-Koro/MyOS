@@ -7,6 +7,7 @@ import theme from "../theme.mln";
 import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
 import { Window, Text, Button, Panel, Box, TextInput, TextArea, Checkbox, Row, Column, List, Taskbar, Menu, Separator, PrimaryButton, Label } from "dom_elements.mln";
 import dom from "dom.mln";
+import ui_config from "../ui_config.mln";
 import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
 import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
 
@@ -18,23 +19,36 @@ export enum EditResult {
 
 // --- focus / window management -----------------------------------------------------------
 
-// Height of the taskbar in display pixels (0 if none), so callers can keep
-// windows above it.
+/**
+ * Returns height of the taskbar in display pixels (or 0 if none).
+ * @return Taskbar height in pixels.
+ */
 export i32 taskbar_height() {
     Node *n = dom.node_ptr(dom.get_g_taskbar_id());
     if (n == 0) { return 0; }
     return n->h;
 }
 
+/**
+ * Returns the DOM Node ID of the active window.
+ * @return Active window Node ID.
+ */
 export i32 active_window() {
     return dom.get_g_active_window();
 }
 
+/**
+ * Returns the DOM Node ID of the currently focused control.
+ * @return Focused Node ID, or 0 if none.
+ */
 export i32 focused_node() {
     return dom.get_g_focus_id();
 }
 
-// Keyboard focus. Only one node holds it; 0 clears it.
+/**
+ * Sets keyboard focus to a node, updating FOCUSED state flags.
+ * @param id DOM Node ID to focus, or 0 to clear focus.
+ */
 export void set_focus(i32 id) {
     if (id == dom.get_g_focus_id()) { return; }
     if (dom.get_g_focus_id() != 0) { dom.set_state_flag(dom.get_g_focus_id(), NodeState::FOCUSED, 0); }
@@ -45,8 +59,10 @@ export void set_focus(i32 id) {
     dom.set_state_flag(id, NodeState::FOCUSED, 1);
 }
 
-// Make a window the active one: it comes to the front, gets the focused
-// title bar look, and keyboard focus leaves any control outside it.
+/**
+ * Activates a window, bringing it to front and focusing it.
+ * @param win Window DOM Node ID.
+ */
 export void focus_window(i32 win) {
     Node *n = dom.node_ptr(win);
     if (n == 0) { return; }
@@ -65,7 +81,9 @@ export void focus_window(i32 win) {
     dom.bring_to_front(win);
 }
 
-// After a window goes away, activate the top-most remaining one.
+/**
+ * Activates the topmost unminimized window on the desktop.
+ */
 export void activate_topmost() {
     i32 top = 0;
     i32 child_id = dom.first_child(dom.get_g_desktop_node_id());
@@ -84,14 +102,21 @@ export void activate_topmost() {
     dom.damage_node(dom.get_g_taskbar_id());
 }
 
+/**
+ * Closes a window, removing it from DOM and activating the topmost remaining window.
+ * @param win Window DOM Node ID to close.
+ */
 export void close_window(i32 win) {
     dom.remove_node(win);
     activate_topmost();
 }
 
-// Change a window's size in place (its children stay anchored top-left;
-// they are clipped to the window). Enforces a minimum so the chrome stays
-// usable.
+/**
+ * Resizes a window in place, enforcing minimum dimensions and damaging invalidated areas.
+ * @param win Window DOM Node ID.
+ * @param w Target width in pixels.
+ * @param h Target height in pixels.
+ */
 export void resize_window(i32 win, i32 w, i32 h) {
     Node *n = dom.node_ptr(win);
     if (n == 0) { return; }
@@ -107,8 +132,10 @@ export void resize_window(i32 win, i32 w, i32 h) {
     dom.touch();
 }
 
-// Hide a window to the taskbar. Its entry stays; clicking it (or
-// focus_window) brings it back.
+/**
+ * Minimizes a window to the taskbar, hiding its visible contents.
+ * @param win Window DOM Node ID.
+ */
 export void minimize_window(i32 win) {
     Node *n = dom.node_ptr(win);
     if (n == 0) { return; }
@@ -124,16 +151,28 @@ export void minimize_window(i32 win) {
     dom.touch();
 }
 
+/**
+ * Checks whether a window is currently minimized.
+ * @param win Window DOM Node ID.
+ * @return 1 if minimized, 0 otherwise.
+ */
 export i32 is_minimized(i32 win) {
     return dom.get_state_flag(win, NodeState::MINIMIZED);
 }
 
+/**
+ * Checks whether a window is currently maximized.
+ * @param win Window DOM Node ID.
+ * @return 1 if maximized, 0 otherwise.
+ */
 export i32 is_maximized(i32 win) {
     return dom.get_state_flag(win, NodeState::MAXIMIZED);
 }
 
-// Fill the desktop (above the taskbar), remembering the old bounds; a second
-// call restores them. Children move with the window and keep their size.
+/**
+ * Toggles a window between maximized full-desktop state and previous restored bounds.
+ * @param win Window DOM Node ID.
+ */
 export void maximize_window(i32 win) {
     Node *n = dom.node_ptr(win);
     if (n == 0) { return; }
@@ -162,30 +201,54 @@ export void maximize_window(i32 win) {
 i32 TB_BUTTON_CLOSE = 1;
 i32 TB_BUTTON_MINIMIZE = 2;
 i32 TB_BUTTON_MAXIMIZE = 3;
-i32 GRIP_SIZE = 16; // logical px
 
+/**
+ * Computes the center X coordinate of the close button on a window's title bar.
+ * @param w Pointer to Window Node.
+ * @return Center X coordinate in display pixels.
+ */
 export i32 close_button_cx(Node *w) {
     i32 s = dom.ui_scale();
     return w->x + 16 * s;
 }
 
+/**
+ * Computes the center X coordinate of title bar button index `which` (1=close, 2=minimize, 3=maximize).
+ * @param w Pointer to Window Node.
+ * @param which Titlebar button index (1-3).
+ * @return Center X coordinate in display pixels.
+ */
 export i32 tb_button_cx(Node *w, i32 which) {
     i32 s = dom.ui_scale();
     return w->x + (16 + 20 * (which - 1)) * s;
 }
 
+/**
+ * Computes the center Y coordinate of title bar buttons on a window.
+ * @param w Pointer to Window Node.
+ * @return Center Y coordinate in display pixels.
+ */
 export i32 close_button_cy(Node *w) {
     i32 s = dom.ui_scale();
     i32 tb = theme.titlebar_h() * s;
     return w->y + tb / 2;
 }
 
+/**
+ * Returns radius of title bar buttons in display pixels.
+ * @return Radius in pixels.
+ */
 export i32 close_button_r() {
     return 7 * dom.ui_scale();
 }
 
-// Which title-bar button (px, py) is on: 1 = close, 2 = minimize,
-// 3 = maximize, 0 = none.
+/**
+ * Hit tests a point against title bar control buttons (1=close, 2=minimize, 3=maximize, 0=none).
+ * @param win Window DOM Node ID.
+ * @param px Target X coordinate.
+ * @param py Target Y coordinate.
+ * @return Button index hit (1, 2, 3) or 0 if none.
+ */
 export i32 titlebar_button_hit(i32 win, i32 px, i32 py) {
     Node *w = dom.node_ptr(win);
     if (w == 0) { return 0; }
@@ -200,17 +263,29 @@ export i32 titlebar_button_hit(i32 win, i32 px, i32 py) {
     return 0;
 }
 
-// True if (px, py) is on the window's close button.
+/**
+ * Checks if a point hits a window's close button.
+ * @param win Window DOM Node ID.
+ * @param px Target X coordinate.
+ * @param py Target Y coordinate.
+ * @return 1 if close button hit, 0 otherwise.
+ */
 export i32 close_button_hit(i32 win, i32 px, i32 py) {
     if (titlebar_button_hit(win, px, py) == 1) { return 1; }
     return 0;
 }
 
-// True if (px, py) is on the resize grip in the window's bottom-right corner.
+/**
+ * Checks if a point hits the bottom-right corner resize grip of a window.
+ * @param win Window DOM Node ID.
+ * @param px Target X coordinate.
+ * @param py Target Y coordinate.
+ * @return True if resize grip hit, false otherwise.
+ */
 export bool resize_grip_hit(i32 win, i32 px, i32 py) {
     Node *w = dom.node_ptr(win);
     if (w == 0) { return false; }
-    i32 g = GRIP_SIZE * dom.ui_scale();
+    i32 g = ui_config.GRIP_SIZE * dom.ui_scale();
     if (px < w->x + w->w - g) { return false; }
     if (py < w->y + w->h - g) { return false; }
     if (px >= w->x + w->w) { return false; }
@@ -218,7 +293,13 @@ export bool resize_grip_hit(i32 win, i32 px, i32 py) {
     return true;
 }
 
-// True if (px, py) is in the window's title bar (excluding its buttons).
+/**
+ * Checks if a point hits a window's draggable title bar (excluding control buttons).
+ * @param win Window DOM Node ID.
+ * @param px Target X coordinate.
+ * @param py Target Y coordinate.
+ * @return 1 if title bar hit, 0 otherwise.
+ */
 export i32 titlebar_hit(i32 win, i32 px, i32 py) {
     Node *w = dom.node_ptr(win);
     if (w == 0) { return 0; }
@@ -251,6 +332,11 @@ i32 MOD_SHIFT = 1;
 i32 EVT_DOWN = 1;
 i32 EVT_CHAR = 3;
 
+/**
+ * Inserts a character into a text buffer at current cursor position.
+ * @param n Pointer to DOM Node.
+ * @param c ASCII character code to insert.
+ */
 export void input_insert(Node *n, i32 c) {
     i32 len = n->len;
     i32 cap = n->cap;
@@ -268,6 +354,11 @@ export void input_insert(Node *n, i32 c) {
     n->cursor = (u16)(cur + 1);
 }
 
+/**
+ * Deletes character at specified index in a text node buffer.
+ * @param n Pointer to DOM Node.
+ * @param at Byte index of character to remove.
+ */
 export void input_delete_at(Node *n, i32 at) {
     i32 len = n->len;
     if (at < 0) { return; }
@@ -282,8 +373,13 @@ export void input_delete_at(Node *n, i32 at) {
     n->len = (u16)(len - 1);
 }
 
-// Default editing behaviour of a TextInput. Returns Changed if the text changed,
-// Moved if only the caret moved, Unhandled if nothing happened.
+/**
+ * Handles default editing keyboard events for a single-line TextInput node.
+ * @param n Pointer to TextInput Node.
+ * @param type Keyboard event type (EVT_CHAR or EVT_DOWN).
+ * @param code Key code or ASCII character.
+ * @return EditResult enum indicating outcome (Changed, Moved, Unhandled).
+ */
 export EditResult input_handle(Node *n, i32 type, i32 code) {
     i32 cur = n->cursor;
     i32 len = n->len;
@@ -332,11 +428,21 @@ export EditResult input_handle(Node *n, i32 type, i32 code) {
 // delete helpers with TextInput and adds newline, vertical movement and
 // keeping the caret's line in view.
 
+/**
+ * Checks whether a node has the READONLY style bit set.
+ * @param n Pointer to DOM Node.
+ * @return True if read-only, false otherwise.
+ */
 export bool is_readonly(Node *n) {
     return (n->style & NodeStyle::READONLY) != 0;
 }
 
-// Line index containing byte offset `at`.
+/**
+ * Finds the 0-based line index containing byte offset `at` in a text buffer.
+ * @param n Pointer to TextArea Node.
+ * @param at Byte offset in text buffer.
+ * @return 0-based line number.
+ */
 export i32 line_of(Node *n, i32 at) {
     char *buf = (char*)n->text;
     i32 line = 0;
@@ -348,7 +454,12 @@ export i32 line_of(Node *n, i32 at) {
     return line;
 }
 
-// Byte offset of the start of `line` (len if past the end).
+/**
+ * Returns the byte offset corresponding to the start of a given line index.
+ * @param n Pointer to TextArea Node.
+ * @param line 0-based line index.
+ * @return Byte offset of line start.
+ */
 export i32 line_start(Node *n, i32 line) {
     char *buf = (char*)n->text;
     i32 len = n->len;
@@ -362,7 +473,12 @@ export i32 line_start(Node *n, i32 line) {
     return i;
 }
 
-// Length of the line starting at `start` (up to the newline or the end).
+/**
+ * Computes byte length of a line starting at `start` (excluding newline).
+ * @param n Pointer to TextArea Node.
+ * @param start Byte offset of line start.
+ * @return Line length in bytes.
+ */
 export i32 line_len_at(Node *n, i32 start) {
     char *buf = (char*)n->text;
     i32 len = n->len;
@@ -374,13 +490,22 @@ export i32 line_len_at(Node *n, i32 start) {
     return len - start;
 }
 
+/**
+ * Returns total line count of a TextArea node.
+ * @param id DOM Node ID.
+ * @return Total number of lines.
+ */
 export i32 text_area_line_count(i32 id) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return 0; }
     return line_of(n, n->len) + 1;
 }
 
-// How many lines fit in the node's box.
+/**
+ * Calculates number of visible lines fitting inside a TextArea or List.
+ * @param n Pointer to DOM Node.
+ * @return Number of visible text lines.
+ */
 export i32 visible_lines(Node *n) {
     i32 s = dom.ui_scale();
     i32 pad = 8 * s;
@@ -390,7 +515,10 @@ export i32 visible_lines(Node *n) {
     return rows;
 }
 
-// Scroll so the caret's line is visible.
+/**
+ * Adjusts TextArea scroll offset to ensure the cursor line is visible.
+ * @param n Pointer to TextArea Node.
+ */
 export void text_area_reveal_cursor(Node *n) {
     i32 line = line_of(n, n->cursor);
     i32 rows = visible_lines(n);
@@ -400,7 +528,11 @@ export void text_area_reveal_cursor(Node *n) {
     n->scroll = (u16)scroll;
 }
 
-// Move the caret to the same column on line `line`.
+/**
+ * Moves TextArea cursor to the same column on target line.
+ * @param n Pointer to TextArea Node.
+ * @param line Target line index.
+ */
 export void text_area_goto_line(Node *n, i32 line) {
     i32 total = line_of(n, n->len) + 1;
     if (line < 0) { line = 0; }
@@ -413,7 +545,14 @@ export void text_area_goto_line(Node *n, i32 line) {
     n->cursor = (u16)(start + col);
 }
 
-// Editing for a TextArea: Changed = text changed, Moved = caret/scroll moved, Unhandled = nothing.
+/**
+ * Handles multi-line editing and navigation keyboard events for a TextArea node.
+ * @param n Pointer to TextArea Node.
+ * @param type Keyboard event type (EVT_CHAR or EVT_DOWN).
+ * @param code Key code or ASCII character.
+ * @param mods Active modifier keys bitmask.
+ * @return EditResult enum indicating outcome (Changed, Moved, Unhandled).
+ */
 export EditResult text_area_handle(Node *n, i32 type, i32 code, i32 mods) {
     bool ro = is_readonly(n);
     i32 cur = n->cursor;
@@ -496,8 +635,11 @@ export EditResult text_area_handle(Node *n, i32 type, i32 code, i32 mods) {
     return EditResult::Unhandled;
 }
 
-// Append text to a TextArea (console output). When the buffer is full the
-// oldest lines are dropped. The view follows the end of the text.
+/**
+ * Appends a null-terminated string to a TextArea, dropping oldest lines if capacity is exceeded.
+ * @param id DOM Node ID of TextArea.
+ * @param s Null-terminated string to append.
+ */
 export void append_text(i32 id, char *s) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
@@ -540,9 +682,12 @@ export void append_text(i32 id, char *s) {
     dom.touch();
 }
 
-// Append `count` raw bytes (from any address, e.g. a user process buffer
-// read by the kernel) to a TextArea. Bytes outside printable ASCII other
-// than newline are dropped.
+/**
+ * Appends raw bytes from a memory address to a TextArea, filtering non-printable ASCII.
+ * @param id DOM Node ID of TextArea.
+ * @param addr Pointer/address of source buffer.
+ * @param count Number of bytes to read and append.
+ */
 export void append_bytes(i32 id, i32 addr, i32 count) {
     char tmp[64];
     i32 n = 0;
@@ -568,6 +713,10 @@ export void append_bytes(i32 id, i32 addr, i32 count) {
     if (n > 0) { append_text(id, &tmp[0]); }
 }
 
+/**
+ * Empties all text content and resets cursor and scroll position in a TextArea.
+ * @param id DOM Node ID of TextArea.
+ */
 export void clear_text_area(i32 id) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
@@ -582,7 +731,11 @@ export void clear_text_area(i32 id) {
     dom.touch();
 }
 
-// Scroll a TextArea or List by `lines` (negative = up), clamped.
+/**
+ * Scrolls a TextArea or List node by a relative number of lines.
+ * @param id DOM Node ID.
+ * @param lines Line delta (negative = scroll up, positive = scroll down).
+ */
 export void scroll_by(i32 id, i32 lines) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
@@ -600,7 +753,11 @@ export void scroll_by(i32 id, i32 lines) {
     }
 }
 
-// Mouse wheel over a node: scroll whatever under the pointer scrolls.
+/**
+ * Handles mouse wheel scroll events over a node.
+ * @param id DOM Node ID.
+ * @param steps Scroll step count (positive = wheel forward/up).
+ */
 export void dispatch_wheel(i32 id, i32 steps) {
     if (steps == 0) { return; }
     scroll_by(id, -steps * 3);
@@ -611,6 +768,11 @@ export void dispatch_wheel(i32 id, i32 steps) {
 // row + 1. A click selects a row (on_change); clicking the selected row again
 // or pressing Enter activates it (on_click).
 
+/**
+ * Populates a List node with newline-separated item strings.
+ * @param id DOM Node ID of List.
+ * @param items Newline-separated list of items.
+ */
 export void list_set_items(i32 id, char *items) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
@@ -629,7 +791,11 @@ export void list_set_items(i32 id, char *items) {
     dom.touch();
 }
 
-// Selected row (0-based), or None.
+/**
+ * Returns the currently selected row index in a List, or None if no selection.
+ * @param id DOM Node ID of List.
+ * @return Option containing 0-based row index, or None.
+ */
 export Option<i32> list_selected(i32 id) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return None; }
@@ -637,6 +803,11 @@ export Option<i32> list_selected(i32 id) {
     return Some(n->sel - 1);
 }
 
+/**
+ * Returns total row count of a List node.
+ * @param id DOM Node ID of List.
+ * @return Total number of rows.
+ */
 export i32 list_count(i32 id) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return 0; }
@@ -644,7 +815,14 @@ export i32 list_count(i32 id) {
     return line_of(n, n->len) + 1;
 }
 
-// Copy item `index` into out (at most cap-1 bytes). Returns its length or None.
+/**
+ * Retrieves the text of a specific item in a List node.
+ * @param id DOM Node ID of List.
+ * @param index 0-based item index.
+ * @param out Destination buffer for item string.
+ * @param cap Buffer capacity in bytes.
+ * @return Option containing string length copied, or None on error.
+ */
 export Option<i32> list_item(i32 id, i32 index, char *out, i32 cap) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return None; }
@@ -663,6 +841,11 @@ export Option<i32> list_item(i32 id, i32 index, char *out, i32 cap) {
     return Some(i);
 }
 
+/**
+ * Sets the active selected row in a List node, scrolling it into view.
+ * @param id DOM Node ID of List.
+ * @param index 0-based item index to select.
+ */
 export void list_select(i32 id, i32 index) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
@@ -682,7 +865,13 @@ export void list_select(i32 id, i32 index) {
     dom.touch();
 }
 
-// Row under (px, py), or None.
+/**
+ * Determines which row of a List is located at display point (px, py).
+ * @param id DOM Node ID of List.
+ * @param px Target X coordinate.
+ * @param py Target Y coordinate.
+ * @return Option containing 0-based row index, or None.
+ */
 export Option<i32> list_row_at(i32 id, i32 px, i32 py) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return None; }
@@ -696,8 +885,12 @@ export Option<i32> list_row_at(i32 id, i32 px, i32 py) {
     return Some(row);
 }
 
-// A click on a List at (px, py): select the row; a click on the already
-// selected row activates it. Menus use the same geometry.
+/**
+ * Handles mouse click on a List control: selects the row or triggers activation if re-clicked.
+ * @param id DOM Node ID of List.
+ * @param px Click X coordinate.
+ * @param py Click Y coordinate.
+ */
 export void list_click(i32 id, i32 px, i32 py) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
@@ -712,7 +905,13 @@ export void list_click(i32 id, i32 px, i32 py) {
     }
 }
 
-// Keyboard on a focused List: arrows move the selection, Enter activates.
+/**
+ * Handles keyboard navigation (arrows/Home/End/Enter) on a focused List control.
+ * @param n Pointer to List Node.
+ * @param type Keyboard event type.
+ * @param code Key code.
+ * @return EditResult enum indicating outcome (Moved or Unhandled).
+ */
 export EditResult list_handle(Node *n, i32 type, i32 code) {
     if (type != EVT_DOWN) { return EditResult::Unhandled; }
     i32 id = n->id;
@@ -746,6 +945,9 @@ export EditResult list_handle(Node *n, i32 type, i32 code) {
 // Items are newline-separated; hovering highlights a row, clicking one calls
 // handler(index) after closing. Escape or a click elsewhere closes it.
 
+/**
+ * Closes and removes the currently open popup menu from the desktop.
+ */
 export void close_menu() {
     if (dom.get_g_menu_id() == 0) { return; }
     i32 id = dom.get_g_menu_id();
@@ -755,17 +957,31 @@ export void close_menu() {
     dom.touch();
 }
 
+/**
+ * Returns the DOM Node ID of the active popup menu, or 0 if none is open.
+ * @return Menu DOM Node ID.
+ */
 export i32 menu_id() {
     return dom.get_g_menu_id();
 }
 
+/**
+ * Returns the target Node ID associated with the open popup menu.
+ * @return Target DOM Node ID.
+ */
 export i32 menu_target() {
     return dom.get_g_menu_target();
 }
 
-// Open a menu with its top-left at display (x, y). `target` is remembered
-// for the handler (menu_target()); a menu that would run off the display is
-// shifted back in.
+/**
+ * Opens a popup menu at display coordinates (x, y) with newline-separated items.
+ * @param x Display X position.
+ * @param y Display Y position.
+ * @param items Newline-separated list of menu options.
+ * @param handler Callback function pointer invoked on selection: fn(index).
+ * @param target Associated target Node ID.
+ * @return Menu DOM Node ID.
+ */
 export i32 open_menu(i32 x, i32 y, char *items, i32 handler, i32 target) {
     close_menu();
     i32 s = dom.ui_scale();
@@ -844,6 +1060,11 @@ export i32 open_menu(i32 x, i32 y, char *items, i32 handler, i32 target) {
     return id;
 }
 
+/**
+ * Updates highlighted row in active popup menu based on mouse hover position.
+ * @param px Cursor display X coordinate.
+ * @param py Cursor display Y coordinate.
+ */
 export void menu_hover(i32 px, i32 py) {
     i32 id = dom.get_g_menu_id();
     Node *n = dom.node_ptr(id);
@@ -858,6 +1079,11 @@ export void menu_hover(i32 px, i32 py) {
     }
 }
 
+/**
+ * Handles mouse click on active popup menu, invoking callback and closing menu.
+ * @param px Cursor display X coordinate.
+ * @param py Cursor display Y coordinate.
+ */
 export void menu_click(i32 px, i32 py) {
     i32 id = dom.get_g_menu_id();
     if (id == 0) { return; }
@@ -875,6 +1101,11 @@ export void menu_click(i32 px, i32 py) {
 // --- Tab focus ---
 // Focusable controls are visited in tree order within the active window.
 
+/**
+ * Tests whether a DOM node can accept keyboard focus.
+ * @param n Pointer to DOM Node.
+ * @return 1 if focusable, 0 otherwise.
+ */
 export i32 is_focusable(Node *n) {
     if ((n->state & NodeState::VISIBLE) == 0) { return 0; }
     i32 k = n->kind;
@@ -887,15 +1118,18 @@ export i32 is_focusable(Node *n) {
 }
 
 // Depth-first walk collecting focusable ids into g_focus_ring.
-i32 FOCUS_MAX = 64;
 i32 g_focus_ring[64];
 i32 g_focus_ring_count = 0;
 
+/**
+ * Recursively collects all focusable node IDs in a subtree into the focus ring.
+ * @param id Root DOM Node ID of subtree.
+ */
 export void collect_focusable(i32 id) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
     if (is_focusable(n) != 0) {
-        if (g_focus_ring_count < FOCUS_MAX) {
+        if (g_focus_ring_count < ui_config.FOCUS_MAX) {
             g_focus_ring[g_focus_ring_count] = id;
             g_focus_ring_count++;
         }
@@ -907,7 +1141,10 @@ export void collect_focusable(i32 id) {
     }
 }
 
-// Move keyboard focus to the next (or previous) control in the active window.
+/**
+ * Moves keyboard focus to next or previous focusable control in the active window.
+ * @param backwards Non-zero to move focus backward (Shift-Tab), 0 forward (Tab).
+ */
 export void focus_next(i32 backwards) {
     i32 win = dom.get_g_active_window();
     if (win == 0) { return; }
@@ -948,11 +1185,12 @@ export void focus_next(i32 backwards) {
     set_focus(g_focus_ring[next_idx]);
 }
 
-// Route one keyboard event (type = keyboard.EVT_*, code = key code or
-// character) to the focused node. Escape closes an open menu; Tab moves
-// focus. A node's on_key handler, if set, sees DOWN events first and can
-// claim them by returning non-zero; otherwise the control's default
-// behaviour runs (text editing, list navigation, Enter/Space on buttons).
+/**
+ * Dispatches a keyboard event to the currently focused node or handles window/menu shortcuts.
+ * @param type Event type (EVT_CHAR or EVT_DOWN).
+ * @param code Key code or ASCII character.
+ * @param mods Active modifier bitmask (e.g. MOD_SHIFT).
+ */
 export void dispatch_key_event(i32 type, i32 code, i32 mods) {
     if (type == EVT_DOWN) {
         if (code == KEY_ESCAPE) {
@@ -1021,7 +1259,11 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
     }
 }
 
-// Replace a TextInput's contents (truncated to its capacity).
+/**
+ * Sets text content of a TextInput node, updating length, cursor and redrawing.
+ * @param id DOM Node ID of TextInput.
+ * @param s Replacement string.
+ */
 export void set_input_text(i32 id, char *s) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
@@ -1041,8 +1283,9 @@ export void set_input_text(i32 id, char *s) {
 
 // --- timers --------------------------------------------------------------------------------------
 
-// Fire every registered timer whose period has elapsed. The compositor calls
-// this once per pass; handlers run on the compositor task.
+/**
+ * Executes due timer callbacks; called periodically by the compositor pass.
+ */
 export void tick() {
     i32 *g_timer_ids = dom.get_g_timer_ids();
     i32 now = scheduler.ticks();
@@ -1061,6 +1304,12 @@ export void tick() {
     }
 }
 
+/**
+ * Creates and registers a recurring timer with a given interval and callback.
+ * @param interval Periodic interval in system ticks.
+ * @param handler Timer tick callback function pointer: fn(timer_id).
+ * @return Timer DOM Node ID.
+ */
 export i32 create_timer(i32 interval, i32 handler) {
     i32 *g_timer_ids = dom.get_g_timer_ids();
     i32 id = dom.create_node(NodeKind::TIMER, "timer");

@@ -5,6 +5,7 @@ import dom from "../ui/dom/dom.mln";
 import dom_elements from "../ui/dom/dom_elements.mln";
 import graphics from "../ui/graphics.mln";
 import fs from "../fs/fs.mln";
+import fs_config from "../fs/fs_config.mln";
 import editor from "editor.dom.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
@@ -23,24 +24,30 @@ char g_items[1024];
 char g_selected[16];
 char g_status_buf[64];
 
+/**
+ * Updates the file manager status label with the provided message.
+ * @param s Status text to display.
+ */
 void files_status(char *s) { dom.set_text(g_status, s); }
 
-// Rebuild the list from the disk: one "name  (N bytes)" row per file.
+/**
+ * Scans the filesystem and refreshes the file manager list with directory entries and file counts.
+ */
 export void refresh() {
     char name[16];
     i32 k = strbuf.reset(&g_items[0]);
     i32 start = 0;
     i32 count = 0;
     while (1) {
-        Result<Option<i32>, FsError> res = fs.dir_next(start, &name[0], 16);
-        Option<i32> opt = case res of {
-            Ok(v) -> v;
-            Err(e) -> ({ files_status("disk error"); return; });
+        i32 idx = 0;
+        i32 has_more = case fs.dir_next(start, &name[0], 16) of {
+            Ok(opt) -> case opt of {
+                Some(v) -> ({ idx = v; 1; });
+                None -> 0;
+            };
+            Err(e) -> ({ files_status("disk error"); 0; });
         };
-        i32 idx = case opt of {
-            Some(v) -> v;
-            None -> ({ break; });
-        };
+        if (has_more == 0) { break; }
         if (count > 0) { k = strbuf.append(&g_items[0], 1024, k, "\n"); }
         k = strbuf.append(&g_items[0], 1024, k, &name[0]);
         k = strbuf.append(&g_items[0], 1024, k, "   (");
@@ -57,7 +64,10 @@ export void refresh() {
     strbuf.reset(&g_selected[0]);
 }
 
-// The selected row's file name (the part before the size), or 0.
+/**
+ * Extracts and returns the filename from the currently selected list row.
+ * @return Pointer to extracted filename buffer, or null pointer if nothing is selected.
+ */
 char* selected_name() {
     Option<i32> ls = dom_widgets.list_selected(g_list);
     i32 row = case ls of { Some(v) -> v; None -> ({ return (char*)0; }); };
@@ -71,12 +81,16 @@ char* selected_name() {
         if (item[i] == ' ') { break; }
         g_selected[i] = item[i];
         i++;
-        if (i >= fs.NAME_MAX - 1) { break; }
+        if (i >= fs_config.NAME_MAX - 1) { break; }
     }
     g_selected[i] = (char)0;
     return &g_selected[0];
 }
 
+/**
+ * Selection change callback for the file list: displays the selected filename in the status label.
+ * @param id List node ID.
+ */
 void on_select(i32 id) {
     char *name = selected_name();
     if (name == 0) { return; }
@@ -86,6 +100,10 @@ void on_select(i32 id) {
     files_status(&g_status_buf[0]);
 }
 
+/**
+ * Click handler for the 'Open' button or row double-click: opens the selected file in the editor.
+ * @param id Button or List node ID.
+ */
 void on_open(i32 id) {
     char *name = selected_name();
     if (name == 0) { files_status("select a file first"); return; }
@@ -93,15 +111,26 @@ void on_open(i32 id) {
     editor.open(name);
 }
 
+/**
+ * Click handler for the 'New' button: opens a new untitled file in the editor.
+ * @param id Button node ID.
+ */
 void on_new(i32 id) {
     editor.forget_if_closed();
     editor.open("untitled.txt");
 }
 
+/**
+ * Click handler for the 'Refresh' button: re-reads the filesystem directory.
+ * @param id Button node ID.
+ */
 void on_refresh(i32 id) { refresh(); }
 
 // --- delete confirmation dialog ---
 
+/**
+ * Closes and destroys the delete confirmation dialog window if one is currently open.
+ */
 void close_dialog() {
     if (g_dialog != 0) {
         dom_widgets.close_window(g_dialog);
@@ -109,6 +138,10 @@ void close_dialog() {
     }
 }
 
+/**
+ * Click handler for the dialog 'Delete' button: deletes the chosen file and refreshes the list.
+ * @param id Button node ID.
+ */
 void on_confirm_delete(i32 id) {
     close_dialog();
     char *name = selected_name();
@@ -119,12 +152,22 @@ void on_confirm_delete(i32 id) {
     files_status("deleted");
 }
 
+/**
+ * Click handler for the dialog 'Cancel' button: closes the confirmation dialog without deleting.
+ * @param id Button node ID.
+ */
 void on_cancel_delete(i32 id) {
     close_dialog();
 }
 
 char g_question[64];
 
+/**
+ * Constructs the DOM subtree for the modal delete confirmation dialog window.
+ * @param x Horizontal window position in logical pixels.
+ * @param y Vertical window position in logical pixels.
+ * @return Dialog Window node ID.
+ */
 i32 build_dialog(i32 x, i32 y) {
     return <Window title="Delete file?" x={x} y={y} w={340} h={140}>
         <Label text="" x={20} y={16} color={0} bold={0} />
@@ -135,6 +178,10 @@ i32 build_dialog(i32 x, i32 y) {
     </Window>;
 }
 
+/**
+ * Click handler for the 'Delete' button: prompts user with a confirmation dialog to delete the selected file.
+ * @param id Button node ID.
+ */
 void on_delete(i32 id) {
     char *name = selected_name();
     if (name == 0) { files_status("select a file first"); return; }
@@ -152,8 +199,16 @@ void on_delete(i32 id) {
     dom_widgets.focus_window(g_dialog);
 }
 
+/**
+ * No-op callback for file manager UI elements.
+ * @param id Node ID.
+ */
 void files_noop(i32 id) { }
 
+/**
+ * Constructs the declarative DOM subtree for the main Files application window.
+ * @return Root Window node ID.
+ */
 i32 build_ui() {
     i32 muted = graphics.rgb(0x6B, 0x72, 0x80);
     return <Window title="Files" x={60} y={60} w={440} h={400}>
@@ -168,7 +223,10 @@ i32 build_ui() {
     </Window>;
 }
 
-// Show the file manager (single instance). Returns the window id.
+/**
+ * Mounts or focuses the singleton Files application window on the desktop.
+ * @return Window node ID.
+ */
 export i32 mount() {
     if (g_win != 0) {
         if (dom.node_exists(g_win) == 0) { g_win = 0; }

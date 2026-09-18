@@ -11,7 +11,25 @@ i32 TX_ADDR = 0x24000128;
 i32 DONE_ADDR = 0x2400012C;
 i32 STATUS_REQUEST = 1;
 
-export i32 has_request() { return mem.read_word(STATUS_ADDR) & STATUS_REQUEST; }
+/**
+ * Checks if a pending automation request is present in the MMIO status register.
+ * @return True if a request is waiting, false otherwise.
+ */
+export bool has_request() { return (mem.read_word(STATUS_ADDR) & STATUS_REQUEST) != 0; }
+
+/**
+ * Reads the pending automation command word from the MMIO receive register.
+ * @return 32-bit automation command word.
+ */
 export i32 read_request() { return mem.read_word(RX_ADDR); }
+
+/**
+ * Writes a character byte to the automation MMIO transmit FIFO.
+ * @param c Character byte to send.
+ */
 export void putc(i32 c) { mem.write_word(TX_ADDR, c & 255); }
+
+/**
+ * Signals completion of an automation command response to the host test controller.
+ */
 export void done() { mem.write_word(DONE_ADDR, 1); }

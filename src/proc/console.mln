@@ -40,6 +40,11 @@ i32 g_in_tail[8];
 
 i32 g_ready = 0;
 
+/**
+ * Looks up the console slot index for a given process ID.
+ * @param pid Process ID to search for.
+ * @return Option containing the slot index if found, or None.
+ */
 Option<i32> slot_of(i32 pid) {
     if (pid <= 0) { return None; }
     i32 i = 0;
@@ -50,7 +55,12 @@ Option<i32> slot_of(i32 pid) {
     return None;
 }
 
-// Attach a process's stdio to a TextArea. Returns 0 when every slot is taken.
+/**
+ * Attaches a process's stdio to a DOM TextArea node.
+ * @param pid Target process ID.
+ * @param output_id DOM node ID of the TextArea for stdout.
+ * @return 1 on success, 0 if all console slots are in use.
+ */
 export i32 bind(i32 pid, i32 output_id) {
     i32 i = 0;
     while (i < SLOTS) {
@@ -67,6 +77,10 @@ export i32 bind(i32 pid, i32 output_id) {
     return 0;
 }
 
+/**
+ * Releases a process's console slot binding.
+ * @param pid Process ID to detach.
+ */
 export void unbind(i32 pid) {
     case slot_of(pid) of {
         Some(i) -> ({
@@ -77,7 +91,11 @@ export void unbind(i32 pid) {
     };
 }
 
-// The TextArea a process writes to, or 0.
+/**
+ * Looks up the TextArea DOM node ID associated with a process's stdout.
+ * @param pid Process ID.
+ * @return DOM node ID, or 0 if unattached.
+ */
 export i32 output_of(i32 pid) {
     return case slot_of(pid) of {
         Some(i) -> g_output[i];
@@ -85,8 +103,11 @@ export i32 output_of(i32 pid) {
     };
 }
 
-// Queue one line (plus a newline) as the process's stdin. Bytes that do not
-// fit are dropped.
+/**
+ * Queues one line of text into the process's stdin buffer.
+ * @param pid Target process ID.
+ * @param line Pointer to null-terminated string to feed as input.
+ */
 export void feed_line(i32 pid, char *line) {
     i32 i = case slot_of(pid) of {
         Some(v) -> v;
@@ -108,6 +129,13 @@ export void feed_line(i32 pid, char *line) {
 
 // --- syscall handlers (run in the calling process's context) ---
 
+/**
+ * Syscall handler for SYS_WRITE: writes output bytes to the process's bound console TextArea or serial log.
+ * @param pid Calling process ID.
+ * @param buf Virtual memory address of output buffer.
+ * @param count Number of bytes to write.
+ * @return Number of bytes written.
+ */
 i32 on_write(i32 pid, i32 buf, i32 count) {
     i32 out = output_of(pid);
     if (out == 0) {
@@ -124,6 +152,13 @@ i32 on_write(i32 pid, i32 buf, i32 count) {
     return count;
 }
 
+/**
+ * Syscall handler for SYS_READ: reads input bytes from the process's stdin ring buffer.
+ * @param pid Calling process ID.
+ * @param buf Destination buffer memory address.
+ * @param count Maximum number of bytes to read.
+ * @return Number of bytes read.
+ */
 i32 on_read(i32 pid, i32 buf, i32 count) {
     i32 i = case slot_of(pid) of {
         Some(v) -> v;
@@ -141,9 +176,11 @@ i32 on_read(i32 pid, i32 buf, i32 count) {
     return got;
 }
 
-// Load `path` from the filesystem and start it as a process. Returns the
-// pid, or 0 (with the reason on the serial log) when the file is missing or
-// the loader refuses it.
+/**
+ * Loads an executable file from the filesystem and starts it as a new process.
+ * @param path Pointer to null-terminated file path.
+ * @return PID of spawned process on success, or 0 on failure.
+ */
 export i32 spawn_file(char *path) {
     i32 fd = case fs.open(path) of {
         Ok(v) -> v;
@@ -174,8 +211,11 @@ export i32 spawn_file(char *path) {
     return pid;
 }
 
-// SYS_SPAWN from a user program: the path is a user-space string. Copy it
-// out, spawn, and let the child share its parent's console.
+/**
+ * Syscall handler for SYS_SPAWN: spawns a process from a user-space path and binds it to the parent console.
+ * @param user_path Virtual memory address of null-terminated path string in user space.
+ * @return Spawned process ID on success, or negative error code.
+ */
 i32 on_spawn(i32 user_path) {
     char path[32];
     i32 k = 0;
@@ -198,7 +238,11 @@ i32 on_spawn(i32 user_path) {
     return pid;
 }
 
-// True once the process has exited (Zombie) or no longer exists.
+/**
+ * Checks whether a process has terminated.
+ * @param pid Process ID.
+ * @return 1 if process has exited (or does not exist), 0 if still running.
+ */
 export i32 has_exited(i32 pid) {
     Option<ProcessState> state = process.get_state(pid);
     return case state of {
@@ -207,7 +251,11 @@ export i32 has_exited(i32 pid) {
     };
 }
 
-// Exit code of a zombie process (0 if unknown), then release its slot.
+/**
+ * Reaps an exited Zombie process, retrieves its exit code, and frees its slot.
+ * @param pid Process ID.
+ * @return Process exit code.
+ */
 export i32 reap(i32 pid) {
     i32 code = case process.get_exit_code(pid) of {
         Some(v) -> v;
@@ -218,6 +266,9 @@ export i32 reap(i32 pid) {
     return code;
 }
 
+/**
+ * Initializes console subsystem and registers console and spawn hooks with the kernel.
+ */
 export void init() {
     if (g_ready != 0) { return; }
     i32 i = 0;

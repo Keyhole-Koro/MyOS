@@ -1,0 +1,31 @@
+package fs_config;
+
+// ============================================================================
+// MyFileSystem (MFS1) Configuration & Storage Limits
+// ============================================================================
+
+// --- Magic & Version ---
+export i32 MAGIC        = 0x4D465331; // 'MFS1' (MyFileSystem v1)
+export i32 VERSION      = 1;
+
+// --- Storage Geometry ---
+// Note: Must match hardware SSD block registers in MyEmulator (constants.rs) & mkfs.py
+export i32 BLOCK_SIZE   = 65536; // 64 KiB block transfers
+export i32 BLOCK_COUNT  = 16384; // 16,384 blocks = 1 GiB total storage
+export i32 PAYLOAD      = 65532; // BLOCK_SIZE - 4 bytes for next-block pointer
+
+// --- Directory Table & Entry Limits ---
+export i32 ENTRY_SIZE        = 32;   // 32-byte fixed-size directory record
+export i32 NAME_MAX          = 16;   // 15 ASCII characters + 1 null terminator
+export i32 ENTRIES_PER_BLOCK = 2048; // BLOCK_SIZE / ENTRY_SIZE
+export i32 MAX_FILES         = 2048; // Maximum 2,048 files system-wide (fits in 1 block)
+
+// --- Disk Layout (Block Offsets) ---
+export i32 SB_BLOCK     = 0; // Superblock
+export i32 ENTRY_BLOCK  = 1; // File entry table (1 block)
+export i32 BITMAP_BLOCK = 2; // Block allocation bitmap (1 block)
+export i32 DATA_START   = 3; // First data block
+
+// --- Inode & File Descriptor Limits ---
+export i32 MINODE_CACHE_MAX = 16; // Maximum active in-memory cached inodes
+export i32 FD_MAX           = 8;  // Maximum simultaneous open descriptors system-wide

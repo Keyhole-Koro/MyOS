@@ -6,31 +6,54 @@ import { sys_read, sys_write, sys_yield, sys_exit } from "sys.masm";
 // string helpers. No heap (sbrk exists but nothing here needs it) and small
 // stack frames -- a process gets one 4 KiB stack page.
 
+/**
+ * Computes the length of a null-terminated string.
+ * @param s Null-terminated string.
+ * @return Number of characters before null terminator.
+ */
 export i32 strlen(char* s) {
     i32 n = 0;
     for (; s[n] != 0; n++) {}
     return n;
 }
 
-export i32 str_eq(char* a, char* b) {
+/**
+ * Compares two null-terminated strings for equality.
+ * @param a First string.
+ * @param b Second string.
+ * @return True if strings match character for character, false otherwise.
+ */
+export bool str_eq(char* a, char* b) {
     i32 i = 0;
     while (a[i] != 0) {
-        if (a[i] != b[i]) { return 0; }
+        if (a[i] != b[i]) { return false; }
         i++;
     }
-    if (b[i] != 0) { return 0; }
-    return 1;
+    if (b[i] != 0) { return false; }
+    return true;
 }
 
+/**
+ * Writes a string to standard output (file descriptor 1).
+ * @param s String to write.
+ */
 export void print(char* s) {
     sys_write(1, s, strlen(s));
 }
 
+/**
+ * Writes a string followed by a newline to standard output.
+ * @param s String to write.
+ */
 export void println(char* s) {
     print(s);
     sys_write(1, "\n", 1);
 }
 
+/**
+ * Prints a 32-bit signed integer in decimal form to standard output.
+ * @param v Integer value to print.
+ */
 export void print_i32(i32 v) {
     char digits[12];
     i32 n = 0;
@@ -53,9 +76,14 @@ export void print_i32(i32 v) {
     sys_write(1, &out[0], n);
 }
 
-// Read one line from stdin into buf (at most cap-1 bytes, NUL-terminated,
-// newline stripped). stdin is non-blocking, so yield between empty reads
-// instead of spinning. Returns the length.
+/**
+ * Reads a line of text from standard input (descriptor 0) into a buffer.
+ *
+ * Strips the trailing newline character and null-terminates the string.
+ * @param buf Destination character buffer.
+ * @param cap Maximum capacity of the destination buffer including null byte.
+ * @return Length of the line read.
+ */
 export i32 readline(char* buf, i32 cap) {
     i32 len = 0;
     while (1) {
@@ -78,6 +106,10 @@ export i32 readline(char* buf, i32 cap) {
     return len;
 }
 
+/**
+ * Terminates the current process with the given exit code.
+ * @param code Process exit status code.
+ */
 export void exit(i32 code) {
     sys_exit(code);
 }

@@ -24,6 +24,9 @@ i32 g_label_id = 0;
 
 char g_click_buf[32];
 
+/**
+ * Formats and updates the counter display label with the current click tally.
+ */
 void refresh_label() {
     i32 n = strbuf.reset(&g_click_buf[0]);
     n = strbuf.append(&g_click_buf[0], 32, n, "clicks: ");
@@ -31,26 +34,37 @@ void refresh_label() {
     dom.set_text(g_label_id, &g_click_buf[0]);
 }
 
-// Bumps the counter and rewrites the label text; the next render picks up the
-// new text from the node. dom.dispatch_click invokes this indirectly with the
-// button id.
+/**
+ * Click handler for the increment button: advances the click count by the current step.
+ * @param id Button node ID.
+ */
 void on_click(i32 id) {
     g_clicks = g_clicks + g_step;
     refresh_label();
 }
 
+/**
+ * Click handler for the reset button: resets the click count back to zero.
+ * @param id Button node ID.
+ */
 void on_reset(i32 id) {
     g_clicks = 0;
     refresh_label();
 }
 
-// Checkbox: dispatch_click toggles the node's checked state before calling
-// this, so reading it back gives the new value.
+/**
+ * Click handler for the step-size checkbox: toggles increment step between 1 and 2.
+ * @param id Checkbox node ID.
+ */
 void on_step(i32 id) {
     g_step = 1;
     if (dom.is_checked(id) != 0) { g_step = 2; }
 }
 
+/**
+ * Constructs the declarative DOM subtree for the Counter application window.
+ * @return Root Window node ID.
+ */
 i32 build_ui() {
     // Column and Row own their children's x/y, so the zeros below are
     // intentional; only sizes matter inside them.
@@ -70,9 +84,10 @@ i32 build_ui() {
     </Window>;
 }
 
-// Build the window, mount it on the desktop and remember the label. Returns
-// the window node id. Tree: Window > [Panel > Column > [Label, Label, Row >
-// [PrimaryButton, Button]], Checkbox].
+/**
+ * Mounts the Counter application window to the desktop and registers test IDs.
+ * @return Window node ID.
+ */
 export i32 mount() {
     i32 win = build_ui();
     dom.append_child(dom.desktop_id(), win);

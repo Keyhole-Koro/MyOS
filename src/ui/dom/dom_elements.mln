@@ -12,11 +12,24 @@ import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
 // --- UI node create helpers ------------------------------------------------------------------
 // Each sets kind + role + bounds + text + default state (visible/enabled) in one
 // call. Coordinates are logical (1024x768) and relative to the parent the node
+// --- UI node create helpers ------------------------------------------------------------------
+// Each sets kind + role + bounds + text + default state (visible/enabled) in one
+// call. Coordinates are logical (1024x768) and relative to the parent the node
 // is later appended to.
 
 // Note: NODE_*/ROLE_*/STATE_* are `export u16` globals; pass them bare as
 // function args. Casting them like (i32)NodeState::VISIBLE makes semantic report
 // `undefined identifier` (see docs/DOM_SPEC.md), so no casts here.
+
+/**
+ * Creates a top-level WINDOW node with title bar and given bounds.
+ * @param title Window title text.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @return DOM Node ID.
+ */
 export i32 create_window(char *title, i32 x, i32 y, i32 w, i32 h) {
     i32 id = dom.create_node(NodeKind::WINDOW, title);
     dom.set_role(id, NodeRole::WINDOW);
@@ -28,6 +41,15 @@ export i32 create_window(char *title, i32 x, i32 y, i32 w, i32 h) {
     return id;
 }
 
+/**
+ * Creates an interactive BUTTON node.
+ * @param label Button label string.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @return DOM Node ID.
+ */
 export i32 create_button(char *label, i32 x, i32 y, i32 w, i32 h) {
     i32 id = dom.create_node(NodeKind::BUTTON, label);
     dom.set_role(id, NodeRole::BUTTON);
@@ -39,6 +61,13 @@ export i32 create_button(char *label, i32 x, i32 y, i32 w, i32 h) {
     return id;
 }
 
+/**
+ * Creates a static TEXT node whose size is computed from font metrics.
+ * @param text Text string.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @return DOM Node ID.
+ */
 export i32 create_text(char *text, i32 x, i32 y) {
     i32 id = dom.create_node(NodeKind::TEXT, text);
     dom.set_role(id, NodeRole::TEXT);
@@ -48,8 +77,16 @@ export i32 create_text(char *text, i32 x, i32 y) {
     return id;
 }
 
-// A Box is a visual grouping primitive. It has no accessibility role and is
-// not hit-testable by default, so decoration never obscures a Button within it.
+/**
+ * Creates a visual BOX primitive with custom background and border colors.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param background Background color (RGB).
+ * @param border Border color (RGB).
+ * @return DOM Node ID.
+ */
 export i32 create_box(i32 x, i32 y, i32 w, i32 h,
                       i32 background, i32 border) {
     i32 id = dom.create_node(NodeKind::BOX, "box");
@@ -59,7 +96,15 @@ export i32 create_box(i32 x, i32 y, i32 w, i32 h,
     return id;
 }
 
-// A Panel is a themed rounded card; its children are clipped to it.
+/**
+ * Creates a rounded PANEL container that clips its children.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param radius Corner radius in logical pixels.
+ * @return DOM Node ID.
+ */
 export i32 create_panel(i32 x, i32 y, i32 w, i32 h, i32 radius) {
     i32 id = dom.create_node(NodeKind::PANEL, "panel");
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
@@ -69,9 +114,16 @@ export i32 create_panel(i32 x, i32 y, i32 w, i32 h, i32 radius) {
     return id;
 }
 
-// A Column is a visible-to-the-renderer layout container: it draws nothing of
-// its own, but visibility gates all descendants. When a child is appended its
-// x/y are recomputed from this origin, padding, and the preceding child sizes.
+/**
+ * Creates a vertical COLUMN layout container.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param padding Inset padding in logical pixels.
+ * @param gap Gap between children in logical pixels.
+ * @return DOM Node ID.
+ */
 export i32 create_column(i32 x, i32 y, i32 w, i32 h,
                          i32 padding, i32 gap) {
     i32 id = dom.create_node(NodeKind::COLUMN, "column");
@@ -81,6 +133,16 @@ export i32 create_column(i32 x, i32 y, i32 w, i32 h,
     return id;
 }
 
+/**
+ * Creates a horizontal ROW layout container.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param padding Inset padding in logical pixels.
+ * @param gap Gap between children in logical pixels.
+ * @return DOM Node ID.
+ */
 export i32 create_row(i32 x, i32 y, i32 w, i32 h,
                       i32 padding, i32 gap) {
     i32 id = dom.create_node(NodeKind::ROW, "row");
@@ -90,8 +152,16 @@ export i32 create_row(i32 x, i32 y, i32 w, i32 h,
     return id;
 }
 
-// A single-line text field. `placeholder` shows while empty; the node owns a
-// heap buffer of `capacity` bytes (including the terminator).
+/**
+ * Creates an editable single-line TEXT_INPUT control.
+ * @param placeholder Placeholder string shown when empty.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param capacity Buffer capacity in bytes.
+ * @return DOM Node ID.
+ */
 export i32 create_text_input(char *placeholder, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
     if (capacity < 2) { capacity = 2; }
     i32 id = dom.create_node(NodeKind::TEXT_INPUT, placeholder);
@@ -110,6 +180,14 @@ export i32 create_text_input(char *placeholder, i32 x, i32 y, i32 w, i32 h, i32 
     return id;
 }
 
+/**
+ * Creates a toggleable CHECKBOX control.
+ * @param label Checkbox label text.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param checked Initial state (1 for checked, 0 for unchecked).
+ * @return DOM Node ID.
+ */
 export i32 create_checkbox(char *label, i32 x, i32 y, i32 checked) {
     i32 id = dom.create_node(NodeKind::CHECKBOX, label);
     dom.set_role(id, NodeRole::CHECKBOX);
@@ -128,6 +206,13 @@ export i32 create_checkbox(char *label, i32 x, i32 y, i32 checked) {
     return id;
 }
 
+/**
+ * Creates a horizontal SEPARATOR line.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @return DOM Node ID.
+ */
 export i32 create_separator(i32 x, i32 y, i32 w) {
     i32 id = dom.create_node(NodeKind::SEPARATOR, "separator");
     dom.set_role(id, NodeRole::SEPARATOR);
@@ -136,8 +221,17 @@ export i32 create_separator(i32 x, i32 y, i32 w) {
     return id;
 }
 
-// Multi-line text. `capacity` bytes of heap (including the terminator);
-// readonly != 0 makes it a display-only console that append_text feeds.
+/**
+ * Creates an editable or read-only multi-line TEXT_AREA control.
+ * @param name Node identifier name.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param capacity Buffer capacity in bytes.
+ * @param readonly Non-zero for read-only / console mode.
+ * @return DOM Node ID.
+ */
 export i32 create_text_area(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 readonly) {
     if (capacity < 2) { capacity = 2; }
     i32 id = dom.create_node(NodeKind::TEXT_AREA, name);
@@ -158,7 +252,16 @@ export i32 create_text_area(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity
     return id;
 }
 
-// A selectable list of rows (see list_set_items).
+/**
+ * Creates a scrollable single-selection LIST control.
+ * @param name Node identifier name.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param capacity Buffer capacity in bytes for row data.
+ * @return DOM Node ID.
+ */
 export i32 create_list(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
     if (capacity < 2) { capacity = 2; }
     i32 id = dom.create_node(NodeKind::LIST, name);
@@ -188,17 +291,46 @@ export i32 create_list(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
 // element means adding a function, and its parameters are its properties.
 // ---------------------------------------------------------------------------
 
+/**
+ * Lowers JSX `<Window title="..." x={...} y={...} w={...} h={...} />`.
+ * @param title Window title text.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @return DOM Node ID.
+ */
 export i32 Window(char *title, i32 x, i32 y, i32 w, i32 h) {
     return create_window(title, x, y, w, h);
 }
 
+/**
+ * Lowers JSX `<Button text="..." x={...} y={...} w={...} h={...} onClick={...} />`.
+ * @param text Button label text.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param onClick Click handler function pointer.
+ * @return DOM Node ID.
+ */
 export i32 Button(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
     i32 id = create_button(text, x, y, w, h);
     dom.set_on_click(id, onClick);
     return id;
 }
 
-// Accent-coloured call to action.
+/**
+ * Lowers JSX `<PrimaryButton text="..." x={...} y={...} w={...} h={...} onClick={...} />`.
+ * Accent-coloured call to action.
+ * @param text Button label text.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param onClick Click handler function pointer.
+ * @return DOM Node ID.
+ */
 export i32 PrimaryButton(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
     i32 id = create_button(text, x, y, w, h);
     dom.set_on_click(id, onClick);
@@ -206,11 +338,27 @@ export i32 PrimaryButton(char *text, i32 x, i32 y, i32 w, i32 h, i32 onClick) {
     return id;
 }
 
+/**
+ * Lowers JSX `<Text text="..." x={...} y={...} />`.
+ * @param text Text content string.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @return DOM Node ID.
+ */
 export i32 Text(char *text, i32 x, i32 y) {
     return create_text(text, x, y);
 }
 
-// Text with an explicit colour (graphics.rgb(); 0 = theme default) and weight.
+/**
+ * Lowers JSX `<Label text="..." x={...} y={...} color={...} bold={...} />`.
+ * Text with an explicit colour (graphics.rgb(); 0 = theme default) and weight.
+ * @param text Label text string.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param color Text color (RGB, 0 for default).
+ * @param bold Non-zero for bold styling.
+ * @return DOM Node ID.
+ */
 export i32 Label(char *text, i32 x, i32 y, i32 color, i32 bold) {
     i32 id = create_text(text, x, y);
     if (bold != 0) { dom.set_style(id, NodeStyle::BOLD); }
@@ -218,53 +366,148 @@ export i32 Label(char *text, i32 x, i32 y, i32 color, i32 bold) {
     return id;
 }
 
+/**
+ * Lowers JSX `<Box x={...} y={...} w={...} h={...} background={...} border={...} />`.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param background Background color (RGB).
+ * @param border Border color (RGB).
+ * @return DOM Node ID.
+ */
 export i32 Box(i32 x, i32 y, i32 w, i32 h,
                i32 background, i32 border) {
     return create_box(x, y, w, h, background, border);
 }
 
+/**
+ * Lowers JSX `<Panel x={...} y={...} w={...} h={...} radius={...} />`.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param radius Corner radius in logical pixels.
+ * @return DOM Node ID.
+ */
 export i32 Panel(i32 x, i32 y, i32 w, i32 h, i32 radius) {
     return create_panel(x, y, w, h, radius);
 }
 
+/**
+ * Lowers JSX `<Column x={...} y={...} w={...} h={...} padding={...} gap={...} />`.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param padding Inset padding in logical pixels.
+ * @param gap Gap between children in logical pixels.
+ * @return DOM Node ID.
+ */
 export i32 Column(i32 x, i32 y, i32 w, i32 h,
                   i32 padding, i32 gap) {
     return create_column(x, y, w, h, padding, gap);
 }
 
+/**
+ * Lowers JSX `<Row x={...} y={...} w={...} h={...} padding={...} gap={...} />`.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param padding Inset padding in logical pixels.
+ * @param gap Gap between children in logical pixels.
+ * @return DOM Node ID.
+ */
 export i32 Row(i32 x, i32 y, i32 w, i32 h,
                i32 padding, i32 gap) {
     return create_row(x, y, w, h, padding, gap);
 }
 
+/**
+ * Lowers JSX `<TextInput placeholder="..." x={...} y={...} w={...} h={...} capacity={...} onChange={...} />`.
+ * @param placeholder Placeholder text string.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param capacity Buffer capacity in bytes.
+ * @param onChange Text change callback function pointer.
+ * @return DOM Node ID.
+ */
 export i32 TextInput(char *placeholder, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 onChange) {
     i32 id = create_text_input(placeholder, x, y, w, h, capacity);
     dom.set_on_change(id, onChange);
     return id;
 }
 
+/**
+ * Lowers JSX `<Checkbox text="..." x={...} y={...} checked={...} onClick={...} />`.
+ * @param text Checkbox label text.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param checked Initial checked state.
+ * @param onClick Click callback function pointer.
+ * @return DOM Node ID.
+ */
 export i32 Checkbox(char *text, i32 x, i32 y, i32 checked, i32 onClick) {
     i32 id = create_checkbox(text, x, y, checked);
     dom.set_on_click(id, onClick);
     return id;
 }
 
+/**
+ * Lowers JSX `<Separator x={...} y={...} w={...} />`.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @return DOM Node ID.
+ */
 export i32 Separator(i32 x, i32 y, i32 w) {
     return create_separator(x, y, w);
 }
 
+/**
+ * Lowers JSX `<Timer interval={...} onTick={...} />`.
+ * @param interval Timer tick interval in system ticks.
+ * @param onTick Timer callback function pointer.
+ * @return DOM Node ID.
+ */
 export i32 Timer(i32 interval, i32 onTick) {
     return dom_widgets.create_timer(interval, onTick);
 }
 
+/**
+ * Lowers JSX `<TextArea name="..." x={...} y={...} w={...} h={...} capacity={...} readonly={...} onChange={...} />`.
+ * @param name Node name identifier.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param capacity Buffer capacity in bytes.
+ * @param readonly Non-zero for read-only / display console mode.
+ * @param onChange Text change callback function pointer.
+ * @return DOM Node ID.
+ */
 export i32 TextArea(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 readonly, i32 onChange) {
     i32 id = create_text_area(name, x, y, w, h, capacity, readonly);
     dom.set_on_change(id, onChange);
     return id;
 }
 
-// onChange fires when the selection moves, onActivate (stored as the click
-// handler) when a row is clicked again or Enter is pressed.
+/**
+ * Lowers JSX `<List name="..." x={...} y={...} w={...} h={...} capacity={...} onChange={...} onActivate={...} />`.
+ * onChange fires when the selection moves, onActivate when a row is clicked again or Enter is pressed.
+ * @param name Node name identifier.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param capacity Buffer capacity in bytes.
+ * @param onChange Selection change callback function pointer.
+ * @param onActivate Row activation callback function pointer.
+ * @return DOM Node ID.
+ */
 export i32 List(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 onChange, i32 onActivate) {
     i32 id = create_list(name, x, y, w, h, capacity);
     dom.set_on_change(id, onChange);
@@ -272,13 +515,11 @@ export i32 List(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 onChan
     return id;
 }
 
-// The human-readable dump (dump()), the JSON snapshot, and the automation
-// bridge (write_automation_snapshot/write_automation_hit_test) moved to
-// dom_automation.mln -- they only walk the tree through accessors above,
-// never touch tree state, and made this file harder to find things in.
-// role_name() stays here because it compares against ROLE_*, and an
-// `export u16` global doesn't resolve as a cross-package symbol (see
-// dom.set_hovered() and friends above); dom_automation.mln calls dom_elements.role_name().
+/**
+ * Returns human-readable string name for a NodeRole enum value.
+ * @param role NodeRole value.
+ * @return Role name string.
+ */
 export char* role_name(i32 role) {
     if (role == NodeRole::TEXTAREA) { return "textarea"; }
     if (role == NodeRole::LIST) { return "list"; }

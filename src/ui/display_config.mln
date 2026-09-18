@@ -4,10 +4,19 @@ package display_config;
 
 import mem from "../../../MyKernel/src/mm/mem.mln";
 
+/**
+ * Reads the hardware screen width in pixels from the display device register.
+ * @return Display width in pixels.
+ */
 export i32 width() {
     return mem.read_word(0x240000D0);
 }
 
+/**
+ * Reads the hardware screen height in pixels from the display device register.
+ * @return Display height in pixels.
+ */
 export i32 height() {
     return mem.read_word(0x240000D4);
 }
+

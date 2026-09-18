@@ -31,9 +31,10 @@ export enum SsdError {
 
 export i32 BLOCK_SIZE = 65536;
 
-// Wait for the in-flight command to complete and return its final status.
-// The completion IRQ ends the wfi; with interrupts disabled (boot paths) wfi
-// acts as a NOP and this degenerates into a busy-poll, which is also correct.
+/**
+ * Waits for an in-flight SSD command to complete and returns the final status code.
+ * @return Final device status code (e.g. SSD_STATUS_DONE or error).
+ */
 i32 wait_for_completion() {
     i32 status = mem.read_word(SSD_STATUS_ADDR);
     while (status == SSD_STATUS_BUSY) {
@@ -43,7 +44,12 @@ i32 wait_for_completion() {
     return status;
 }
 
-// Read one block from the disk into the buffer at buf_addr.
+/**
+ * Reads a 64 KiB block from the SSD into memory.
+ * @param block_num Logical block number to read.
+ * @param buf_addr Destination memory buffer address.
+ * @return Ok(_) on success, or Err(DeviceError) on hardware error.
+ */
 export Result<_, SsdError> read_block(i32 block_num, i32 buf_addr) {
     mem.write_word(SSD_BLOCK_ADDR, block_num);
     mem.write_word(SSD_ADDR_ADDR, buf_addr);
@@ -54,7 +60,12 @@ export Result<_, SsdError> read_block(i32 block_num, i32 buf_addr) {
     return Err(SsdError::DeviceError);
 }
 
-// Write one block from the buffer at buf_addr to the disk.
+/**
+ * Writes a 64 KiB block from memory to the SSD.
+ * @param block_num Logical block number to write.
+ * @param buf_addr Source memory buffer address.
+ * @return Ok(_) on success, or Err(DeviceError) on hardware error.
+ */
 export Result<_, SsdError> write_block(i32 block_num, i32 buf_addr) {
     mem.write_word(SSD_BLOCK_ADDR, block_num);
     mem.write_word(SSD_ADDR_ADDR, buf_addr);

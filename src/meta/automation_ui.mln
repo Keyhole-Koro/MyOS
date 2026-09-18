@@ -7,8 +7,12 @@ import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 i32 CMD_DOM_SNAPSHOT = 1;
 i32 CMD_DOM_HIT_TEST = 2;
 
-// Metadata service running inside MyOS. It exposes inspection only; real
-// pointer and keyboard operations still enter through emulator devices.
+/**
+ * Main loop of the metadata automation service task.
+ *
+ * Polls for host automation requests, dispatches DOM snapshot or hit-test queries,
+ * and replies with JSON responses via the MMIO transport.
+ */
 export void run() {
     while (1) {
         if (automation_transport.has_request() != 0) {

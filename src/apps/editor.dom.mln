@@ -9,11 +9,11 @@ import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { FsError } from "../fs/fs.mln";
 
+import ui_config from "../ui/ui_config.mln";
+
 // Text editor: a TextArea over one file on the MFS disk. Save rewrites the
 // file (MFS writes are append-only, so the file is removed and recreated).
 // Single instance: opening another file reuses the window.
-
-i32 CAP = 4096;
 
 i32 g_win = 0;
 i32 g_area = 0;
@@ -21,13 +21,24 @@ i32 g_name = 0;     // filename TextInput
 i32 g_status = 0;   // Label
 char g_status_buf[64];
 
+/**
+ * Updates the editor status label with the given message.
+ * @param s Status text to display.
+ */
 void editor_status(char *s) {
     dom.set_text(g_status, s);
 }
 
+/**
+ * No-op callback for editor UI events.
+ * @param id Node ID.
+ */
 void editor_noop(i32 id) { }
 
-// Load `path` into the text area (empty when the file does not exist).
+/**
+ * Loads a file from disk into the editor text area and positions caret at the beginning.
+ * @param path File path to open and read.
+ */
 export void load(char *path) {
     dom_widgets.set_input_text(g_name, path);
     dom_widgets.clear_text_area(g_area);
@@ -57,6 +68,10 @@ export void load(char *path) {
     editor_status(&g_status_buf[0]);
 }
 
+/**
+ * Click handler for the 'Save' button: writes text area contents to the specified file on disk.
+ * @param id Button node ID.
+ */
 void on_save(i32 id) {
     char *path = dom.text_of(g_name);
     if (path == 0) { return; }
@@ -86,6 +101,10 @@ void on_save(i32 id) {
     editor_status(&g_status_buf[0]);
 }
 
+/**
+ * Constructs the declarative DOM subtree for the text editor window.
+ * @return Root Window node ID.
+ */
 i32 build_ui() {
     i32 muted = graphics.rgb(0x6B, 0x72, 0x80);
     return <Window title="Editor" x={300} y={120} w={520} h={420}>
@@ -93,12 +112,16 @@ i32 build_ui() {
             <TextInput placeholder="file name" x={0} y={0} w={300} h={34} capacity={16} onChange={editor_noop} />
             <PrimaryButton text="Save" x={0} y={0} w={90} h={34} onClick={on_save} />
         </Row>
-        <TextArea name="Type here..." x={12} y={56} w={496} h={294} capacity={4096} readonly={0} onChange={editor_noop} />
+        <TextArea name="Type here..." x={12} y={56} w={496} h={294} capacity={ui_config.EDITOR_CAP} readonly={0} onChange={editor_noop} />
         <Label text="" x={12} y={360} color={muted} bold={0} />
     </Window>;
 }
 
-// Show the editor with `path` loaded; returns the window id.
+/**
+ * Opens the editor window, sets focus to the text area, and loads the specified file.
+ * @param path File path to open.
+ * @return Window node ID.
+ */
 export i32 open(char *path) {
     if (g_win == 0) {
         g_win = build_ui();
@@ -117,7 +140,9 @@ export i32 open(char *path) {
     return g_win;
 }
 
-// The window was closed by the user: forget it so the next open rebuilds.
+/**
+ * Clears the stored window ID if the editor window was closed by the user.
+ */
 export void forget_if_closed() {
     if (g_win != 0) {
         if (dom.node_exists(g_win) == 0) { g_win = 0; }

@@ -20,22 +20,19 @@ import irq from "../../../MyKernel/src/arch/irq.mln";
 // hovered, pressed and clicked; a node participates simply by being hit-
 // testable, and it reacts to a click by having an on_click handler.
 
-// Repaint whatever changed and flip the frame. render_scene repaints only the
-// damaged region, which the dom setters record as nodes change; the pointer is
-// not drawn here at all, since the display controller composites it at
-// scan-out (graphics.set_cursor).
+/**
+ * Renders damaged DOM scene regions and flips the display front/back buffers.
+ */
 void present_frame() {
     dom_render.render_scene();
     graphics.present();
 }
 
-// Paint the whole desktop once, unconditionally. Call this before interrupts
-// are enabled (see main.mln's kernel_init): scheduler.init() documents that
-// the first timer interrupt can preempt task 0 anywhere, and render_all()
-// recursively walks every node doing DMA2D fills and glyph draws, so a tick
-// landing mid-walk left the desktop showing only whatever had been drawn so
-// far until enough scheduler slices later let it finish. Doing this paint
-// before scheduler.init()/irq.enable() makes it atomic: nothing can preempt it.
+/**
+ * Unconditionally paints the initial frame of the desktop before interrupts are enabled.
+ *
+ * Ensures atomic rendering of the full desktop tree so timer preemption cannot interrupt the first paint.
+ */
 export void paint_first_frame() {
     graphics.show_cursor(1);
     dom_render.render_all();
@@ -60,6 +57,11 @@ i32 g_hot_id = 0;
 char *g_desktop_menu_items = (char*)0;
 i32 g_desktop_menu_handler = 0;
 
+/**
+ * Registers the desktop wallpaper context menu items and click handler.
+ * @param items Null-separated, double-null-terminated menu item string.
+ * @param handler Callback function pointer invoked with selected menu index.
+ */
 export void set_desktop_menu(char *items, i32 handler) {
     g_desktop_menu_items = items;
     g_desktop_menu_handler = handler;
@@ -71,7 +73,10 @@ enum WindowMenuAction {
     CLOSE
 }
 
-// Window context menu: the same three actions as the title-bar buttons.
+/**
+ * Callback handler for window context menu actions (minimize, maximize, close).
+ * @param action Chosen WindowMenuAction item.
+ */
 void on_window_menu(WindowMenuAction action) {
     i32 win = dom_widgets.menu_target();
     if (win == 0) { return; }
@@ -82,6 +87,11 @@ void on_window_menu(WindowMenuAction action) {
     };
 }
 
+/**
+ * Handles left mouse button press events: manages menu dismissal, window focus, chrome dragging, and button pressing.
+ * @param ex Horizontal mouse pointer coordinate in logical pixels.
+ * @param ey Vertical mouse pointer coordinate in logical pixels.
+ */
 void on_press(i32 ex, i32 ey) {
     // A click while a menu is open either picks an item or dismisses the
     // menu; either way it goes no further.
@@ -155,6 +165,11 @@ void on_press(i32 ex, i32 ey) {
     g_pressed_id = hit;
 }
 
+/**
+ * Handles right mouse button press events: opens window context menu or desktop wallpaper menu.
+ * @param ex Horizontal mouse pointer coordinate in logical pixels.
+ * @param ey Vertical mouse pointer coordinate in logical pixels.
+ */
 void on_right_press(i32 ex, i32 ey) {
     if (dom_widgets.menu_id() != 0) {
         dom_widgets.close_menu();
@@ -179,6 +194,11 @@ void on_right_press(i32 ex, i32 ey) {
     }
 }
 
+/**
+ * Handles mouse button release events: clears drag states and dispatches click events to the pressed node.
+ * @param ex Horizontal mouse pointer coordinate in logical pixels.
+ * @param ey Vertical mouse pointer coordinate in logical pixels.
+ */
 void on_release(i32 ex, i32 ey) {
     if (g_drag_win != 0) {
         g_drag_win = 0;
@@ -200,6 +220,11 @@ void on_release(i32 ex, i32 ey) {
     }
 }
 
+/**
+ * Handles mouse motion events: updates window position or size if dragging/resizing.
+ * @param ex Current horizontal pointer coordinate in logical pixels.
+ * @param ey Current vertical pointer coordinate in logical pixels.
+ */
 void on_motion(i32 ex, i32 ey) {
     i32 dx = ex - g_drag_last_x;
     i32 dy = ey - g_drag_last_y;
@@ -223,6 +248,11 @@ void on_motion(i32 ex, i32 ey) {
 // registers stay authoritative for the cursor position and hover state, so a
 // dropped event can delay a repaint but never wedge a node in a pressed or
 // hovered state.
+/**
+ * Main UI compositor loop.
+ *
+ * Consumes hardware events, manages focus, coordinates window drags and clicks, updates timers, and paints dirty DOM regions.
+ */
 export void run() {
     i32 prev_left = 0;
     i32 prev_right = 0;

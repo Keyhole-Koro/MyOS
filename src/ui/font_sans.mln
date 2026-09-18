@@ -3443,9 +3443,18 @@ char g_data[81895] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
+/**
+ * Returns the total number of available font faces.
+ * @return Number of font faces (4).
+ */
 export i32 face_count() { return FACE_COUNT; }
 
-// Pick a face: bold != 0 selects the bold weight, scale >= 2 the 2x size.
+/**
+ * Selects the appropriate font face index based on weight and display scale.
+ * @param bold Non-zero for bold weight, zero for regular weight.
+ * @param scale UI scale factor (2 or higher selects 2x face).
+ * @return Font face index (0 to 3).
+ */
 export i32 face_for(i32 bold, i32 scale) {
     i32 f = 0;
     if (scale >= 2) { f = 1; }
@@ -3453,24 +3462,87 @@ export i32 face_for(i32 bold, i32 scale) {
     return f;
 }
 
+/**
+ * Returns the line height in pixels for a font face.
+ * @param face Font face index.
+ * @return Line height in pixels.
+ */
 export i32 line_height(i32 face) { return face_line_h[face]; }
+
+/**
+ * Returns the font ascent in pixels above the baseline.
+ * @param face Font face index.
+ * @return Ascent in pixels.
+ */
 export i32 ascent(i32 face) { return face_ascent[face]; }
+
+/**
+ * Returns the nominal pixel size for a font face.
+ * @param face Font face index.
+ * @return Pixel size.
+ */
 export i32 pixel_size(i32 face) { return face_px[face]; }
 
-// Characters outside 0x20..0x7E draw as '?'.
+/**
+ * Computes the glyph array index for a character in the specified face.
+ *
+ * Characters outside the printable ASCII range 0x20..0x7E map to '?'.
+ * @param face Font face index.
+ * @param ch ASCII character code.
+ * @return Index into the glyph metric and offset tables.
+ */
 i32 glyph_index(i32 face, i32 ch) {
     if (ch < 0x20) { ch = '?'; }
     if (ch > 0x7E) { ch = '?'; }
     return face * GLYPH_COUNT + (ch - 0x20);
 }
 
+/**
+ * Returns the horizontal advance distance in pixels for a glyph.
+ * @param face Font face index.
+ * @param ch ASCII character code.
+ * @return Advance in pixels.
+ */
 export i32 advance(i32 face, i32 ch) { return g_adv[glyph_index(face, ch)]; }
+
+/**
+ * Returns the horizontal bearing (X offset from origin to left bbox edge).
+ * @param face Font face index.
+ * @param ch ASCII character code.
+ * @return Bearing X offset in pixels.
+ */
 export i32 bearing_x(i32 face, i32 ch) { return g_bx[glyph_index(face, ch)]; }
+
+/**
+ * Returns the vertical bearing (Y offset from baseline to top bbox edge).
+ * @param face Font face index.
+ * @param ch ASCII character code.
+ * @return Bearing Y offset in pixels.
+ */
 export i32 bearing_y(i32 face, i32 ch) { return g_by[glyph_index(face, ch)]; }
+
+/**
+ * Returns the bounding box width of a glyph in pixels.
+ * @param face Font face index.
+ * @param ch ASCII character code.
+ * @return Glyph width in pixels.
+ */
 export i32 width(i32 face, i32 ch) { return g_w[glyph_index(face, ch)]; }
+
+/**
+ * Returns the bounding box height of a glyph in pixels.
+ * @param face Font face index.
+ * @param ch ASCII character code.
+ * @return Glyph height in pixels.
+ */
 export i32 height(i32 face, i32 ch) { return g_h[glyph_index(face, ch)]; }
 
-// Address of the glyph's coverage bytes (row-major, stride == width).
+/**
+ * Returns the memory address of the glyph coverage bitmap bytes.
+ * @param face Font face index.
+ * @param ch ASCII character code.
+ * @return Memory address of row-major A8 coverage data.
+ */
 export i32 data(i32 face, i32 ch) {
     return (i32)(&g_data[0]) + g_off[glyph_index(face, ch)];
 }
