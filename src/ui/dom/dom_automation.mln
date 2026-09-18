@@ -18,7 +18,7 @@ void print_indent(i32 depth) {
     i32 i = 0;
     while (i < depth) {
         debug.print("  ");
-        i = i + 1;
+        i++;
     }
 }
 
@@ -50,7 +50,7 @@ void dump_props(i32 id) {
 
 void dump_node(i32 id, i32 depth) {
     print_indent(depth);
-    debug.printf("Node(id=%i, kind=%i) ", id, case dom.kind_of(id) of { Some(v) -> v; None -> 0 - 1; });
+    debug.printf("Node(id=%i, kind=%i) ", id, case dom.kind_of(id) of { Some(v) -> v; None -> -1; });
     char *name = dom.name_of(id);
     if (name != 0) {
         debug.print(name);
@@ -83,24 +83,24 @@ void automation_raw(char *s) {
     if (s == 0) { return; }
     while (*s != 0) {
         automation_transport.putc(*s);
-        s = s + 1;
+        s++;
     }
 }
 
 void automation_i32(i32 value) {
     if (value == 0) { automation_transport.putc('0'); return; }
-    if (value < 0) { automation_transport.putc('-'); value = 0 - value; }
+    if (value < 0) { automation_transport.putc('-'); value = -value; }
     char digits[12];
     i32 n = 0;
     while (value > 0) {
         digits[n] = (char)('0' + value % 10);
         value = value / 10;
-        n = n + 1;
+        n++;
     }
-    n = n - 1;
+    n--;
     while (n >= 0) {
         automation_transport.putc(digits[n]);
-        n = n - 1;
+        n--;
     }
 }
 
@@ -113,7 +113,7 @@ void automation_json_string(char *s) {
             else if (c == '\\') { automation_transport.putc('\\'); automation_transport.putc('\\'); }
             else if (c == '\n') { automation_transport.putc('\\'); automation_transport.putc('n'); }
             else { automation_transport.putc(c); }
-            s = s + 1;
+            s++;
         }
     }
     automation_transport.putc('"');

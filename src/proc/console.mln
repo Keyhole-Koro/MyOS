@@ -102,7 +102,7 @@ export void feed_line(i32 pid, char *line) {
         mem.write_byte(base + g_in_tail[i], c);
         g_in_tail[i] = next;
         if (line[k] == 0) { return; }
-        k = k + 1;
+        k++;
     }
 }
 
@@ -116,7 +116,7 @@ i32 on_write(i32 pid, i32 buf, i32 count) {
         while (k < count) {
             i32 c = mem.read_byte(buf + k);
             serial.putc(c);
-            k = k + 1;
+            k++;
         }
         return count;
     }
@@ -136,7 +136,7 @@ i32 on_read(i32 pid, i32 buf, i32 count) {
         i32 c = mem.read_byte(base + g_in_head[i]);
         g_in_head[i] = (g_in_head[i] + 1) % STDIN_CAP;
         mem.write_byte(buf + got, c);
-        got = got + 1;
+        got++;
     }
     return got;
 }
@@ -183,7 +183,7 @@ i32 on_spawn(i32 user_path) {
         i32 c = mem.read_byte(user_path + k);
         path[k] = (char)c;
         if (c == 0) { break; }
-        k = k + 1;
+        k++;
     }
     path[31] = (char)0;
     i32 parent = case process.get_current_pid() of {

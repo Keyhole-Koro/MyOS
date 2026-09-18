@@ -32,10 +32,8 @@ export void draw_window(Node *n) {
     i32 w = n->w;
     i32 h = n->h;
     i32 state = n->state;
-    i32 focused_bit = NodeState::FOCUSED;
-    i32 hovered_bit = NodeState::HOVERED;
-    i32 active = state & focused_bit;
-    i32 hovered = state & hovered_bit;
+    i32 active = state & NodeState::FOCUSED;
+    i32 hovered = state & NodeState::HOVERED;
 
     i32 r = theme.window_radius() * s;
     i32 tb = theme.titlebar_h() * s;
@@ -98,7 +96,7 @@ export void draw_window(Node *n) {
                 graphics.fill_rect(bx - s / 2, cy - k, s + 1, 2 * k + 1, g);
             }
         }
-        which = which + 1;
+        which++;
     }
 
     // Resize grip: three short diagonal lines in the bottom-right corner.
@@ -135,31 +133,27 @@ export void draw_button(Node *n) {
     i32 w = n->w;
     i32 h = n->h;
     i32 state = n->state;
-    i32 pressed_bit = NodeState::PRESSED;
-    i32 hovered_bit = NodeState::HOVERED;
-    i32 primary_bit = NodeStyle::PRIMARY;
     i32 style = n->style;
     i32 r = theme.button_radius() * s;
 
     i32 face = theme.button_face();
     i32 label = theme.text_primary();
     i32 border = theme.button_border();
-    if ((style & primary_bit) != 0) {
+    if ((style & NodeStyle::PRIMARY) != 0) {
         face = theme.accent();
         label = theme.on_accent();
         border = theme.accent_pressed();
-        if ((state & pressed_bit) != 0) { face = theme.accent_pressed(); }
-        else if ((state & hovered_bit) != 0) { face = theme.accent_hover(); }
+        if ((state & NodeState::PRESSED) != 0) { face = theme.accent_pressed(); }
+        else if ((state & NodeState::HOVERED) != 0) { face = theme.accent_hover(); }
     } else {
-        if ((state & pressed_bit) != 0) { face = theme.button_face_pressed(); }
-        else if ((state & hovered_bit) != 0) { face = theme.button_face_hover(); }
+        if ((state & NodeState::PRESSED) != 0) { face = theme.button_face_pressed(); }
+        else if ((state & NodeState::HOVERED) != 0) { face = theme.button_face_hover(); }
     }
     label = node_fg(n, label);
 
     graphics.fill_round_rect(x, y, w, h, r, face);
     graphics.draw_round_rect(x, y, w, h, r, s, border);
-    i32 focused_bit = NodeState::FOCUSED;
-    if ((state & focused_bit) != 0) {
+    if ((state & NodeState::FOCUSED) != 0) {
         // Keyboard focus ring just outside the button.
         i32 ring = theme.accent();
         graphics.draw_round_rect(x - 2 * s, y - 2 * s, w + 4 * s, h + 4 * s, r + 2 * s, s, ring);
@@ -207,8 +201,7 @@ export void draw_rows_box(Node *n, i32 focused) {
 export void draw_text_area(Node *n) {
     i32 s = dom.ui_scale();
     i32 state = n->state;
-    i32 focused_bit = NodeState::FOCUSED;
-    i32 focused = state & focused_bit;
+    i32 focused = state & NodeState::FOCUSED;
     i32 x = n->x;
     i32 y = n->y;
     i32 w = n->w;
@@ -227,7 +220,7 @@ export void draw_text_area(Node *n) {
     i32 first = n->scroll;
     i32 start = dom_widgets.line_start(n, first);
     i32 row = 0;
-    i32 caret_x = 0 - 1;
+    i32 caret_x = -1;
     i32 caret_y = 0;
     while (row < rows) {
         if (start > len) { break; }
@@ -244,7 +237,7 @@ export void draw_text_area(Node *n) {
             }
         }
         start = start + llen + 1;
-        row = row + 1;
+        row++;
     }
     if (focused != 0) {
         if (!ro) {
@@ -305,8 +298,7 @@ export void draw_rows(Node *n, i32 hl, i32 hl_color, i32 hl_fg) {
 
 export void draw_list(Node *n) {
     i32 state = n->state;
-    i32 focused_bit = NodeState::FOCUSED;
-    i32 focused = state & focused_bit;
+    i32 focused = state & NodeState::FOCUSED;
     draw_rows_box(n, focused);
     i32 sel = n->sel - 1;
     i32 hl = theme.accent();
@@ -337,9 +329,8 @@ export void draw_text_node(Node *n) {
     i32 color = theme.text_primary();
     color = node_fg(n, color);
     i32 bold = dom.text_bold(n);
-    i32 center_bit = NodeStyle::CENTER;
     i32 style = n->style;
-    if ((style & center_bit) != 0) {
+    if ((style & NodeStyle::CENTER) != 0) {
         graphics.draw_label_centered(n->x, n->y, n->w, (char*)n->text, color, bold, s);
     } else {
         graphics.draw_label(n->x, n->y, (char*)n->text, color, bold, s);
@@ -353,8 +344,7 @@ export void draw_text_input(Node *n) {
     i32 w = n->w;
     i32 h = n->h;
     i32 state = n->state;
-    i32 focused_bit = NodeState::FOCUSED;
-    i32 focused = state & focused_bit;
+    i32 focused = state & NodeState::FOCUSED;
     i32 r = theme.input_radius() * s;
     i32 pad = theme.input_padding_x() * s;
 
@@ -396,10 +386,7 @@ export void draw_checkbox(Node *n) {
     i32 y = n->y;
     i32 h = n->h;
     i32 state = n->state;
-    i32 checked_bit = NodeState::CHECKED;
-    i32 hovered_bit = NodeState::HOVERED;
-    i32 pressed_bit = NodeState::PRESSED;
-    i32 checked = state & checked_bit;
+    i32 checked = state & NodeState::CHECKED;
     i32 box = theme.checkbox_size() * s;
     i32 r = theme.checkbox_radius() * s;
     i32 by = y + (h - box) / 2;
@@ -409,16 +396,15 @@ export void draw_checkbox(Node *n) {
     if (checked != 0) {
         face = theme.accent();
         border = theme.accent_pressed();
-        if ((state & pressed_bit) != 0) { face = theme.accent_pressed(); }
-        else if ((state & hovered_bit) != 0) { face = theme.accent_hover(); }
+        if ((state & NodeState::PRESSED) != 0) { face = theme.accent_pressed(); }
+        else if ((state & NodeState::HOVERED) != 0) { face = theme.accent_hover(); }
     } else {
-        if ((state & pressed_bit) != 0) { face = theme.button_face_pressed(); }
-        else if ((state & hovered_bit) != 0) { face = theme.button_face_hover(); }
+        if ((state & NodeState::PRESSED) != 0) { face = theme.button_face_pressed(); }
+        else if ((state & NodeState::HOVERED) != 0) { face = theme.button_face_hover(); }
     }
     graphics.fill_round_rect(x, by, box, box, r, face);
     graphics.draw_round_rect(x, by, box, box, r, s, border);
-    i32 focused_bit = NodeState::FOCUSED;
-    if ((state & focused_bit) != 0) {
+    if ((state & NodeState::FOCUSED) != 0) {
         i32 ring = theme.accent();
         graphics.draw_round_rect(x - 2 * s, by - 2 * s, box + 4 * s, box + 4 * s, r + 2 * s, s, ring);
     }
@@ -435,7 +421,7 @@ export void draw_checkbox(Node *n) {
         while (k < s + 1) {
             graphics.draw_line(x0, y0 + k, x1, y1 + k, white);
             graphics.draw_line(x1, y1 + k, x2, y2 + k, white);
-            k = k + 1;
+            k++;
         }
     }
     if (n->text != 0) {
@@ -465,14 +451,13 @@ export void draw_panel(Node *n) {
 // 0 when there is none. Walks the desktop's children, so a closed window
 // drops out and ids keep creation order.
 export i32 next_window_after(i32 after) {
-    i32 kw = NodeKind::WINDOW;
     i32 best = 0;
     i32 child_id = dom.first_child(dom.get_g_desktop_node_id());
     while (child_id != 0) {
         Node *c = dom.node_ptr(child_id);
         if (c == 0) { child_id = 0; }
         else {
-            if (c->kind == kw) {
+            if (c->kind == NodeKind::WINDOW) {
                 if (child_id > after) {
                     if (best == 0) { best = child_id; }
                     else if (child_id < best) { best = child_id; }
@@ -640,47 +625,31 @@ export void draw_node(Node *n) {
     i32 h = n->h;
     i32 scale = dom.ui_scale();
 
-    // Copy the NODE_* u16 globals into i32 locals before comparing. Comparing an
-    // i32 against a `u16` global directly (kind == dom.NODE_WINDOW) miscompiles and is
-    // always false, even when both hold the same value; the local coerces cleanly.
-    i32 kw = NodeKind::WINDOW;
-    i32 kbox = NodeKind::BOX;
-    i32 kb = NodeKind::BUTTON;
-    i32 kt = NodeKind::TEXT;
-    i32 ki = NodeKind::TEXT_INPUT;
-    i32 kc = NodeKind::CHECKBOX;
-    i32 ks = NodeKind::SEPARATOR;
-    i32 kp = NodeKind::PANEL;
-    i32 ktb = NodeKind::TASKBAR;
-    i32 kta = NodeKind::TEXT_AREA;
-    i32 kl = NodeKind::LIST;
-    i32 km = NodeKind::MENU;
-
-    if (kind == kta) {
+    if (kind == NodeKind::TEXT_AREA) {
         draw_text_area(n);
-    } else if (kind == kl) {
+    } else if (kind == NodeKind::LIST) {
         draw_list(n);
-    } else if (kind == km) {
+    } else if (kind == NodeKind::MENU) {
         draw_menu(n);
-    } else if (kind == kbox) {
+    } else if (kind == NodeKind::BOX) {
         graphics.fill_rect(x, y, w, h, n->background_color);
         graphics.draw_rect_scaled(x, y, w, h, n->border_color, scale);
-    } else if (kind == kw) {
+    } else if (kind == NodeKind::WINDOW) {
         draw_window(n);
-    } else if (kind == kb) {
+    } else if (kind == NodeKind::BUTTON) {
         draw_button(n);
-    } else if (kind == kt) {
+    } else if (kind == NodeKind::TEXT) {
         draw_text_node(n);
-    } else if (kind == ki) {
+    } else if (kind == NodeKind::TEXT_INPUT) {
         draw_text_input(n);
-    } else if (kind == kc) {
+    } else if (kind == NodeKind::CHECKBOX) {
         draw_checkbox(n);
-    } else if (kind == ks) {
+    } else if (kind == NodeKind::SEPARATOR) {
         i32 sep = theme.separator();
         graphics.blend_rect(x, y, w, h, sep);
-    } else if (kind == kp) {
+    } else if (kind == NodeKind::PANEL) {
         draw_panel(n);
-    } else if (kind == ktb) {
+    } else if (kind == NodeKind::TASKBAR) {
         draw_taskbar(n);
     }
     // Structural nodes (root/system/process/...) draw nothing.

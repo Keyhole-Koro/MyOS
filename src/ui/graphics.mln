@@ -192,7 +192,7 @@ export void push_clip(i32 x, i32 y, i32 w, i32 h) {
         g_clip_stack_x1[g_clip_sp] = g_clip_x1;
         g_clip_stack_y1[g_clip_sp] = g_clip_y1;
     }
-    g_clip_sp = g_clip_sp + 1;
+    g_clip_sp++;
     i32 x1 = x + w;
     i32 y1 = y + h;
     if (x > g_clip_x0) { g_clip_x0 = x; }
@@ -204,7 +204,7 @@ export void push_clip(i32 x, i32 y, i32 w, i32 h) {
 
 export void pop_clip() {
     if (g_clip_sp <= 0) { return; }
-    g_clip_sp = g_clip_sp - 1;
+    g_clip_sp--;
     i32 i = g_clip_sp;
     if (i >= CLIP_DEPTH) { i = CLIP_DEPTH - 1; }
     g_clip_x0 = g_clip_stack_x0[i];
@@ -465,7 +465,7 @@ export void draw_rect_scaled(i32 x, i32 y, i32 w, i32 h, i32 color, i32 scale) {
 // ---------------------------------------------------------------------------
 
 i32 iabs(i32 v) {
-    if (v < 0) { return 0 - v; }
+    if (v < 0) { return -v; }
     return v;
 }
 
@@ -541,9 +541,9 @@ export void draw_shadow(i32 x, i32 y, i32 w, i32 h, i32 r, i32 size, i32 offset_
 export void draw_line(i32 x0, i32 y0, i32 x1, i32 y1, i32 color) {
     i32 dx = iabs(x1 - x0);
     i32 dy = iabs(y1 - y0);
-    i32 sx = 0 - 1;
+    i32 sx = -1;
     if (x0 < x1) { sx = 1; }
-    i32 sy = 0 - 1;
+    i32 sy = -1;
     if (y0 < y1) { sy = 1; }
     i32 err = dx - dy;
 
@@ -553,7 +553,7 @@ export void draw_line(i32 x0, i32 y0, i32 x1, i32 y1, i32 color) {
             if (y0 == y1) { return; }
         }
         i32 e2 = err * 2;
-        if (e2 > (0 - dy)) {
+        if (e2 > -dy) {
             err = err - dy;
             x0 = x0 + sx;
         }
@@ -579,11 +579,11 @@ export void draw_circle(i32 cx, i32 cy, i32 r, i32 color) {
         put_pixel(cx - y, cy - x, color);
         put_pixel(cx + y, cy - x, color);
         put_pixel(cx + x, cy - y, color);
-        y = y + 1;
+        y++;
         if (err < 0) {
             err = err + 2 * y + 1;
         } else {
-            x = x - 1;
+            x--;
             err = err + 2 * (y - x) + 1;
         }
     }
@@ -592,17 +592,17 @@ export void draw_circle(i32 cx, i32 cy, i32 r, i32 color) {
 // Fill a solid disc of radius r centered at (cx, cy). Draws each scanline as a
 // horizontal fill_rect (DMA2D-accelerated).
 export void fill_circle(i32 cx, i32 cy, i32 r, i32 color) {
-    i32 dy = 0 - r;
+    i32 dy = -r;
     while (dy <= r) {
         // Half-width of the chord at this row: sqrt(r*r - dy*dy), computed by
         // widening from 0 while w*w still fits (no sqrt/multiply-heavy loop).
         i32 rr = r * r - dy * dy;
         i32 w = 0;
         while ((w + 1) * (w + 1) <= rr) {
-            w = w + 1;
+            w++;
         }
         fill_rect(cx - w, cy + dy, w * 2 + 1, 1, color);
-        dy = dy + 1;
+        dy++;
     }
 }
 
@@ -640,7 +640,7 @@ export i32 text_width(char* s, i32 bold, i32 scale) {
         if (c != 10) {
             w = w + font_sans.advance(face, c);
         }
-        i = i + 1;
+        i++;
         c = (i32)s[i] & 0xFF;
     }
     return w;
@@ -657,7 +657,7 @@ export i32 text_width_n(char* s, i32 n, i32 bold, i32 scale) {
         if (c != 10) {
             w = w + font_sans.advance(face, c);
         }
-        i = i + 1;
+        i++;
         c = (i32)s[i] & 0xFF;
     }
     return w;
@@ -701,7 +701,7 @@ export void draw_label(i32 x, i32 y, char* s, i32 color, i32 bold, i32 scale) {
             }
             cx = cx + adv;
         }
-        i = i + 1;
+        i++;
         c = (i32)s[i] & 0xFF;
     }
 }
@@ -736,9 +736,9 @@ void draw_char_clipped(i32 x, i32 y, i32 ch, i32 fg) {
             if ((bits & mask) != 0) {
                 put_pixel(x + col, y + row, fg);
             }
-            col = col + 1;
+            col++;
         }
-        row = row + 1;
+        row++;
     }
 }
 
@@ -778,10 +778,10 @@ export void draw_char(i32 x, i32 y, i32 ch, i32 fg, i32 bg) {
                 *ptr = fg;
             }
             addr = addr + 4;
-            col = col + 1;
+            col++;
         }
         row_addr = row_addr + stride;
-        row = row + 1;
+        row++;
     }
 }
 
@@ -800,7 +800,7 @@ export void draw_text(i32 x, i32 y, char* s, i32 fg, i32 bg) {
             draw_char(cx, cy, c, fg, bg);
             cx = cx + font.glyph_w();
         }
-        i = i + 1;
+        i++;
         c = (i32)s[i] & 0xFF;
     }
 }
@@ -821,9 +821,9 @@ export void draw_char_scaled(i32 x, i32 y, i32 ch, i32 fg, i32 bg, i32 scale) {
             if ((bits & mask) != 0) {
                 fill_rect(x + col * scale, y + row * scale, scale, scale, fg);
             }
-            col = col + 1;
+            col++;
         }
-        row = row + 1;
+        row++;
     }
 }
 
@@ -843,7 +843,7 @@ export void draw_text_scaled(i32 x, i32 y, char* s, i32 fg, i32 bg, i32 scale) {
             draw_char_scaled(cx, cy, c, fg, bg, scale);
             cx = cx + 8 * scale;
         }
-        i = i + 1;
+        i++;
         c = (i32)s[i] & 0xFF;
     }
 }
@@ -863,7 +863,7 @@ export i32 draw_int(i32 x, i32 y, i32 value, i32 fg, i32 bg) {
     while (c != 0) {
         draw_char(cx, y, c, fg, bg);
         cx = cx + font.glyph_w();
-        i = i + 1;
+        i++;
         c = (i32)digits[i] & 0xFF;
     }
     return cx;
@@ -877,9 +877,9 @@ export void blit(i32 x, i32 y, i32 w, i32 h, ref i32 src) {
         i32 col = 0;
         while (col < w) {
             put_pixel(x + col, y + row, src[row * w + col]);
-            col = col + 1;
+            col++;
         }
-        row = row + 1;
+        row++;
     }
 }
 
@@ -894,8 +894,8 @@ export void blit_key(i32 x, i32 y, i32 w, i32 h, ref i32 src, i32 key_color) {
             if (px != key_color) {
                 put_pixel(x + col, y + row, px);
             }
-            col = col + 1;
+            col++;
         }
-        row = row + 1;
+        row++;
     }
 }

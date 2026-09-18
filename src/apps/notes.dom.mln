@@ -84,7 +84,7 @@ i32 build_ui(i32 x, i32 y) {
 export i32 mount() {
     if (g_count >= INSTANCES) { return 0; }
     i32 offset = 28 * g_opened;
-    g_opened = g_opened + 1;
+    g_opened++;
     i32 win = build_ui(540 + offset, 96 + offset);
     dom.append_child(dom.desktop_id(), win);
 
@@ -100,11 +100,11 @@ export i32 mount() {
     // Both fields echo into the same label.
     g_field_ids[g_count] = title;
     g_echo_ids[g_count] = echo;
-    g_count = g_count + 1;
+    g_count++;
     if (g_count < INSTANCES) {
         g_field_ids[g_count] = body;
         g_echo_ids[g_count] = echo;
-        g_count = g_count + 1;
+        g_count++;
     }
     return win;
 }

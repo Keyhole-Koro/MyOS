@@ -280,30 +280,18 @@ export i32 List(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 onChan
 // `export u16` global doesn't resolve as a cross-package symbol (see
 // dom.set_hovered() and friends above); dom_automation.mln calls dom_elements.role_name().
 export char* role_name(i32 role) {
-    i32 r_root = NodeRole::ROOT;
-    i32 r_desktop = NodeRole::DESKTOP;
-    i32 r_window = NodeRole::WINDOW;
-    i32 r_button = NodeRole::BUTTON;
-    i32 r_text = NodeRole::TEXT;
-    i32 r_textbox = NodeRole::TEXTBOX;
-    i32 r_checkbox = NodeRole::CHECKBOX;
-    i32 r_toolbar = NodeRole::TOOLBAR;
-    i32 r_separator = NodeRole::SEPARATOR;
-    i32 r_textarea = NodeRole::TEXTAREA;
-    i32 r_list = NodeRole::LIST;
-    i32 r_menu = NodeRole::MENU;
-    if (role == r_textarea) { return "textarea"; }
-    if (role == r_list) { return "list"; }
-    if (role == r_menu) { return "menu"; }
-    if (role == r_root) { return "root"; }
-    if (role == r_desktop) { return "desktop"; }
-    if (role == r_window) { return "window"; }
-    if (role == r_button) { return "button"; }
-    if (role == r_text) { return "text"; }
-    if (role == r_textbox) { return "textbox"; }
-    if (role == r_checkbox) { return "checkbox"; }
-    if (role == r_toolbar) { return "toolbar"; }
-    if (role == r_separator) { return "separator"; }
+    if (role == NodeRole::TEXTAREA) { return "textarea"; }
+    if (role == NodeRole::LIST) { return "list"; }
+    if (role == NodeRole::MENU) { return "menu"; }
+    if (role == NodeRole::ROOT) { return "root"; }
+    if (role == NodeRole::DESKTOP) { return "desktop"; }
+    if (role == NodeRole::WINDOW) { return "window"; }
+    if (role == NodeRole::BUTTON) { return "button"; }
+    if (role == NodeRole::TEXT) { return "text"; }
+    if (role == NodeRole::TEXTBOX) { return "textbox"; }
+    if (role == NodeRole::CHECKBOX) { return "checkbox"; }
+    if (role == NodeRole::TOOLBAR) { return "toolbar"; }
+    if (role == NodeRole::SEPARATOR) { return "separator"; }
     return "none";
 }
 

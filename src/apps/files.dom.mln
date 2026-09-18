@@ -46,7 +46,7 @@ export void refresh() {
         k = strbuf.append(&g_items[0], 1024, k, "   (");
         k = strbuf.append_i32(&g_items[0], 1024, k, fs.entry_size(idx));
         k = strbuf.append(&g_items[0], 1024, k, " bytes)");
-        count = count + 1;
+        count++;
         start = idx + 1;
     }
     dom_widgets.list_set_items(g_list, &g_items[0]);

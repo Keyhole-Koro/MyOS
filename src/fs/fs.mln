@@ -899,7 +899,7 @@ export Result<Option<i32>, FsError> dir_next(i32 start, char* out, i32 cap) {
                 if (c == 0) { break; }
                 if (i + 1 >= cap) { break; }
                 out[i] = (char)c;
-                i = i + 1;
+                i++;
             }
             out[i] = (char)0;
             return Ok(Some(idx));

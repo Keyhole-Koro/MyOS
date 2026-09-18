@@ -332,10 +332,8 @@ export char* automation_value_of(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return ""; }
     i32 role = n->role;
-    i32 textbox = NodeRole::TEXTBOX;
-    i32 textarea = NodeRole::TEXTAREA;
-    if (role == textbox) { return (char*)n->text; }
-    if (role == textarea) { return (char*)n->text; }
+    if (role == NodeRole::TEXTBOX) { return (char*)n->text; }
+    if (role == NodeRole::TEXTAREA) { return (char*)n->text; }
     return "";
 }
 
@@ -402,8 +400,7 @@ export void node_extent(Node *n) {
     i32 y = n->y;
     i32 w = n->w;
     i32 h = n->h;
-    i32 kw = NodeKind::WINDOW;
-    if (n->kind == kw) {
+    if (n->kind == NodeKind::WINDOW) {
         i32 s = ui_scale();
         i32 size = theme.shadow_size() * s;
         i32 off = theme.shadow_offset() * s;
@@ -438,9 +435,7 @@ export void clear_damage() {
 // --- text metrics ---------------------------------------------------------------------
 
 export i32 text_bold(Node *n) {
-    i32 st = n->style;
-    i32 b = NodeStyle::BOLD;
-    if ((st & b) != 0) { return 1; }
+    if ((n->style & NodeStyle::BOLD) != 0) { return 1; }
     return 0;
 }
 
@@ -534,11 +529,9 @@ export void relayout_row(Node *row) {
 }
 
 export void relayout_container(Node *n) {
-    i32 kc = NodeKind::COLUMN;
-    i32 kr = NodeKind::ROW;
     i32 k = n->kind;
-    if (k == kc) { relayout_column(n); }
-    if (k == kr) { relayout_row(n); }
+    if (k == NodeKind::COLUMN) { relayout_column(n); }
+    if (k == NodeKind::ROW) { relayout_row(n); }
 }
 
 // --- prop accessors ---------------------------------------------------------------------
@@ -582,8 +575,7 @@ export void set_text(i32 id, char *text) {
     // clipping, layout, and hit testing all agree. Windows and buttons also
     // have text, but their authored layout bounds must never be replaced by
     // caption size.
-    i32 kt = NodeKind::TEXT;
-    if (n->kind == kt) {
+    if (n->kind == NodeKind::TEXT) {
         n->w = (u16)text_width_of(n);
         n->h = (u16)text_height_of(n);
         Node *parent = node_ptr(n->parent);
@@ -631,8 +623,7 @@ export void set_style(i32 id, i32 style) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
     n->style = (u16)style;
-    i32 kt = NodeKind::TEXT;
-    if (n->kind == kt) {
+    if (n->kind == NodeKind::TEXT) {
         n->w = (u16)text_width_of(n);
         n->h = (u16)text_height_of(n);
     }
@@ -654,39 +645,28 @@ export void set_column_layout(i32 id, i32 padding, i32 gap) {
 // must not damage its area; windows repaint when focus changes (title bar).
 export i32 state_is_visible(Node *n, i32 flag) {
     i32 kind = n->kind;
-    i32 kb = NodeKind::BUTTON;
-    i32 kc = NodeKind::CHECKBOX;
-    i32 ki = NodeKind::TEXT_INPUT;
-    i32 kw = NodeKind::WINDOW;
-    i32 kta = NodeKind::TEXT_AREA;
-    i32 kl = NodeKind::LIST;
-    i32 km = NodeKind::MENU;
-    i32 hovered = NodeState::HOVERED;
-    i32 pressed = NodeState::PRESSED;
-    i32 focused = NodeState::FOCUSED;
-    i32 hit_testable = NodeState::HIT_TESTABLE;
-    if (flag == hovered) {
-        if (kind == kb) { return 1; }
-        if (kind == kc) { return 1; }
-        if (kind == kw) { return 1; } // title-bar button highlight
-        if (kind == km) { return 1; }
+    if (flag == NodeState::HOVERED) {
+        if (kind == NodeKind::BUTTON) { return 1; }
+        if (kind == NodeKind::CHECKBOX) { return 1; }
+        if (kind == NodeKind::WINDOW) { return 1; } // title-bar button highlight
+        if (kind == NodeKind::MENU) { return 1; }
         return 0;
     }
-    if (flag == pressed) {
-        if (kind == kb) { return 1; }
-        if (kind == kc) { return 1; }
+    if (flag == NodeState::PRESSED) {
+        if (kind == NodeKind::BUTTON) { return 1; }
+        if (kind == NodeKind::CHECKBOX) { return 1; }
         return 0;
     }
-    if (flag == focused) {
-        if (kind == ki) { return 1; }
-        if (kind == kw) { return 1; }
-        if (kind == kta) { return 1; }
-        if (kind == kl) { return 1; }
-        if (kind == kb) { return 1; }  // focus ring
-        if (kind == kc) { return 1; }
+    if (flag == NodeState::FOCUSED) {
+        if (kind == NodeKind::TEXT_INPUT) { return 1; }
+        if (kind == NodeKind::WINDOW) { return 1; }
+        if (kind == NodeKind::TEXT_AREA) { return 1; }
+        if (kind == NodeKind::LIST) { return 1; }
+        if (kind == NodeKind::BUTTON) { return 1; }  // focus ring
+        if (kind == NodeKind::CHECKBOX) { return 1; }
         return 0;
     }
-    if (flag == hit_testable) { return 0; }
+    if (flag == NodeState::HIT_TESTABLE) { return 0; }
     return 1; // visibility, checked and everything else always matter
 }
 
@@ -783,10 +763,8 @@ export void fire_change(Node *n) {
 export i32 dispatch_click(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return 0; }
-    i32 kc = NodeKind::CHECKBOX;
-    if (n->kind == kc) {
-        i32 checked = NodeState::CHECKED;
-        i32 now = n->state & checked;
+    if (n->kind == NodeKind::CHECKBOX) {
+        i32 now = n->state & NodeState::CHECKED;
         set_state_flag(id, NodeState::CHECKED, now == 0);
         fire_change(n);
     }
@@ -806,8 +784,7 @@ export i32 dispatch_click(i32 id) {
 export void content_origin(Node *parent) {
     g_ext_x = parent->x;
     g_ext_y = parent->y;
-    i32 kw = NodeKind::WINDOW;
-    if (parent->kind == kw) {
+    if (parent->kind == NodeKind::WINDOW) {
         g_ext_y = g_ext_y + theme.titlebar_h() * ui_scale();
     }
 }
@@ -900,14 +877,10 @@ export void bring_to_front(i32 id) {
 // List/Menu); everyone else points at a string the caller owns.
 export i32 owns_buffer(Node *n) {
     i32 k = n->kind;
-    i32 ki = NodeKind::TEXT_INPUT;
-    i32 kta = NodeKind::TEXT_AREA;
-    i32 kl = NodeKind::LIST;
-    i32 km = NodeKind::MENU;
-    if (k == ki) { return 1; }
-    if (k == kta) { return 1; }
-    if (k == kl) { return 1; }
-    if (k == km) { return 1; }
+    if (k == NodeKind::TEXT_INPUT) { return 1; }
+    if (k == NodeKind::TEXT_AREA) { return 1; }
+    if (k == NodeKind::LIST) { return 1; }
+    if (k == NodeKind::MENU) { return 1; }
     return 0;
 }
 
@@ -978,12 +951,11 @@ export i32 next_sibling(i32 id) {
 // The window containing a node (or the node itself if it is a window); 0 if
 // it is not inside one.
 export i32 window_of(i32 id) {
-    i32 kw = NodeKind::WINDOW;
     i32 cur = id;
     while (cur != 0) {
         Node *n = node_ptr(cur);
         if (n == 0) { return 0; }
-        if (n->kind == kw) { return cur; }
+        if (n->kind == NodeKind::WINDOW) { return cur; }
         cur = n->parent;
     }
     return 0;
@@ -1056,11 +1028,9 @@ export i32 get_BASE_DISPLAY_HEIGHT() { return BASE_DISPLAY_HEIGHT; }
 export void set_BASE_DISPLAY_HEIGHT(i32 v) { BASE_DISPLAY_HEIGHT = v; }
 
 export i32 clips_children(Node *n) {
-    i32 kw = NodeKind::WINDOW;
-    i32 kp = NodeKind::PANEL;
     i32 k = n->kind;
-    if (k == kw) { return 1; }
-    if (k == kp) { return 1; }
+    if (k == NodeKind::WINDOW) { return 1; }
+    if (k == NodeKind::PANEL) { return 1; }
     return 0;
 }
 

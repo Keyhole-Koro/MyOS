@@ -151,7 +151,7 @@ export void maximize_window(i32 win) {
     n->sh = n->h;
     i32 dw = graphics.display_width();
     i32 dh = graphics.display_height() - taskbar_height();
-    dom.move_node(win, 0 - n->x, 0 - n->y);
+    dom.move_node(win, -n->x, -n->y);
     resize_window(win, dw, dh);
     dom.set_state_flag(win, NodeState::MAXIMIZED, 1);
 }

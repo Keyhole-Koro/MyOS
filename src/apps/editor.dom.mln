@@ -63,7 +63,7 @@ void on_save(i32 id) {
     if (path[0] == 0) { editor_status("enter a file name first"); return; }
     char *text = dom.text_of(g_area);
     i32 len = 0;
-    while (text[len] != 0) { len = len + 1; }
+    for (; text[len] != 0; len++) {}
     // Bind the Result: a discarded aggregate return has no out-pointer.
     Result<_, FsError> removed = fs.remove(path);
     case removed of { Ok(_) -> _; Err(_) -> _; };
