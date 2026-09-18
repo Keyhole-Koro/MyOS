@@ -936,36 +936,36 @@ export void set_column_layout(i32 id, i32 padding, i32 gap) {
 }
 
 /**
- * Checks whether changing a state flag alters node visual appearance.
+ * Determines whether a state flag change visibly alters a node's rendering.
  * @param n Pointer to DOM Node.
  * @param flag NodeState flag.
- * @return 1 if visible appearance changes, 0 otherwise.
+ * @return True if visible appearance changes, false otherwise.
  */
-export i32 state_is_visible(Node *n, i32 flag) {
+export bool state_is_visible(Node *n, i32 flag) {
     i32 kind = n->kind;
     if (flag == NodeState::HOVERED) {
-        if (kind == NodeKind::BUTTON) { return 1; }
-        if (kind == NodeKind::CHECKBOX) { return 1; }
-        if (kind == NodeKind::WINDOW) { return 1; } // title-bar button highlight
-        if (kind == NodeKind::MENU) { return 1; }
-        return 0;
+        if (kind == NodeKind::BUTTON) { return true; }
+        if (kind == NodeKind::CHECKBOX) { return true; }
+        if (kind == NodeKind::WINDOW) { return true; } // title-bar button highlight
+        if (kind == NodeKind::MENU) { return true; }
+        return false;
     }
     if (flag == NodeState::PRESSED) {
-        if (kind == NodeKind::BUTTON) { return 1; }
-        if (kind == NodeKind::CHECKBOX) { return 1; }
-        return 0;
+        if (kind == NodeKind::BUTTON) { return true; }
+        if (kind == NodeKind::CHECKBOX) { return true; }
+        return false;
     }
     if (flag == NodeState::FOCUSED) {
-        if (kind == NodeKind::TEXT_INPUT) { return 1; }
-        if (kind == NodeKind::WINDOW) { return 1; }
-        if (kind == NodeKind::TEXT_AREA) { return 1; }
-        if (kind == NodeKind::LIST) { return 1; }
-        if (kind == NodeKind::BUTTON) { return 1; }  // focus ring
-        if (kind == NodeKind::CHECKBOX) { return 1; }
-        return 0;
+        if (kind == NodeKind::TEXT_INPUT) { return true; }
+        if (kind == NodeKind::WINDOW) { return true; }
+        if (kind == NodeKind::TEXT_AREA) { return true; }
+        if (kind == NodeKind::LIST) { return true; }
+        if (kind == NodeKind::BUTTON) { return true; }  // focus ring
+        if (kind == NodeKind::CHECKBOX) { return true; }
+        return false;
     }
-    if (flag == NodeState::HIT_TESTABLE) { return 0; }
-    return 1; // visibility, checked and everything else always matter
+    if (flag == NodeState::HIT_TESTABLE) { return false; }
+    return true; // visibility, checked and everything else always matter
 }
 
 /**
@@ -985,7 +985,7 @@ export void set_state_flag(i32 id, i32 flag, i32 on) {
     // defeat the whole point.
     if (next != state) {
         n->state = (u16)next;
-        if (state_is_visible(n, flag) != 0) {
+        if (state_is_visible(n, flag)) {
             damage_node(id);
         }
         touch();
@@ -996,14 +996,14 @@ export void set_state_flag(i32 id, i32 flag, i32 on) {
  * Tests whether a specific state flag bit is set on a node.
  * @param id DOM Node ID.
  * @param flag NodeState bitmask.
- * @return 1 if flag is set, 0 otherwise.
+ * @return True if flag is set, false otherwise.
  */
-export i32 get_state_flag(i32 id, i32 flag) {
+export bool get_state_flag(i32 id, i32 flag) {
     Node *n = node_ptr(id);
-    if (n == 0) { return 0; }
+    if (n == 0) { return false; }
     i32 state = n->state;
-    if ((state & flag) != 0) { return 1; }
-    return 0;
+    if ((state & flag) != 0) { return true; }
+    return false;
 }
 
 /**
@@ -1044,51 +1044,51 @@ export void set_checked(i32 id, i32 on) { set_state_flag(id, NodeState::CHECKED,
 /**
  * Checks if a node has the CHECKED state flag set.
  * @param id DOM Node ID.
- * @return 1 if checked, 0 otherwise.
+ * @return True if checked, false otherwise.
  */
-export i32 is_checked(i32 id) { return get_state_flag(id, NodeState::CHECKED); }
+export bool is_checked(i32 id) { return get_state_flag(id, NodeState::CHECKED); }
 
 /**
  * Checks if a node has the VISIBLE state flag set.
  * @param id DOM Node ID.
- * @return 1 if visible, 0 otherwise.
+ * @return True if visible, false otherwise.
  */
-export i32 is_visible(i32 id) { return get_state_flag(id, NodeState::VISIBLE); }
+export bool is_visible(i32 id) { return get_state_flag(id, NodeState::VISIBLE); }
 
 /**
  * Checks if a node has the ENABLED state flag set.
  * @param id DOM Node ID.
- * @return 1 if enabled, 0 otherwise.
+ * @return True if enabled, false otherwise.
  */
-export i32 is_enabled(i32 id) { return get_state_flag(id, NodeState::ENABLED); }
+export bool is_enabled(i32 id) { return get_state_flag(id, NodeState::ENABLED); }
 
 /**
  * Checks if a node has the FOCUSED state flag set.
  * @param id DOM Node ID.
- * @return 1 if focused, 0 otherwise.
+ * @return True if focused, false otherwise.
  */
-export i32 is_focused(i32 id) { return get_state_flag(id, NodeState::FOCUSED); }
+export bool is_focused(i32 id) { return get_state_flag(id, NodeState::FOCUSED); }
 
 /**
  * Checks if a node has the HIT_TESTABLE state flag set.
  * @param id DOM Node ID.
- * @return 1 if hit-testable, 0 otherwise.
+ * @return True if hit-testable, false otherwise.
  */
-export i32 is_hit_testable(i32 id) { return get_state_flag(id, NodeState::HIT_TESTABLE); }
+export bool is_hit_testable(i32 id) { return get_state_flag(id, NodeState::HIT_TESTABLE); }
 
 /**
  * Checks if a node has the HOVERED state flag set.
  * @param id DOM Node ID.
- * @return 1 if hovered, 0 otherwise.
+ * @return True if hovered, false otherwise.
  */
-export i32 is_hovered(i32 id) { return get_state_flag(id, NodeState::HOVERED); }
+export bool is_hovered(i32 id) { return get_state_flag(id, NodeState::HOVERED); }
 
 /**
  * Checks if a node has the PRESSED state flag set.
  * @param id DOM Node ID.
- * @return 1 if pressed, 0 otherwise.
+ * @return True if pressed, false otherwise.
  */
-export i32 is_pressed(i32 id) { return get_state_flag(id, NodeState::PRESSED); }
+export bool is_pressed(i32 id) { return get_state_flag(id, NodeState::PRESSED); }
 
 /**
  * Returns raw state bitmask of a node.
@@ -1554,13 +1554,13 @@ export void set_BASE_DISPLAY_HEIGHT(i32 v) { BASE_DISPLAY_HEIGHT = v; }
 /**
  * Checks whether a node clips its children to its bounding box.
  * @param n Pointer to DOM Node.
- * @return 1 if container clips children, 0 otherwise.
+ * @return True if container clips children, false otherwise.
  */
-export i32 clips_children(Node *n) {
+export bool clips_children(Node *n) {
     i32 k = n->kind;
-    if (k == NodeKind::WINDOW) { return 1; }
-    if (k == NodeKind::PANEL) { return 1; }
-    return 0;
+    if (k == NodeKind::WINDOW) { return true; }
+    if (k == NodeKind::PANEL) { return true; }
+    return false;
 }
 
 // --- hit-test --------------------------------------------------------------------------------------
@@ -1570,20 +1570,20 @@ export i32 clips_children(Node *n) {
  * @param n Pointer to DOM Node.
  * @param px Target X coordinate.
  * @param py Target Y coordinate.
- * @return 1 if point is inside node bounds, 0 otherwise.
+ * @return True if point is inside node bounds, false otherwise.
  */
-export i32 node_contains(Node *n, i32 px, i32 py) {
+export bool node_contains(Node *n, i32 px, i32 py) {
     i32 x = n->x;
     i32 y = n->y;
     i32 w = n->w;
     i32 h = n->h;
-    if (w == 0) { return 0; }
-    if (h == 0) { return 0; }
-    if (px < x) { return 0; }
-    if (py < y) { return 0; }
-    if (px >= x + w) { return 0; }
-    if (py >= y + h) { return 0; }
-    return 1;
+    if (w == 0) { return false; }
+    if (h == 0) { return false; }
+    if (px < x) { return false; }
+    if (py < y) { return false; }
+    if (px >= x + w) { return false; }
+    if (py >= y + h) { return false; }
+    return true;
 }
 
 /**
@@ -1598,17 +1598,17 @@ export i32 hit_test(i32 node_id, i32 px, i32 py) {
     if (n == 0) { return 0; }
     if ((n->state & NodeState::VISIBLE) == 0) { return 0; }
 
-    i32 inside = node_contains(n, px, py);
+    bool inside = node_contains(n, px, py);
     i32 found = 0;
-    if (inside != 0) {
+    if (inside) {
         if ((n->state & NodeState::HIT_TESTABLE) != 0) {
             found = node_id;
         }
     }
 
     // Children of a clipping container cannot be hit outside it.
-    if (inside == 0) {
-        if (clips_children(n) != 0) { return 0; }
+    if (!inside) {
+        if (clips_children(n)) { return 0; }
     }
 
     i32 child_id = n->first_child;

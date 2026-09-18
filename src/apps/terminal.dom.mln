@@ -190,7 +190,7 @@ void (Terminal *t) submit(i32 id) {
 @timer(100)
 void (Terminal *t) poll() {
     if (t->pid == 0) { return; }
-    if (console.has_exited(t->pid) == 0) { return; }
+    if (!console.has_exited(t->pid)) { return; }
     i32 pid = t->pid;
     i32 code = console.reap(pid);
     t->pid = 0;

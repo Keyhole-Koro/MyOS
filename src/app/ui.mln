@@ -85,7 +85,7 @@ export void set_text_fmt(i32 id, char *fmt, i32 a, i32 b) {
 
 // --- widgets --------------------------------------------------------------------------------
 
-export i32 is_checked(i32 id) { return dom.is_checked(id); }
+export bool is_checked(i32 id) { return dom.is_checked(id); }
 export void set_checked(i32 id, i32 on) { dom.set_checked(id, on); }
 
 export void input_set(i32 id, char *s) { dom_widgets.set_input_text(id, s); }

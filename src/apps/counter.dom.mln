@@ -57,5 +57,5 @@ void (Counter *c) reset(i32 id) {
 // node gives the new state.
 void (Counter *c) step_changed(i32 id) {
     c->step = 1;
-    if (ui.is_checked(id) != 0) { c->step = 2; }
+    if (ui.is_checked(id)) { c->step = 2; }
 }

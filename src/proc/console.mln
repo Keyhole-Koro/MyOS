@@ -241,13 +241,13 @@ i32 on_spawn(i32 user_path) {
 /**
  * Checks whether a process has terminated.
  * @param pid Process ID.
- * @return 1 if process has exited (or does not exist), 0 if still running.
+ * @return True if process has exited (or does not exist), false if still running.
  */
-export i32 has_exited(i32 pid) {
+export bool has_exited(i32 pid) {
     Option<ProcessState> state = process.get_state(pid);
     return case state of {
-        Some(s) -> case s of { Zombie(_) -> 1; _ -> 0; };
-        None -> 1;
+        Some(s) -> case s of { Zombie(_) -> true; _ -> false; };
+        None -> true;
     };
 }
 

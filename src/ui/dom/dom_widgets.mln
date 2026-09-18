@@ -158,18 +158,18 @@ export void minimize_window(i32 win) {
 /**
  * Checks whether a window is currently minimized.
  * @param win Window DOM Node ID.
- * @return 1 if minimized, 0 otherwise.
+ * @return True if minimized, false otherwise.
  */
-export i32 is_minimized(i32 win) {
+export bool is_minimized(i32 win) {
     return dom.get_state_flag(win, NodeState::MINIMIZED);
 }
 
 /**
  * Checks whether a window is currently maximized.
  * @param win Window DOM Node ID.
- * @return 1 if maximized, 0 otherwise.
+ * @return True if maximized, false otherwise.
  */
-export i32 is_maximized(i32 win) {
+export bool is_maximized(i32 win) {
     return dom.get_state_flag(win, NodeState::MAXIMIZED);
 }
 
@@ -272,11 +272,11 @@ export i32 titlebar_button_hit(i32 win, i32 px, i32 py) {
  * @param win Window DOM Node ID.
  * @param px Target X coordinate.
  * @param py Target Y coordinate.
- * @return 1 if close button hit, 0 otherwise.
+ * @return True if close button hit, false otherwise.
  */
-export i32 close_button_hit(i32 win, i32 px, i32 py) {
-    if (titlebar_button_hit(win, px, py) == 1) { return 1; }
-    return 0;
+export bool close_button_hit(i32 win, i32 px, i32 py) {
+    if (titlebar_button_hit(win, px, py) == 1) { return true; }
+    return false;
 }
 
 /**
@@ -302,18 +302,18 @@ export bool resize_grip_hit(i32 win, i32 px, i32 py) {
  * @param win Window DOM Node ID.
  * @param px Target X coordinate.
  * @param py Target Y coordinate.
- * @return 1 if title bar hit, 0 otherwise.
+ * @return True if title bar hit, false otherwise.
  */
-export i32 titlebar_hit(i32 win, i32 px, i32 py) {
+export bool titlebar_hit(i32 win, i32 px, i32 py) {
     Node *w = dom.node_ptr(win);
-    if (w == 0) { return 0; }
-    if (titlebar_button_hit(win, px, py) != 0) { return 0; }
+    if (w == 0) { return false; }
+    if (titlebar_button_hit(win, px, py) != 0) { return false; }
     i32 tb = theme.titlebar_h() * dom.ui_scale();
-    if (px < w->x) { return 0; }
-    if (px >= w->x + w->w) { return 0; }
-    if (py < w->y) { return 0; }
-    if (py >= w->y + tb) { return 0; }
-    return 1;
+    if (px < w->x) { return false; }
+    if (px >= w->x + w->w) { return false; }
+    if (py < w->y) { return false; }
+    if (py >= w->y + tb) { return false; }
+    return true;
 }
 
 // --- keyboard --------------------------------------------------------------------------------
@@ -1106,17 +1106,17 @@ export void menu_click(i32 px, i32 py) {
 /**
  * Tests whether a DOM node can accept keyboard focus.
  * @param n Pointer to DOM Node.
- * @return 1 if focusable, 0 otherwise.
+ * @return True if focusable, false otherwise.
  */
-export i32 is_focusable(Node *n) {
-    if ((n->state & NodeState::VISIBLE) == 0) { return 0; }
+export bool is_focusable(Node *n) {
+    if ((n->state & NodeState::VISIBLE) == 0) { return false; }
     i32 k = n->kind;
-    if (k == NodeKind::TEXT_INPUT) { return 1; }
-    if (k == NodeKind::TEXT_AREA) { return 1; }
-    if (k == NodeKind::BUTTON) { return 1; }
-    if (k == NodeKind::CHECKBOX) { return 1; }
-    if (k == NodeKind::LIST) { return 1; }
-    return 0;
+    if (k == NodeKind::TEXT_INPUT) { return true; }
+    if (k == NodeKind::TEXT_AREA) { return true; }
+    if (k == NodeKind::BUTTON) { return true; }
+    if (k == NodeKind::CHECKBOX) { return true; }
+    if (k == NodeKind::LIST) { return true; }
+    return false;
 }
 
 // Depth-first walk collecting focusable ids into g_focus_ring.
@@ -1130,7 +1130,7 @@ i32 g_focus_ring_count = 0;
 export void collect_focusable(i32 id) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
-    if (is_focusable(n) != 0) {
+    if (is_focusable(n)) {
         if (g_focus_ring_count < ui_config.FOCUS_MAX) {
             g_focus_ring[g_focus_ring_count] = id;
             g_focus_ring_count++;

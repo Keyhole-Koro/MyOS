@@ -45,13 +45,13 @@ void dump_props(i32 id) {
     }
     debug.printf(" [role=%i x=%i y=%i w=%i h=%i",
                  role, dom.node_x(id), dom.node_y(id), w, h);
-    if (dom.is_visible(id) != 0) { debug.print(" vis"); }
-    if (dom.is_enabled(id) != 0) { debug.print(" en"); }
-    if (dom.is_hovered(id) != 0) { debug.print(" ho"); }
-    if (dom.is_pressed(id) != 0) { debug.print(" pr"); }
-    if (dom.is_focused(id) != 0) { debug.print(" fo"); }
-    if (dom.is_hit_testable(id) != 0) { debug.print(" ht"); }
-    if (dom.is_checked(id) != 0) { debug.print(" ck"); }
+    if (dom.is_visible(id)) { debug.print(" vis"); }
+    if (dom.is_enabled(id)) { debug.print(" en"); }
+    if (dom.is_hovered(id)) { debug.print(" ho"); }
+    if (dom.is_pressed(id)) { debug.print(" pr"); }
+    if (dom.is_focused(id)) { debug.print(" fo"); }
+    if (dom.is_hit_testable(id)) { debug.print(" ht"); }
+    if (dom.is_checked(id)) { debug.print(" ck"); }
     debug.print("]");
 }
 
@@ -148,10 +148,10 @@ void automation_json_string(char *s) {
 
 /**
  * Transmits a boolean as "true" or "false" over the automation transport.
- * @param value Non-zero for true, zero for false.
+ * @param value Boolean flag.
  */
-void automation_bool(i32 value) {
-    if (value != 0) { automation_raw("true"); }
+void automation_bool(bool value) {
+    if (value) { automation_raw("true"); }
     else { automation_raw("false"); }
 }
 

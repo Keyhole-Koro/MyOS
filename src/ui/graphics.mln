@@ -296,12 +296,12 @@ export void pop_clip() {
 
 /**
  * Checks whether the active clipping rectangle is empty.
- * @return 1 if clip rectangle is empty, 0 otherwise.
+ * @return True if clip rectangle is empty, false otherwise.
  */
-export i32 clip_is_empty() {
-    if (g_clip_x1 <= g_clip_x0) { return 1; }
-    if (g_clip_y1 <= g_clip_y0) { return 1; }
-    return 0;
+export bool clip_is_empty() {
+    if (g_clip_x1 <= g_clip_x0) { return true; }
+    if (g_clip_y1 <= g_clip_y0) { return true; }
+    return false;
 }
 
 // Intersect (x, y, w, h) with the clip. The result lands in g_cl_* and the
@@ -318,9 +318,9 @@ i32 g_cl_h = 0;
  * @param y Top coordinate of rectangle.
  * @param w Width of rectangle.
  * @param h Height of rectangle.
- * @return 1 if any portion is visible within clip, 0 if completely culled.
+ * @return True if any portion is visible within clip, false if completely culled.
  */
-i32 clip_rect(i32 x, i32 y, i32 w, i32 h) {
+bool clip_rect(i32 x, i32 y, i32 w, i32 h) {
     i32 x0 = x;
     i32 y0 = y;
     i32 x1 = x + w;
@@ -329,13 +329,13 @@ i32 clip_rect(i32 x, i32 y, i32 w, i32 h) {
     if (y0 < g_clip_y0) { y0 = g_clip_y0; }
     if (x1 > g_clip_x1) { x1 = g_clip_x1; }
     if (y1 > g_clip_y1) { y1 = g_clip_y1; }
-    if (x1 <= x0) { return 0; }
-    if (y1 <= y0) { return 0; }
+    if (x1 <= x0) { return false; }
+    if (y1 <= y0) { return false; }
     g_cl_x = x0;
     g_cl_y = y0;
     g_cl_w = x1 - x0;
     g_cl_h = y1 - y0;
-    return 1;
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -426,19 +426,19 @@ void dma_run(i32 cmd) {
 }
 
 /**
- * Tests whether a rectangle lies entirely outside the active clipping window.
+ * Tests whether a rectangle is completely outside the current clipping bounds.
  * @param x Left coordinate.
  * @param y Top coordinate.
  * @param w Width in pixels.
  * @param h Height in pixels.
- * @return 1 if completely outside clip, 0 if it touches or intersects.
+ * @return True if completely outside clip, false if it touches or intersects.
  */
-i32 outside_clip(i32 x, i32 y, i32 w, i32 h) {
-    if (x + w <= g_clip_x0) { return 1; }
-    if (y + h <= g_clip_y0) { return 1; }
-    if (x >= g_clip_x1) { return 1; }
-    if (y >= g_clip_y1) { return 1; }
-    return 0;
+bool outside_clip(i32 x, i32 y, i32 w, i32 h) {
+    if (x + w <= g_clip_x0) { return true; }
+    if (y + h <= g_clip_y0) { return true; }
+    if (x >= g_clip_x1) { return true; }
+    if (y >= g_clip_y1) { return true; }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -505,7 +505,7 @@ export void blend_pixel(i32 x, i32 y, i32 color) {
  * @param color 24-bit RGB color.
  */
 export void fill_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
-    if (clip_rect(x, y, w, h) == 0) { return; }
+    if (!clip_rect(x, y, w, h)) { return; }
     dma_dest(g_cl_x, g_cl_y, g_cl_w, g_cl_h);
     dma_color(color);
     dma_run(DMA2D_CMD_FILL);
@@ -523,7 +523,7 @@ export void blend_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
     i32 a = alpha_of(color);
     if (a == 0) { return; }
     if (a >= 255) { fill_rect(x, y, w, h, color); return; }
-    if (clip_rect(x, y, w, h) == 0) { return; }
+    if (!clip_rect(x, y, w, h)) { return; }
     dma_dest(g_cl_x, g_cl_y, g_cl_w, g_cl_h);
     dma_color(color);
     dma_run(DMA2D_CMD_BLEND_FILL);
@@ -541,7 +541,7 @@ export void blend_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
 export void fill_gradient_v(i32 x, i32 y, i32 w, i32 h, i32 c0, i32 c1) {
     if (h <= 0) { return; }
     if (w <= 0) { return; }
-    if (outside_clip(x, y, w, h) != 0) { return; }
+    if (outside_clip(x, y, w, h)) { return; }
     // The full rectangle goes to the device and the scissor trims it, so a
     // partial repaint reproduces exactly the rows a full paint produced
     // (re-deriving end colours for the visible part rounds differently and
@@ -564,7 +564,7 @@ export void fill_gradient_v(i32 x, i32 y, i32 w, i32 h, i32 c0, i32 c1) {
 export void fill_gradient_h(i32 x, i32 y, i32 w, i32 h, i32 c0, i32 c1) {
     if (w <= 0) { return; }
     if (h <= 0) { return; }
-    if (outside_clip(x, y, w, h) != 0) { return; }
+    if (outside_clip(x, y, w, h)) { return; }
     dma_dest_shape(x, y, w, h);
     dma_color(c0);
     dma_color2(c1);
@@ -578,10 +578,10 @@ export void fill_gradient_h(i32 x, i32 y, i32 w, i32 h, i32 c0, i32 c1) {
  * @param dx Destination X coordinate.
  * @param dy Destination Y coordinate.
  * @param w Region width in pixels.
- * @param h Region height in pixels.
+ * @param h Height in pixels.
  */
 export void copy_rect(i32 sx, i32 sy, i32 dx, i32 dy, i32 w, i32 h) {
-    if (clip_rect(dx, dy, w, h) == 0) { return; }
+    if (!clip_rect(dx, dy, w, h)) { return; }
     i32 width = display_config.width();
     i32 off_x = g_cl_x - dx;
     i32 off_y = g_cl_y - dy;
@@ -601,7 +601,7 @@ export void copy_rect(i32 sx, i32 sy, i32 dx, i32 dy, i32 w, i32 h) {
  * @param color 24-bit RGB tint color.
  */
 export void mask_blit(i32 src, i32 stride, i32 x, i32 y, i32 w, i32 h, i32 color) {
-    if (clip_rect(x, y, w, h) == 0) { return; }
+    if (!clip_rect(x, y, w, h)) { return; }
     i32 off_x = g_cl_x - x;
     i32 off_y = g_cl_y - y;
     dma_dest(g_cl_x, g_cl_y, g_cl_w, g_cl_h);
@@ -620,7 +620,7 @@ export void mask_blit(i32 src, i32 stride, i32 x, i32 y, i32 w, i32 h, i32 color
  * @param h Height in pixels.
  */
 export void blit_alpha(i32 src, i32 stride, i32 x, i32 y, i32 w, i32 h) {
-    if (clip_rect(x, y, w, h) == 0) { return; }
+    if (!clip_rect(x, y, w, h)) { return; }
     i32 off_x = g_cl_x - x;
     i32 off_y = g_cl_y - y;
     dma_dest(g_cl_x, g_cl_y, g_cl_w, g_cl_h);
@@ -714,7 +714,7 @@ export i32 isqrt(i32 n) {
 export void fill_round_rect(i32 x, i32 y, i32 w, i32 h, i32 r, i32 color) {
     if (w <= 0) { return; }
     if (h <= 0) { return; }
-    if (outside_clip(x, y, w, h) != 0) { return; }
+    if (outside_clip(x, y, w, h)) { return; }
     i32 a = alpha_of(color);
     if (r <= 0) {
         if (a == 0) { fill_rect(x, y, w, h, color); }
@@ -741,7 +741,7 @@ export void draw_round_rect(i32 x, i32 y, i32 w, i32 h, i32 r, i32 t, i32 color)
     if (w <= 0) { return; }
     if (h <= 0) { return; }
     if (t < 1) { t = 1; }
-    if (outside_clip(x, y, w, h) != 0) { return; }
+    if (outside_clip(x, y, w, h)) { return; }
     dma_dest_shape(x, y, w, h);
     dma_color(color);
     dma_shape(r, t);
@@ -764,7 +764,7 @@ export void draw_shadow(i32 x, i32 y, i32 w, i32 h, i32 r, i32 size, i32 offset_
     if (w <= 0) { return; }
     if (h <= 0) { return; }
     i32 sy = y + offset_y;
-    if (outside_clip(x - size, sy - size, w + 2 * size, h + 2 * size) != 0) { return; }
+    if (outside_clip(x - size, sy - size, w + 2 * size, h + 2 * size)) { return; }
     dma_dest_shape(x, sy, w, h);
     dma_color(rgba(0, 0, 0, alpha));
     dma_shape(r, size);

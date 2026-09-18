@@ -146,10 +146,10 @@ void dom_hit_dispatch() {
 
     // Window chrome: the title bar is the drag handle and the disc at its
     // left is the close button; neither is a child node.
-    assert.assert_true(dom_widgets.titlebar_hit(win, 200 * scale, 10 * scale) == 1, "title bar hit");
-    assert.assert_true(dom_widgets.close_button_hit(win, 16 * scale, (tb / 2) * scale) == 1, "close button hit");
-    assert.assert_true(dom_widgets.titlebar_hit(win, 16 * scale, (tb / 2) * scale) == 0, "close button is not drag handle");
-    assert.assert_true(dom_widgets.titlebar_hit(win, 200 * scale, (tb + 5) * scale) == 0, "content is not the title bar");
+    assert.assert_true(dom_widgets.titlebar_hit(win, 200 * scale, 10 * scale), "title bar hit");
+    assert.assert_true(dom_widgets.close_button_hit(win, 16 * scale, (tb / 2) * scale), "close button hit");
+    assert.assert_false(dom_widgets.titlebar_hit(win, 16 * scale, (tb / 2) * scale), "close button is not drag handle");
+    assert.assert_false(dom_widgets.titlebar_hit(win, 200 * scale, (tb + 5) * scale), "content is not the title bar");
 
     // Focus and z-order: a second window appended later paints on top and
     // wins the hit test where they overlap; focusing the first raises it.
@@ -159,7 +159,7 @@ void dom_hit_dispatch() {
     assert.assert_true(overlap == win2, "later window is on top");
     dom_widgets.focus_window(win);
     assert.assert_true(dom_widgets.active_window() == win, "focus_window activates");
-    assert.assert_true(dom.get_state_flag(win, 16) == 1, "active window has STATE_FOCUSED");
+    assert.assert_true(dom.get_state_flag(win, 16), "active window has STATE_FOCUSED");
     overlap = dom.find_at(350 * scale, (tb + 250) * scale);
     assert.assert_true(overlap == win, "focused window was raised");
 
@@ -173,10 +173,10 @@ void dom_hit_dispatch() {
     i32 cb = dom_elements.create_checkbox("opt", 10, 100, 0);
     dom.set_on_change(cb, on_change);
     dom.append_child(win2, cb);
-    assert.assert_true(dom.is_checked(cb) == 0, "checkbox starts unchecked");
+    assert.assert_false(dom.is_checked(cb), "checkbox starts unchecked");
     dom.dispatch_click(cb);
     dom.drain_events();
-    assert.assert_true(dom.is_checked(cb) == 1, "click checks it");
+    assert.assert_true(dom.is_checked(cb), "click checks it");
     assert.assert_true(g_changes == 1, "on_change fired once");
 
     // TextInput: keyboard events edit the focused field.

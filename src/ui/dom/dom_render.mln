@@ -747,16 +747,16 @@ export void draw_node(Node *n) {
 /**
  * Checks if a node's full extent intersects the current paint damage rectangle.
  * @param n Pointer to DOM Node.
- * @return 1 if node overlaps damage area or full repaint active, 0 otherwise.
+ * @return True if node overlaps damage area or full repaint active, false otherwise.
  */
-export i32 node_in_damage(Node *n) {
-    if (dom.get_g_painting_all() != 0) { return 1; } // full repaint: draw everything
+export bool node_in_damage(Node *n) {
+    if (dom.get_g_painting_all() != 0) { return true; } // full repaint: draw everything
     dom.node_extent(n);
-    if (dom.get_g_ext_x() + dom.get_g_ext_w() <= dom.get_g_paint_x0()) { return 0; }
-    if (dom.get_g_ext_y() + dom.get_g_ext_h() <= dom.get_g_paint_y0()) { return 0; }
-    if (dom.get_g_ext_x() >= dom.get_g_paint_x1()) { return 0; }
-    if (dom.get_g_ext_y() >= dom.get_g_paint_y1()) { return 0; }
-    return 1;
+    if (dom.get_g_ext_x() + dom.get_g_ext_w() <= dom.get_g_paint_x0()) { return false; }
+    if (dom.get_g_ext_y() + dom.get_g_ext_h() <= dom.get_g_paint_y0()) { return false; }
+    if (dom.get_g_ext_x() >= dom.get_g_paint_x1()) { return false; }
+    if (dom.get_g_ext_y() >= dom.get_g_paint_y1()) { return false; }
+    return true;
 }
 
 /**
@@ -775,17 +775,17 @@ export void render(i32 node_id) {
     if (n == 0) { return; }
     if ((n->state & NodeState::VISIBLE) == 0) { return; }
 
-    i32 in_damage = node_in_damage(n);
-    if (in_damage != 0) {
+    bool in_damage = node_in_damage(n);
+    if (in_damage) {
         draw_node(n);
     }
 
     // Children are visited regardless: a child can overlap the damage region
     // even when its parent does not -- unless the parent clips them, in
     // which case an off-damage parent means off-damage children.
-    i32 clip = dom.clips_children(n);
-    if (clip != 0) {
-        if (in_damage == 0) { return; }
+    bool clip = dom.clips_children(n);
+    if (clip) {
+        if (!in_damage) { return; }
         graphics.push_clip(n->x, n->y, n->w, n->h);
     }
     i32 child_id = n->first_child;
@@ -793,7 +793,7 @@ export void render(i32 node_id) {
         render(child_id);
         child_id = dom.next_sibling(child_id);
     }
-    if (clip != 0) { graphics.pop_clip(); }
+    if (clip) { graphics.pop_clip(); }
 }
 
 /**

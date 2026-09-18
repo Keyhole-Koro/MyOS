@@ -151,7 +151,7 @@ void clipping() {
     assert.assert_true(graphics.get_pixel(10, 10) == red, "outer clip restored");
     assert.assert_true(graphics.get_pixel(225, 225) == white, "outer clip still applies");
     graphics.pop_clip();
-    assert.assert_true(graphics.clip_is_empty() == 0, "full clip after popping everything");
+    assert.assert_false(graphics.clip_is_empty(), "full clip after popping everything");
 }
 
 /*@Test "text metrics and glyph masks" {

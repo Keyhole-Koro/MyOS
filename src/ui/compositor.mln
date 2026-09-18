@@ -139,7 +139,7 @@ void on_press(i32 ex, i32 ey) {
             g_drag_last_y = ey;
             return;
         }
-        if (dom_widgets.titlebar_hit(win, ex, ey) != 0) {
+        if (dom_widgets.titlebar_hit(win, ex, ey)) {
             g_drag_win = win;
             g_drag_last_x = ex;
             g_drag_last_y = ey;
@@ -180,7 +180,7 @@ void on_right_press(i32 ex, i32 ey) {
     i32 win = dom.window_of(hit);
     if (win != 0) {
         dom_widgets.focus_window(win);
-        if (dom_widgets.is_maximized(win) != 0) {
+        if (dom_widgets.is_maximized(win)) {
             dom_widgets.open_menu(ex, ey, "Minimize\nRestore\nClose", on_window_menu, win);
         } else {
             dom_widgets.open_menu(ex, ey, "Minimize\nMaximize\nClose", on_window_menu, win);
