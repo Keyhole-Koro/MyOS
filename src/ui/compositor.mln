@@ -120,7 +120,7 @@ void on_press(i32 ex, i32 ey) {
         }
         if (button == 2) { dom_widgets.minimize_window(win); return; }
         if (button == 3) { dom_widgets.maximize_window(win); return; }
-        if (dom_widgets.resize_grip_hit(win, ex, ey) != 0) {
+        if (dom_widgets.resize_grip_hit(win, ex, ey)) {
             g_resize_win = win;
             g_drag_last_x = ex;
             g_drag_last_y = ey;

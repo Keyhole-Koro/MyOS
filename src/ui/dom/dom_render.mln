@@ -219,7 +219,7 @@ export void draw_text_area(Node *n) {
 
     i32 fg = theme.text_primary();
     fg = node_fg(n, fg);
-    i32 ro = dom_widgets.is_readonly(n);
+    bool ro = dom_widgets.is_readonly(n);
     char *buf = (char*)n->text;
     i32 len = n->len;
     graphics.push_clip(x + s, y + s, w - 2 * s, h - 2 * s);
@@ -247,7 +247,7 @@ export void draw_text_area(Node *n) {
         row = row + 1;
     }
     if (focused != 0) {
-        if (ro == 0) {
+        if (!ro) {
             if (caret_x >= 0) {
                 i32 caret = theme.caret();
                 graphics.fill_rect(caret_x, caret_y + s, s, lh - 2 * s, caret);
@@ -257,7 +257,7 @@ export void draw_text_area(Node *n) {
     graphics.pop_clip();
     // Empty editable area: placeholder from the node name.
     if (len == 0) {
-        if (ro == 0) {
+        if (!ro) {
             if (n->name != 0) {
                 i32 ph = theme.input_placeholder();
                 graphics.draw_label(x + pad, y + pad, (char*)n->name, ph, 0, s);

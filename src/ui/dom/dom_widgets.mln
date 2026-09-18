@@ -9,6 +9,13 @@ import { Window, Text, Button, Panel, Box, TextInput, TextArea, Checkbox, Row, C
 import dom from "dom.mln";
 import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
 import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
+
+export enum EditResult {
+    Unhandled,
+    Changed,
+    Moved,
+}
+
 // --- focus / window management -----------------------------------------------------------
 
 // Height of the taskbar in display pixels (0 if none), so callers can keep
@@ -43,10 +50,8 @@ export void set_focus(i32 id) {
 export void focus_window(i32 win) {
     Node *n = dom.node_ptr(win);
     if (n == 0) { return; }
-    i32 kw = NodeKind::WINDOW;
-    if (n->kind != kw) { return; }
-    i32 minimized = NodeState::MINIMIZED;
-    if ((n->state & minimized) != 0) {
+    if (n->kind != NodeKind::WINDOW) { return; }
+    if ((n->state & NodeState::MINIMIZED) != 0) {
         dom.set_state_flag(win, NodeState::MINIMIZED, 0);
         dom.set_state_flag(win, NodeState::VISIBLE, 1);
     }
@@ -62,16 +67,14 @@ export void focus_window(i32 win) {
 
 // After a window goes away, activate the top-most remaining one.
 export void activate_topmost() {
-    i32 kw = NodeKind::WINDOW;
-    i32 minimized = NodeState::MINIMIZED;
     i32 top = 0;
     i32 child_id = dom.first_child(dom.get_g_desktop_node_id());
     while (child_id != 0) {
         Node *c = dom.node_ptr(child_id);
         if (c == 0) { child_id = 0; }
         else {
-            if (c->kind == kw) {
-                if ((c->state & minimized) == 0) { top = child_id; }
+            if (c->kind == NodeKind::WINDOW) {
+                if ((c->state & NodeState::MINIMIZED) == 0) { top = child_id; }
             }
             child_id = c->next_sibling;
         }
@@ -134,8 +137,7 @@ export i32 is_maximized(i32 win) {
 export void maximize_window(i32 win) {
     Node *n = dom.node_ptr(win);
     if (n == 0) { return; }
-    i32 maximized = NodeState::MAXIMIZED;
-    if ((n->state & maximized) != 0) {
+    if ((n->state & NodeState::MAXIMIZED) != 0) {
         i32 rx = n->sx;
         i32 ry = n->sy;
         dom.move_node(win, rx - n->x, ry - n->y);
@@ -193,7 +195,7 @@ export i32 titlebar_button_hit(i32 win, i32 px, i32 py) {
     while (which <= 3) {
         i32 dx = px - tb_button_cx(w, which);
         if (dx * dx + dy * dy <= r * r) { return which; }
-        which = which + 1;
+        which++;
     }
     return 0;
 }
@@ -205,15 +207,15 @@ export i32 close_button_hit(i32 win, i32 px, i32 py) {
 }
 
 // True if (px, py) is on the resize grip in the window's bottom-right corner.
-export i32 resize_grip_hit(i32 win, i32 px, i32 py) {
+export bool resize_grip_hit(i32 win, i32 px, i32 py) {
     Node *w = dom.node_ptr(win);
-    if (w == 0) { return 0; }
+    if (w == 0) { return false; }
     i32 g = GRIP_SIZE * dom.ui_scale();
-    if (px < w->x + w->w - g) { return 0; }
-    if (py < w->y + w->h - g) { return 0; }
-    if (px >= w->x + w->w) { return 0; }
-    if (py >= w->y + w->h) { return 0; }
-    return 1;
+    if (px < w->x + w->w - g) { return false; }
+    if (py < w->y + w->h - g) { return false; }
+    if (px >= w->x + w->w) { return false; }
+    if (py >= w->y + w->h) { return false; }
+    return true;
 }
 
 // True if (px, py) is in the window's title bar (excluding its buttons).
@@ -258,7 +260,7 @@ export void input_insert(Node *n, i32 c) {
     i32 i = len;
     while (i > cur) {
         buf[i] = buf[i - 1];
-        i = i - 1;
+        i--;
     }
     buf[cur] = (char)c;
     buf[len + 1] = (char)0;
@@ -280,44 +282,44 @@ export void input_delete_at(Node *n, i32 at) {
     n->len = (u16)(len - 1);
 }
 
-// Default editing behaviour of a TextInput. Returns 1 if the text changed,
-// 2 if only the caret moved, 0 if nothing happened.
-export i32 input_handle(Node *n, i32 type, i32 code) {
+// Default editing behaviour of a TextInput. Returns Changed if the text changed,
+// Moved if only the caret moved, Unhandled if nothing happened.
+export EditResult input_handle(Node *n, i32 type, i32 code) {
     i32 cur = n->cursor;
     i32 len = n->len;
     if (type == EVT_CHAR) {
         if (code >= 0x20) {
             if (code <= 0x7E) {
                 input_insert(n, code);
-                return 1;
+                return EditResult::Changed;
             }
         }
-        return 0;
+        return EditResult::Unhandled;
     }
-    if (type != EVT_DOWN) { return 0; }
+    if (type != EVT_DOWN) { return EditResult::Unhandled; }
     if (code == KEY_BACKSPACE) {
         if (cur > 0) {
             input_delete_at(n, cur - 1);
             n->cursor = (u16)(cur - 1);
-            return 1;
+            return EditResult::Changed;
         }
-        return 0;
+        return EditResult::Unhandled;
     }
     if (code == KEY_DELETE) {
-        if (cur < len) { input_delete_at(n, cur); return 1; }
-        return 0;
+        if (cur < len) { input_delete_at(n, cur); return EditResult::Changed; }
+        return EditResult::Unhandled;
     }
     if (code == KEY_LEFT) {
         if (cur > 0) { n->cursor = (u16)(cur - 1); }
-        return 2;
+        return EditResult::Moved;
     }
     if (code == KEY_RIGHT) {
         if (cur < len) { n->cursor = (u16)(cur + 1); }
-        return 2;
+        return EditResult::Moved;
     }
-    if (code == KEY_HOME) { n->cursor = 0; return 2; }
-    if (code == KEY_END) { n->cursor = (u16)len; return 2; }
-    return 0;
+    if (code == KEY_HOME) { n->cursor = 0; return EditResult::Moved; }
+    if (code == KEY_END) { n->cursor = (u16)len; return EditResult::Moved; }
+    return EditResult::Unhandled;
 }
 
 // Route one keyboard event (type = keyboard.EVT_*, code = key code or
@@ -330,11 +332,8 @@ export i32 input_handle(Node *n, i32 type, i32 code) {
 // delete helpers with TextInput and adds newline, vertical movement and
 // keeping the caret's line in view.
 
-export i32 is_readonly(Node *n) {
-    i32 st = n->style;
-    i32 ro = NodeStyle::READONLY;
-    if ((st & ro) != 0) { return 1; }
-    return 0;
+export bool is_readonly(Node *n) {
+    return (n->style & NodeStyle::READONLY) != 0;
 }
 
 // Line index containing byte offset `at`.
@@ -343,7 +342,7 @@ export i32 line_of(Node *n, i32 at) {
     i32 line = 0;
     i32 i = 0;
     while (i < at) {
-        if (buf[i] == 10) { line = line + 1; }
+        if (buf[i] == 10) { line++; }
         i++;
     }
     return line;
@@ -357,7 +356,7 @@ export i32 line_start(Node *n, i32 line) {
     i32 cur = 0;
     while (cur < line) {
         if (i >= len) { return len; }
-        if (buf[i] == 10) { cur = cur + 1; }
+        if (buf[i] == 10) { cur++; }
         i++;
     }
     return i;
@@ -414,84 +413,87 @@ export void text_area_goto_line(Node *n, i32 line) {
     n->cursor = (u16)(start + col);
 }
 
-// Editing for a TextArea: 1 = text changed, 2 = caret/scroll moved, 0 = nothing.
-export i32 text_area_handle(Node *n, i32 type, i32 code, i32 mods) {
-    i32 ro = is_readonly(n);
+// Editing for a TextArea: Changed = text changed, Moved = caret/scroll moved, Unhandled = nothing.
+export EditResult text_area_handle(Node *n, i32 type, i32 code, i32 mods) {
+    bool ro = is_readonly(n);
     i32 cur = n->cursor;
     i32 len = n->len;
     if (type == EVT_CHAR) {
-        if (ro != 0) { return 0; }
+        if (ro) { return EditResult::Unhandled; }
         if (code >= 0x20) {
             if (code <= 0x7E) {
                 input_insert(n, code);
                 text_area_reveal_cursor(n);
-                return 1;
+                return EditResult::Changed;
             }
         }
-        return 0;
+        return EditResult::Unhandled;
     }
-    if (type != EVT_DOWN) { return 0; }
+    if (type != EVT_DOWN) { return EditResult::Unhandled; }
     if (code == KEY_ENTER) {
-        if (ro != 0) { return 0; }
+        if (ro) { return EditResult::Unhandled; }
         input_insert(n, 10);
         text_area_reveal_cursor(n);
-        return 1;
+        return EditResult::Changed;
     }
     if (code == KEY_BACKSPACE) {
-        if (ro != 0) { return 0; }
+        if (ro) { return EditResult::Unhandled; }
         if (cur > 0) {
             input_delete_at(n, cur - 1);
             n->cursor = (u16)(cur - 1);
             text_area_reveal_cursor(n);
-            return 1;
+            return EditResult::Changed;
         }
-        return 0;
+        return EditResult::Unhandled;
     }
     if (code == KEY_DELETE) {
-        if (ro != 0) { return 0; }
-        if (cur < len) { input_delete_at(n, cur); return 1; }
-        return 0;
+        if (ro) { return EditResult::Unhandled; }
+        if (cur < len) {
+            input_delete_at(n, cur);
+            return EditResult::Changed;
+        }
+        return EditResult::Unhandled;
     }
     if (code == KEY_LEFT) {
         if (cur > 0) { n->cursor = (u16)(cur - 1); }
         text_area_reveal_cursor(n);
-        return 2;
+        return EditResult::Moved;
     }
     if (code == KEY_RIGHT) {
         if (cur < len) { n->cursor = (u16)(cur + 1); }
         text_area_reveal_cursor(n);
-        return 2;
+        return EditResult::Moved;
     }
     if (code == KEY_UP) {
         text_area_goto_line(n, line_of(n, cur) - 1);
         text_area_reveal_cursor(n);
-        return 2;
+        return EditResult::Moved;
     }
     if (code == KEY_DOWN) {
         text_area_goto_line(n, line_of(n, cur) + 1);
         text_area_reveal_cursor(n);
-        return 2;
+        return EditResult::Moved;
     }
     if (code == KEY_PAGE_UP) {
         text_area_goto_line(n, line_of(n, cur) - visible_lines(n));
         text_area_reveal_cursor(n);
-        return 2;
+        return EditResult::Moved;
     }
     if (code == KEY_PAGE_DOWN) {
         text_area_goto_line(n, line_of(n, cur) + visible_lines(n));
         text_area_reveal_cursor(n);
-        return 2;
+        return EditResult::Moved;
     }
     if (code == KEY_HOME) {
         n->cursor = (u16)line_start(n, line_of(n, cur));
-        return 2;
+        return EditResult::Moved;
     }
     if (code == KEY_END) {
         i32 start = line_start(n, line_of(n, cur));
         n->cursor = (u16)(start + line_len_at(n, start));
-        return 2;
+        return EditResult::Moved;
     }
-    return 0;
+    return EditResult::Unhandled;
 }
 
 // Append text to a TextArea (console output). When the buffer is full the
@@ -499,12 +501,11 @@ export i32 text_area_handle(Node *n, i32 type, i32 code, i32 mods) {
 export void append_text(i32 id, char *s) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
-    i32 kta = NodeKind::TEXT_AREA;
-    if (n->kind != kta) { return; }
+    if (n->kind != NodeKind::TEXT_AREA) { return; }
     char *buf = (char*)n->text;
     i32 cap = n->cap;
     i32 add = 0;
-    while (s[add] != 0) { add = add + 1; }
+    while (s[add] != 0) { add++; }
     i32 len = n->len;
     if (len + add + 1 > cap) {
         // Drop whole lines from the front until it fits (or everything).
@@ -514,7 +515,7 @@ export void append_text(i32 id, char *s) {
             if (drop >= need) {
                 if (buf[drop - 1] == 10) { break; }
             }
-            drop = drop + 1;
+            drop++;
         }
         i32 i = 0;
         while (drop + i < len) {
@@ -528,7 +529,7 @@ export void append_text(i32 id, char *s) {
     while (i < add) {
         if (len + 1 >= cap) { break; }
         buf[len] = s[i];
-        len = len + 1;
+        len++;
         i++;
     }
     buf[len] = (char)0;
@@ -554,7 +555,7 @@ export void append_bytes(i32 id, i32 addr, i32 count) {
         if (c >= 0x20) { if (c <= 0x7E) { keep = 1; } }
         if (keep != 0) {
             tmp[n] = (char)c;
-            n = n + 1;
+            n++;
             if (n == 63) {
                 tmp[n] = (char)0;
                 append_text(id, &tmp[0]);
@@ -585,9 +586,7 @@ export void clear_text_area(i32 id) {
 export void scroll_by(i32 id, i32 lines) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
-    i32 kta = NodeKind::TEXT_AREA;
-    i32 kl = NodeKind::LIST;
-    if (n->kind != kta) { if (n->kind != kl) { return; } }
+    if (n->kind != NodeKind::TEXT_AREA) { if (n->kind != NodeKind::LIST) { return; } }
     i32 total = line_of(n, n->len) + 1;
     i32 rows = visible_lines(n);
     i32 max_scroll = total - rows;
@@ -604,7 +603,7 @@ export void scroll_by(i32 id, i32 lines) {
 // Mouse wheel over a node: scroll whatever under the pointer scrolls.
 export void dispatch_wheel(i32 id, i32 steps) {
     if (steps == 0) { return; }
-    scroll_by(id, 0 - steps * 3);
+    scroll_by(id, -steps * 3);
 }
 
 // --- List ---
@@ -615,15 +614,12 @@ export void dispatch_wheel(i32 id, i32 steps) {
 export void list_set_items(i32 id, char *items) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
-    i32 kl = NodeKind::LIST;
-    if (n->kind != kl) { return; }
+    if (n->kind != NodeKind::LIST) { return; }
     char *buf = (char*)n->text;
     i32 cap = n->cap;
     i32 i = 0;
-    while (items[i] != 0) {
-        if (i + 1 >= cap) { break; }
+    for (; items[i] != 0 && i + 1 < cap; i++) {
         buf[i] = items[i];
-        i++;
     }
     buf[i] = (char)0;
     n->len = (u16)i;
@@ -717,32 +713,32 @@ export void list_click(i32 id, i32 px, i32 py) {
 }
 
 // Keyboard on a focused List: arrows move the selection, Enter activates.
-export i32 list_handle(Node *n, i32 type, i32 code) {
-    if (type != EVT_DOWN) { return 0; }
+export EditResult list_handle(Node *n, i32 type, i32 code) {
+    if (type != EVT_DOWN) { return EditResult::Unhandled; }
     i32 id = n->id;
     i32 sel = n->sel - 1;
     i32 count = list_count(id);
-    if (count == 0) { return 0; }
+    if (count == 0) { return EditResult::Unhandled; }
     if (code == KEY_UP) {
         if (sel > 0) { list_select(id, sel - 1); } else { list_select(id, 0); }
         dom.fire_change(n);
-        return 2;
+        return EditResult::Moved;
     }
     if (code == KEY_DOWN) {
         if (sel + 1 < count) { list_select(id, sel + 1); }
         dom.fire_change(n);
-        return 2;
+        return EditResult::Moved;
     }
-    if (code == KEY_HOME) { list_select(id, 0); dom.fire_change(n); return 2; }
-    if (code == KEY_END) { list_select(id, count - 1); dom.fire_change(n); return 2; }
+    if (code == KEY_HOME) { list_select(id, 0); dom.fire_change(n); return EditResult::Moved; }
+    if (code == KEY_END) { list_select(id, count - 1); dom.fire_change(n); return EditResult::Moved; }
     if (code == KEY_ENTER) {
         if (sel >= 0) {
             i32 handler = n->on_click;
             if (handler != 0) { handler(id); }
         }
-        return 2;
+        return EditResult::Moved;
     }
-    return 0;
+    return EditResult::Unhandled;
 }
 
 // --- popup menu ---
@@ -779,10 +775,10 @@ export i32 open_menu(i32 x, i32 y, char *items, i32 handler, i32 target) {
     i32 line_w = 0;
     while (items[i] != 0) {
         if (items[i] == 10) {
-            count = count + 1;
+            count++;
             line_w = 0;
         } else {
-            line_w = line_w + 1;
+            line_w++;
         }
         i++;
     }
@@ -807,7 +803,7 @@ export i32 open_menu(i32 x, i32 y, char *items, i32 handler, i32 target) {
             if (lw > w) { w = lw; }
             break;
         }
-        j = j + 1;
+        j++;
     }
     w = w + 4 * pad;
     if (w < 140 * s) { w = 140 * s; }
@@ -824,7 +820,7 @@ export i32 open_menu(i32 x, i32 y, char *items, i32 handler, i32 target) {
     i32 cap = i + 2;
     char *buf = (char*)heap.alloc(cap);
     i32 k = 0;
-    while (k < i) { buf[k] = items[k]; k = k + 1; }
+    while (k < i) { buf[k] = items[k]; k++; }
     buf[i] = (char)0;
     n->text = buf;
     n->cap = (u16)cap;
@@ -880,19 +876,13 @@ export void menu_click(i32 px, i32 py) {
 // Focusable controls are visited in tree order within the active window.
 
 export i32 is_focusable(Node *n) {
+    if ((n->state & NodeState::VISIBLE) == 0) { return 0; }
     i32 k = n->kind;
-    i32 ki = NodeKind::TEXT_INPUT;
-    i32 kta = NodeKind::TEXT_AREA;
-    i32 kb = NodeKind::BUTTON;
-    i32 kc = NodeKind::CHECKBOX;
-    i32 kl = NodeKind::LIST;
-    i32 visible = NodeState::VISIBLE;
-    if ((n->state & visible) == 0) { return 0; }
-    if (k == ki) { return 1; }
-    if (k == kta) { return 1; }
-    if (k == kb) { return 1; }
-    if (k == kc) { return 1; }
-    if (k == kl) { return 1; }
+    if (k == NodeKind::TEXT_INPUT) { return 1; }
+    if (k == NodeKind::TEXT_AREA) { return 1; }
+    if (k == NodeKind::BUTTON) { return 1; }
+    if (k == NodeKind::CHECKBOX) { return 1; }
+    if (k == NodeKind::LIST) { return 1; }
     return 0;
 }
 
@@ -907,7 +897,7 @@ export void collect_focusable(i32 id) {
     if (is_focusable(n) != 0) {
         if (g_focus_ring_count < FOCUS_MAX) {
             g_focus_ring[g_focus_ring_count] = id;
-            g_focus_ring_count = g_focus_ring_count + 1;
+            g_focus_ring_count++;
         }
     }
     i32 child = n->first_child;
@@ -984,33 +974,48 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
         }
     }
     i32 kind = n->kind;
-    i32 ki = NodeKind::TEXT_INPUT;
-    i32 kta = NodeKind::TEXT_AREA;
-    i32 kl = NodeKind::LIST;
-    i32 kb = NodeKind::BUTTON;
-    i32 kc = NodeKind::CHECKBOX;
-    if (kind == ki) {
-        i32 r = input_handle(n, type, code);
-        if (r != 0) { dom.damage_node(id); dom.touch(); }
-        if (r == 1) { dom.fire_change(n); }
+    if (kind == NodeKind::TEXT_INPUT) {
+        EditResult r = input_handle(n, type, code);
+        case r of {
+            EditResult::Changed -> ({
+                dom.damage_node(id);
+                dom.touch();
+                dom.fire_change(n);
+            });
+            EditResult::Moved -> ({
+                dom.damage_node(id);
+                dom.touch();
+            });
+            EditResult::Unhandled -> _;
+        };
         return;
     }
-    if (kind == kta) {
-        i32 r = text_area_handle(n, type, code, mods);
-        if (r != 0) { dom.damage_node(id); dom.touch(); }
-        if (r == 1) { dom.fire_change(n); }
+    if (kind == NodeKind::TEXT_AREA) {
+        EditResult r = text_area_handle(n, type, code, mods);
+        case r of {
+            EditResult::Changed -> ({
+                dom.damage_node(id);
+                dom.touch();
+                dom.fire_change(n);
+            });
+            EditResult::Moved -> ({
+                dom.damage_node(id);
+                dom.touch();
+            });
+            EditResult::Unhandled -> _;
+        };
         return;
     }
-    if (kind == kl) {
+    if (kind == NodeKind::LIST) {
         list_handle(n, type, code);
         return;
     }
     if (type == EVT_DOWN) {
-        if (kind == kb) {
+        if (kind == NodeKind::BUTTON) {
             if (code == KEY_ENTER) { dom.dispatch_click(id); return; }
             if (code == KEY_SPACE) { dom.dispatch_click(id); return; }
         }
-        if (kind == kc) {
+        if (kind == NodeKind::CHECKBOX) {
             if (code == KEY_SPACE) { dom.dispatch_click(id); return; }
         }
     }
@@ -1020,15 +1025,12 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
 export void set_input_text(i32 id, char *s) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
-    i32 ki = NodeKind::TEXT_INPUT;
-    if (n->kind != ki) { return; }
+    if (n->kind != NodeKind::TEXT_INPUT) { return; }
     char *buf = (char*)n->text;
     i32 cap = n->cap;
     i32 i = 0;
-    while (s[i] != 0) {
-        if (i + 1 >= cap) { break; }
+    for (; s[i] != 0 && i + 1 < cap; i++) {
         buf[i] = s[i];
-        i++;
     }
     buf[i] = (char)0;
     n->len = (u16)i;
