@@ -633,12 +633,12 @@ export void list_set_items(i32 id, char *items) {
     dom.touch();
 }
 
-// Selected row (0-based), or -1.
+// Selected row (0-based), or None.
 export Option<i32> list_selected(i32 id) {
     Node *n = dom.node_ptr(id);
-    if (n == 0) { Option<i32> none = None; return none; }
-    if (n->sel == 0) { Option<i32> none = None; return none; }
-    Option<i32> hit = Some(n->sel - 1); return hit;
+    if (n == 0) { return None; }
+    if (n->sel == 0) { return None; }
+    return Some(n->sel - 1);
 }
 
 export i32 list_count(i32 id) {
@@ -648,12 +648,12 @@ export i32 list_count(i32 id) {
     return line_of(n, n->len) + 1;
 }
 
-// Copy item `index` into out (at most cap-1 bytes). Returns its length or -1.
-export i32 list_item(i32 id, i32 index, char *out, i32 cap) {
+// Copy item `index` into out (at most cap-1 bytes). Returns its length or None.
+export Option<i32> list_item(i32 id, i32 index, char *out, i32 cap) {
     Node *n = dom.node_ptr(id);
-    if (n == 0) { return 0 - 1; }
-    if (index < 0) { return 0 - 1; }
-    if (index >= list_count(id)) { return 0 - 1; }
+    if (n == 0) { return None; }
+    if (index < 0) { return None; }
+    if (index >= list_count(id)) { return None; }
     i32 start = line_start(n, index);
     i32 llen = line_len_at(n, start);
     char *buf = (char*)n->text;
@@ -664,7 +664,7 @@ export i32 list_item(i32 id, i32 index, char *out, i32 cap) {
         i = i + 1;
     }
     out[i] = (char)0;
-    return i;
+    return Some(i);
 }
 
 export void list_select(i32 id, i32 index) {
@@ -686,18 +686,18 @@ export void list_select(i32 id, i32 index) {
     dom.touch();
 }
 
-// Row under (px, py), or -1.
+// Row under (px, py), or None.
 export Option<i32> list_row_at(i32 id, i32 px, i32 py) {
     Node *n = dom.node_ptr(id);
-    if (n == 0) { Option<i32> none = None; return none; }
+    if (n == 0) { return None; }
     i32 s = dom.ui_scale();
     i32 pad = 8 * s;
     i32 lh = graphics.text_height(0, s);
     i32 rel = py - n->y - pad;
-    if (rel < 0) { Option<i32> none = None; return none; }
+    if (rel < 0) { return None; }
     i32 row = rel / lh + n->scroll;
-    if (row >= list_count(id)) { Option<i32> none = None; return none; }
-    Option<i32> hit = Some(row); return hit;
+    if (row >= list_count(id)) { return None; }
+    return Some(row);
 }
 
 // A click on a List at (px, py): select the row; a click on the already

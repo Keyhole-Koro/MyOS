@@ -6,15 +6,18 @@ import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import serial from "../../../MyKernel/src/io/serial.mln";
 import str from "../../../../toolchain/MyStdLib/str.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 
 // Block until a keystroke is available in the serial input queue, yielding the
 // CPU while waiting. The serial IRQ handler fills the queue from hardware RX;
 // reading the queue (not hardware RX) avoids racing the IRQ handler for bytes.
 i32 read_char() {
-    while (serial.has_input() == 0) {
-        scheduler.sleep(1); // Yield so other tasks (the UI) keep running.
+    while (1) {
+        case serial.read_input() of {
+            Some(c) -> ({ return c; });
+            None -> ({ scheduler.sleep(1); });
+        };
     }
-    return serial.read_input();
 }
 
 export void run() {

@@ -41,13 +41,13 @@ i32 g_in_tail[8];
 i32 g_ready = 0;
 
 Option<i32> slot_of(i32 pid) {
-    if (pid <= 0) { Option<i32> none = None; return none; }
+    if (pid <= 0) { return None; }
     i32 i = 0;
     while (i < SLOTS) {
-        if (g_pid[i] == pid) { Option<i32> hit = Some(i); return hit; }
+        if (g_pid[i] == pid) { return Some(i); }
         i = i + 1;
     }
-    Option<i32> none = None; return none;
+    return None;
 }
 
 // Attach a process's stdio to a TextArea. Returns 0 when every slot is taken.

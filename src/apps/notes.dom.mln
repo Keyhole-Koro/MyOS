@@ -24,10 +24,10 @@ char g_echo_buf[768]; // 8 slots x 96 bytes
 Option<i32> echo_for(i32 field_id) {
     i32 i = 0;
     while (i < g_count) {
-        if (g_field_ids[i] == field_id) { Option<i32> hit = Some(i); return hit; }
+        if (g_field_ids[i] == field_id) { return Some(i); }
         i = i + 1;
     }
-    Option<i32> none = None; return none;
+    return None;
 }
 
 // TextInput onChange: rewrite "You typed: ..." for this instance.

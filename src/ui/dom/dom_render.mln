@@ -579,16 +579,22 @@ export void draw_taskbar(Node *n) {
     graphics.draw_label(x + w - cw - 16 * s, y + (h - th) / 2, &_clock_buf[0], on_dark, 0, s);
 }
 
-// The window whose taskbar entry is at (px, py), or 0; -1 for the launcher.
-export i32 taskbar_target_at(i32 px, i32 py) {
+export enum TaskbarTarget {
+    Miss,
+    Launcher,
+    Window(i32),
+}
+
+// The window whose taskbar entry is at (px, py), or Miss; Launcher for the launcher.
+export TaskbarTarget taskbar_target_at(i32 px, i32 py) {
     Node *n = dom.node_ptr(dom.get_g_taskbar_id());
-    if (n == 0) { return 0; }
+    if (n == 0) { return TaskbarTarget::Miss; }
     i32 s = dom.ui_scale();
     i32 x = n->x;
     i32 lx = x + 8 * s;
     i32 lw = theme.taskbar_launcher_w() * s;
     if (px >= lx) {
-        if (px < lx + lw) { return 0 - 1; }
+        if (px < lx + lw) { return TaskbarTarget::Launcher; }
     }
     i32 ew = theme.taskbar_entry_w() * s;
     i32 index = 0;
@@ -596,26 +602,25 @@ export i32 taskbar_target_at(i32 px, i32 py) {
     while (win != 0) {
         i32 ex = x + taskbar_entry_x(index);
         if (px >= ex) {
-            if (px < ex + ew) { return win; }
+            if (px < ex + ew) { return TaskbarTarget::Window(win); }
         }
         index = index + 1;
         win = next_window_after(win);
     }
-    return 0;
+    return TaskbarTarget::Miss;
 }
 
 // Handle a click on the taskbar: activate the window whose entry was hit, or
 // run the launcher handler.
 export void taskbar_click(i32 px, i32 py) {
-    i32 target = taskbar_target_at(px, py);
-    if (target > 0) {
-        dom_widgets.focus_window(target);
-        return;
-    }
-    if (target < 0) {
-        i32 handler = dom.get_g_launcher();
-        if (handler != 0) { handler(); }
-    }
+    case taskbar_target_at(px, py) of {
+        Window(target) -> dom_widgets.focus_window(target);
+        Launcher -> ({
+            i32 handler = dom.get_g_launcher();
+            if (handler != 0) { handler(); }
+        });
+        Miss -> 0;
+    };
 }
 
 export void set_launcher(i32 handler) {

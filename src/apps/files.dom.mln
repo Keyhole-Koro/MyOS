@@ -62,7 +62,10 @@ char* selected_name() {
     Option<i32> ls = dom_widgets.list_selected(g_list);
     i32 row = case ls of { Some(v) -> v; None -> ({ return (char*)0; }); };
     char item[48];
-    dom_widgets.list_item(g_list, row, &item[0], 48);
+    case dom_widgets.list_item(g_list, row, &item[0], 48) of {
+        Some(_) -> _;
+        None -> ({ return (char*)0; });
+    };
     i32 i = 0;
     while (item[i] != 0) {
         if (item[i] == ' ') { break; }

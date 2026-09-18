@@ -264,14 +264,12 @@ Option<i32> find_entry_by_name(char* name) {
         i32 off = idx * ENTRY_SIZE;
         if (buf_word(off + 16) != 0) { // first_block != 0 => in use
             if (name_match(off, name) != 0) {
-                Option<i32> found = Some(idx);
-                return found;
+                return Some(idx);
             }
         }
         idx++;
     }
-    Option<i32> none = None;
-    return none;
+    return None;
 }
 
 Option<i32> find_free_entry() {
@@ -283,13 +281,11 @@ Option<i32> find_free_entry() {
     while (idx < MAX_FILES) {
         i32 off = idx * ENTRY_SIZE;
         if (buf_word(off + 16) == 0) {
-            Option<i32> found = Some(idx);
-            return found;
+            return Some(idx);
         }
         idx++;
     }
-    Option<i32> none = None;
-    return none;
+    return None;
 }
 
 // =========================================================================
@@ -567,10 +563,13 @@ export Result<i32, FsError> read(i32 fd, i32 buf, i32 size) {
         Serial(s) -> ({
             i32 count = 0;
             while (count < size) {
-                if (serial.has_input() == 0) { break; }
-                i32 c = serial.read_input();
-                set_ram_byte(buf + count, c);
-                count++;
+                case serial.read_input() of {
+                    Some(c) -> ({
+                        set_ram_byte(buf + count, c);
+                        count++;
+                    });
+                    None -> ({ break; });
+                };
             }
             return Ok(count);
         });

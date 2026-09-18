@@ -282,8 +282,8 @@ export i32 create_node(i32 kind, char *name) {
 
 export Option<i32> kind_of(i32 id) {
     Node *n = node_ptr(id);
-    if (n == 0) { Option<i32> none = None; return none; }
-    Option<i32> hit = Some(n->kind); return hit;
+    if (n == 0) { return None; }
+    return Some(n->kind);
 }
 
 export i32 parent_of(i32 id) {
