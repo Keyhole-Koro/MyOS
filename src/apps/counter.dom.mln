@@ -6,57 +6,63 @@ import { app } from "../../../MyAppFramework/src/annotations.mln";
 
 // Click counter demo app, and the smallest example of the app framework.
 //
-// `@app` makes Counter an application: the build lists it in the launcher,
-// and each launch allocates one Counter, runs view() to build its window and
-// routes that window's events to the methods named in the markup. Fields
-// are the instance's state -- no globals, so every launch is independent --
-// and `ref=` stores node ids into them so handlers never walk the tree.
+// `@app` on view() makes Counter an application: the build lists it in the
+// launcher, and each launch allocates one zeroed Counter, runs view() to
+// build its window and routes that window's events to the methods named in
+// the markup. Fields are the instance's state -- no globals, so every
+// launch is independent -- and `ref=` stores node ids into them so handlers
+// never walk the tree.
+//
+// The methods take `ref mut Counter`: the framework calls them with the
+// instance's address, and a reference is that address underneath. `Counter *c`
+// with `c->` would be the same thing spelled as a raw pointer.
 //
 // Coordinates are logical (1024x768) and relative to the parent element; a
 // Window's children start below its title bar. Column and Row position their
 // own children, so those need only sizes.
 
-@app
 struct Counter {
-    i32 clicks = 0;
-    i32 step = 1;
+    i32 clicks;
+    i32 step;
     i32 label;
 };
 
-i32 (Counter *c) view() {
+@app
+i32 (ref mut Counter c) view() {
+    c.step = 1;
     i32 muted = ui.rgb(0x6B, 0x72, 0x80);
     return <Window title="Counter" x={96} y={72} w={400} h={272}>
         <Panel x={20} y={20} w={360} h={140} radius={10}>
             <Column x={20} y={16} w={320} h={110} gap={10}>
                 <Label text="A window, a panel, two buttons." color={muted} />
-                <Label ref={c->label} text="clicks: 0" bold={1} testId="counter" />
+                <Label ref={c.label} text="clicks: 0" bold={1} testId="counter" />
                 <Row w={320} h={36} gap={10}>
-                    <PrimaryButton text="Click me" w={120} h={36} onClick={c->click} />
-                    <Button text="Reset" w={90} h={36} onClick={c->reset} />
+                    <PrimaryButton text="Click me" w={120} h={36} onClick={c.click} />
+                    <Button text="Reset" w={90} h={36} onClick={c.reset} />
                 </Row>
             </Column>
         </Panel>
-        <Checkbox text="Count by two" x={24} y={180} onClick={c->step_changed} />
+        <Checkbox text="Count by two" x={24} y={180} onClick={c.step_changed} />
     </Window>;
 }
 
-void (Counter *c) refresh() {
-    ui.set_text_fmt(c->label, "clicks: %d", c->clicks, 0);
+void (ref mut Counter c) refresh() {
+    ui.set_text_fmt(c.label, "clicks: %d", c.clicks, 0);
 }
 
-void (Counter *c) click(i32 id) {
-    c->clicks = c->clicks + c->step;
-    c->refresh();
+void (ref mut Counter c) click(i32 id) {
+    c.clicks = c.clicks + c.step;
+    c.refresh();
 }
 
-void (Counter *c) reset(i32 id) {
-    c->clicks = 0;
-    c->refresh();
+void (ref mut Counter c) reset(i32 id) {
+    c.clicks = 0;
+    c.refresh();
 }
 
 // Checkbox: the toggle happens before the handler runs, so reading the
 // node gives the new state.
-void (Counter *c) step_changed(i32 id) {
-    c->step = 1;
-    if (ui.is_checked(id)) { c->step = 2; }
+void (ref mut Counter c) step_changed(i32 id) {
+    c.step = 1;
+    if (ui.is_checked(id)) { c.step = 2; }
 }

@@ -16,13 +16,13 @@ import { FsError } from "../fs/fs.mln";
 
 i32 CAP = 4096;
 
-@app(single)
 struct Editor {
     i32 area;     // TextArea
     i32 name;     // filename TextInput
     i32 status;   // Label
 };
 
+@app(single)
 i32 (Editor *e) view() {
     i32 muted = ui.rgb(0x6B, 0x72, 0x80);
     i32 win = <Window title="Editor" x={300} y={120} w={520} h={420}>

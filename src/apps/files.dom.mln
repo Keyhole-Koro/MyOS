@@ -19,7 +19,6 @@ import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 // Nodes created from a handler belong to the instance that ran it, so if the
 // user closes Files while the dialog is up, the dialog goes with it.
 
-@app(single)
 struct Files {
     i32 list;
     i32 status;
@@ -33,6 +32,7 @@ char g_items[1024];    // "\n"-joined list rows
 char g_selected[16];   // name of the selected row
 char g_question[64];   // dialog text
 
+@app(single)
 i32 (Files *f) view() {
     i32 muted = ui.rgb(0x6B, 0x72, 0x80);
     i32 win = <Window title="Files" x={60} y={60} w={440} h={400}>

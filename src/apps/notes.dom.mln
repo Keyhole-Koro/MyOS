@@ -12,13 +12,13 @@ import { app } from "../../../MyAppFramework/src/annotations.mln";
 
 i32 g_opened = 0;
 
-@app
 struct Notes {
     i32 title;
     i32 body;
     i32 echo;
 };
 
+@app
 i32 (Notes *n) view() {
     i32 offset = 28 * g_opened;
     g_opened++;

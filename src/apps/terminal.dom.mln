@@ -21,13 +21,13 @@ import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 
 i32 g_opened = 0;
 
-@app
 struct Terminal {
     i32 out;      // output TextArea
     i32 input;    // command TextInput
-    i32 pid = 0;  // attached process, 0 = none
+    i32 pid;      // attached process, 0 = none
 };
 
+@app
 i32 (Terminal *t) view() {
     i32 off = 24 * g_opened;
     g_opened++;

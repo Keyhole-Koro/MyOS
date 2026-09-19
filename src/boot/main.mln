@@ -19,7 +19,27 @@ import { MmuError } from "../../../MyKernel/src/mm/mmu.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import app from "../../../MyAppFramework/src/app.mln";
-import apps_manifest from "../../../../build/apps_manifest.mln";
+
+// The applications. Importing a module is what puts it in the program (the
+// build follows imports from here), and the annotations in it -- @app on a
+// view, @timer, @key, ... -- are recorded by the compiler as metadata that
+// app.install() reads. Nothing else registers an app.
+//
+// TODO(apps-on-disk): this list is the interim form. The intended one is
+// apps as .mbin files on the MFS disk, loaded by the process loader, with
+// the same metadata table carried in the MBIN header and read by the
+// framework at load time -- then "which apps exist" is `ls`, not an import.
+// See docs/learn/annotations-and-metaprogramming.md.
+import counter from "../apps/counter.dom.mln";
+import editor from "../apps/editor.dom.mln";
+import files from "../apps/files.dom.mln";
+import notes from "../apps/notes.dom.mln";
+import terminal from "../apps/terminal.dom.mln";
+
+// This module collects every annotated module's metadata table (see
+// MyLangCompiler/docs/grammar.md, "Attributes and annotations"): the
+// compiler defines this over the modules imported above.
+extern i32* __annotations_table(i32 m);
 
 // System bring-up.
 //
@@ -90,11 +110,8 @@ void kernel_init() {
     fs.init();
     console.init();
 
-    // Apps are @app structs under src/apps; the build lists them in
-    // build/apps_manifest.mln, and the framework (system/MyAppFramework)
-    // owns launching, the app menu (taskbar button and desktop right-click),
-    // shortcuts and window close.
-    apps_manifest.register_all();
+    // The framework (system/MyAppFramework) reads the apps' annotations and
+    // owns launching, the app menu, shortcuts and window close.
     app.install();
 
     // Open a few at boot; the last one launched is the active window.
