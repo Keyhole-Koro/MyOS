@@ -36,11 +36,6 @@ import files from "../apps/files.dom.mln";
 import notes from "../apps/notes.dom.mln";
 import terminal from "../apps/terminal.dom.mln";
 
-// This module collects every annotated module's metadata table (see
-// MyLangCompiler/docs/grammar.md, "Attributes and annotations"): the
-// compiler defines this over the modules imported above.
-extern i32* __annotations_table(i32 m);
-
 // System bring-up.
 //
 // This is the OS's entry point, not the kernel's. It lives in MyOS because
