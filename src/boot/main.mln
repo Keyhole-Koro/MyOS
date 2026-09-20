@@ -19,6 +19,8 @@ import { MmuError } from "../../../MyKernel/src/mm/mmu.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import app from "../shell/app.mln";
+import host from "../shell/host.mln";
+import ui_events from "../ui/ui_events.mln";
 
 // The applications. Importing a module is what puts it in the program (the
 // build follows imports from here), and the annotations in it -- @app on a
@@ -108,6 +110,9 @@ void kernel_init() {
     // The shell (../shell/app.mln) reads the apps' annotations and
     // owns launching, the app menu, shortcuts and window close.
     app.install();
+    // Apps share this address space for now: their events are delivered by
+    // the in-process host whenever the DOM drains its queue.
+    ui_events.set_consumer(host.pump);
 
     // Open a few at boot; the last one launched is the active window.
     app.launch_named("Counter");

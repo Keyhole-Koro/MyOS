@@ -1,0 +1,19 @@
+package uiproto;
+
+// The OS end of the UI protocol carriers declared in
+// system/MyAppFramework/src/protocol.mln: request() hands a message to the
+// UI server, poll() takes an event from the ring. In-process versions --
+// apps call straight into these; as processes the same two names are
+// syscalls (MYOS-020) and nothing on the app side changes.
+
+import { UiMsg, UiEvent } from "../../../MyAppFramework/src/protocol.mln";
+import ui_server from "ui_server.mln";
+import ui_events from "ui_events.mln";
+
+export i32 request(UiMsg *m) {
+    return ui_server.handle(m);
+}
+
+export bool poll(UiEvent *out) {
+    return ui_events.poll(out);
+}

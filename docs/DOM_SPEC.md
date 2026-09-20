@@ -566,7 +566,11 @@ checked/hitTestableを含める。host側は`MyOS` / strict `Locator` / `expect`
   ノードの削除はシェル（`shell/app.mln`）に任せる。
 - **キーフィルタ**: `dom.set_key_filter(fn)`。`dispatch_key_event` が DOWN の先頭で
   `fn(owner_of(active_window), code, mods)` を呼び、1 なら widget に渡さない
-  （`@key` ショートカット）。
+  （`@key` ショートカット。シェルが claim 表を照合して KEY イベントにする）。
+- **所有ノードのイベント**: `dom.emit(n, kind, handler, arg)`。`owner != 0` なら
+  `ui_events` に `UiEvent` を積む（アプリの runtime が配る）、そうでなければ従来の
+  `push_event(handler, ...)`。アプリのノードは関数ポインタを持たない
+  （`docs/design/ui-protocol.md`）。`drain_events()` は末尾で `ui_events.drain()` を呼ぶ。
 - **要素関数** (`ui/elements.mln`、宣言とデフォルトは SDK の `MyAppFramework/src/elements.mln`):
   位置・サイズ・ハンドラにデフォルト値、`testId` プロパティ、`append_child`。
   `dom/dom_elements.mln` はサーバ内部の `create_*` だけ。`Checkbox` / `List` は

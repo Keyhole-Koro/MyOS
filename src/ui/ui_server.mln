@@ -1,4 +1,4 @@
-package ui;
+package ui_server;
 
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
@@ -7,19 +7,67 @@ import dom from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
 import graphics from "graphics.mln";
 import app from "../shell/app.mln";
+import elements_server from "elements_server.mln";
+import { UiMsg, UiOp } from "../../../MyAppFramework/src/protocol.mln";
 
-// The UI server's implementation of the `ui` interface an application
-// links against (system/MyAppFramework/src/ui.mln -- the prototypes, with
-// the documentation). Same package name, so `ui.set_text` in an app links
-// to `ui_set_text` here; the app never imports this file. Apps run in the
-// same address space for now, so each call lands on the DOM directly; the
-// protocol step (MYOS-019) turns these into the receiving side of messages
-// without touching the interface.
+// The UI server's end of the request side of the UI protocol
+// (system/MyAppFramework/src/protocol.mln; table in
+// docs/design/ui-protocol.md). handle() takes one UiMsg from an app, runs
+// it against the DOM as that app's instance -- nodes it creates are owned
+// by m->owner -- and returns the i32 result. The functions below are the
+// bodies of the app-facing `ui` API (MyAppFramework/src/ui.mln), one per
+// op; element creation is elements_server.mln. Apps never import this
+// file: they send messages.
+
+// Run one request. The owner is set around it so anything the request
+// creates (a dialog from SHOW, a node from CREATE_*) belongs to the app.
+export i32 handle(UiMsg *m) {
+    i32 outer = dom.current_owner();
+    dom.set_current_owner(m->owner);
+    i32 r = run_request(m);
+    dom.set_current_owner(outer);
+    return r;
+}
+
+i32 run_request(UiMsg *m) {
+    i32 op = m->op;
+    i32 id = m->a0;
+    if (op == UiOp::SET_TEXT)       { set_text(id, m->s0); return 0; }
+    if (op == UiOp::TEXT_OF)        { return (i32)text_of(id); }
+    if (op == UiOp::SET_TEXT_FMT)   { set_text_fmt(id, m->s0, m->a1, m->a2); return 0; }
+    if (op == UiOp::IS_CHECKED)     { if (is_checked(id)) { return 1; } return 0; }
+    if (op == UiOp::SET_CHECKED)    { set_checked(id, m->a1); return 0; }
+    if (op == UiOp::INPUT_SET)      { input_set(id, m->s0); return 0; }
+    if (op == UiOp::AREA_APPEND)    { area_append(id, m->s0); return 0; }
+    if (op == UiOp::AREA_CLEAR)     { area_clear(id); return 0; }
+    if (op == UiOp::AREA_LINES)     { return area_lines(id); }
+    if (op == UiOp::LIST_SET_ITEMS) { list_set_items(id, m->s0); return 0; }
+    if (op == UiOp::LIST_COUNT)     { return list_count(id); }
+    if (op == UiOp::LIST_SELECTED)  { return list_selected(id); }
+    if (op == UiOp::LIST_ITEM)      { return list_item(id, m->a1, (char*)m->a2, m->a3); }
+    if (op == UiOp::FOCUS)          { focus(id); return 0; }
+    if (op == UiOp::FOCUS_WINDOW)   { focus_window(id); return 0; }
+    if (op == UiOp::CLOSE)          { close(id); return 0; }
+    if (op == UiOp::WINDOW_OF)      { return window_of(id); }
+    if (op == UiOp::WINDOW_X)       { return window_x(id); }
+    if (op == UiOp::WINDOW_Y)       { return window_y(id); }
+    if (op == UiOp::SHOW)           { show(id); return 0; }
+    if (op == UiOp::TEST_ID)        { test_id(id, m->s0); return 0; }
+    if (op == UiOp::SEND_KEY)       { send_key(m->a0, m->a1, m->a2); return 0; }
+    if (op == UiOp::RGB)            { return rgb(m->a0, m->a1, m->a2); }
+    if (op == UiOp::OPEN)           { return app.open(m->s0); }
+    if (op == UiOp::CLAIM_KEY)      { return app.claim_key(m->owner, m->s0); }
+    if (op == UiOp::EXIT)           { app.instance_exited(m->owner); return 0; }
+    if (op >= UiOp::CREATE_WINDOW) {
+        if (op <= UiOp::APPEND_CHILD) { return elements_server.create(m); }
+    }
+    return 0;
+}
 
 // --- text -------------------------------------------------------------------------------------
 
-export void set_text(i32 id, char *s) { dom.set_text(id, s); }
-export char* text_of(i32 id) { return dom.text_of(id); }
+void set_text(i32 id, char *s) { dom.set_text(id, s); }
+char* text_of(i32 id) { return dom.text_of(id); }
 
 // Labels keep a pointer to their text rather than a copy, so formatted text
 // needs a buffer that outlives the call. set_text_fmt keeps one per label
@@ -46,7 +94,7 @@ char* fmt_buffer(i32 id) {
     return (char*)buf;
 }
 
-export void set_text_fmt(i32 id, char *fmt, i32 a, i32 b) {
+void set_text_fmt(i32 id, char *fmt, i32 a, i32 b) {
     char *buf = fmt_buffer(id);
     if (buf == 0) { dom.set_text(id, fmt); return; }
     i32 n = strbuf.reset(buf);
@@ -83,19 +131,19 @@ export void set_text_fmt(i32 id, char *fmt, i32 a, i32 b) {
 
 // --- widgets --------------------------------------------------------------------------------
 
-export bool is_checked(i32 id) { return dom.is_checked(id); }
-export void set_checked(i32 id, i32 on) { dom.set_checked(id, on); }
+bool is_checked(i32 id) { return dom.is_checked(id); }
+void set_checked(i32 id, i32 on) { dom.set_checked(id, on); }
 
-export void input_set(i32 id, char *s) { dom_widgets.set_input_text(id, s); }
-export void area_append(i32 id, char *s) { dom_widgets.append_text(id, s); }
-export void area_clear(i32 id) { dom_widgets.clear_text_area(id); }
-export i32 area_lines(i32 id) { return dom_widgets.text_area_line_count(id); }
+void input_set(i32 id, char *s) { dom_widgets.set_input_text(id, s); }
+void area_append(i32 id, char *s) { dom_widgets.append_text(id, s); }
+void area_clear(i32 id) { dom_widgets.clear_text_area(id); }
+i32 area_lines(i32 id) { return dom_widgets.text_area_line_count(id); }
 
-export void list_set_items(i32 id, char *items) { dom_widgets.list_set_items(id, items); }
-export i32 list_count(i32 id) { return dom_widgets.list_count(id); }
+void list_set_items(i32 id, char *items) { dom_widgets.list_set_items(id, items); }
+i32 list_count(i32 id) { return dom_widgets.list_count(id); }
 
 // Selected row, or -1.
-export i32 list_selected(i32 id) {
+i32 list_selected(i32 id) {
     i32 row = case dom_widgets.list_selected(id) of {
         Some(v) -> v;
         None -> -1;
@@ -105,7 +153,7 @@ export i32 list_selected(i32 id) {
 
 // Copy row `index`'s text into `out` (at most `cap` bytes incl. NUL);
 // returns its length, or -1 for no such row.
-export i32 list_item(i32 id, i32 index, char *out, i32 cap) {
+i32 list_item(i32 id, i32 index, char *out, i32 cap) {
     i32 len = case dom_widgets.list_item(id, index, out, cap) of {
         Some(v) -> v;
         None -> -1;
@@ -115,43 +163,35 @@ export i32 list_item(i32 id, i32 index, char *out, i32 cap) {
 
 // --- focus and windows ------------------------------------------------------------------------
 
-export void focus(i32 id) { dom_widgets.set_focus(id); }
-export void focus_window(i32 win) { dom_widgets.focus_window(win); }
+void focus(i32 id) { dom_widgets.set_focus(id); }
+void focus_window(i32 win) { dom_widgets.focus_window(win); }
 
 // Close a window the app opened itself (a dialog). The app's own main
 // window is closed by the framework when the user closes it.
-export void close(i32 win) {
+void close(i32 win) {
     dom.remove_node(win);
     dom_widgets.activate_topmost();
 }
 
-export i32 window_of(i32 id) { return dom.window_of(id); }
-export i32 window_x(i32 win) { return dom.node_x(win) / dom.ui_scale(); }
-export i32 window_y(i32 win) { return dom.node_y(win) / dom.ui_scale(); }
+i32 window_of(i32 id) { return dom.window_of(id); }
+i32 window_x(i32 win) { return dom.node_x(win) / dom.ui_scale(); }
+i32 window_y(i32 win) { return dom.node_y(win) / dom.ui_scale(); }
 
 // Mount a tree the app built (a dialog) on the desktop and focus it.
-export void show(i32 win) {
+void show(i32 win) {
     dom.append_child(dom.desktop_id(), win);
     dom_widgets.focus_window(win);
 }
 
 // Name a node for automation (dom-tester locators).
-export void test_id(i32 id, char *name) { dom.set_test_id(id, name); }
+void test_id(i32 id, char *name) { dom.set_test_id(id, name); }
 
 // --- keys ---------------------------------------------------------------------------------------
 
 // Simulate a key on the focused node; `type` 1 = down, 3 = char.
-export void send_key(i32 type, i32 code, i32 mods) { dom_widgets.dispatch_key_event(type, code, mods); }
-
-// A raw key filter on one node: i32 handler(owner, id, code | mods << 16),
-// run inline before the widget sees the key; return 1 to claim it.
-export void set_key_filter(i32 id, i32 handler) { dom.set_on_key(id, handler); }
+void send_key(i32 type, i32 code, i32 mods) { dom_widgets.dispatch_key_event(type, code, mods); }
 
 // --- colours -----------------------------------------------------------------------------------
 
-export i32 rgb(i32 r, i32 g, i32 b) { return graphics.rgb(r, g, b); }
+i32 rgb(i32 r, i32 g, i32 b) { return graphics.rgb(r, g, b); }
 
-// --- other apps ---------------------------------------------------------------------------------
-
-// Hand a path to whichever app declares @open; returns its window or 0.
-export i32 open(char *path) { return app.open(path); }

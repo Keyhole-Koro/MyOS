@@ -1,0 +1,72 @@
+package elements_server;
+
+import dom from "dom/dom.mln";
+import dom_widgets from "dom/dom_widgets.mln";
+import dom_elements from "dom/dom_elements.mln";
+import { NodeStyle } from "dom/dom.mln";
+import { UiMsg, UiOp } from "../../../MyAppFramework/src/protocol.mln";
+
+// The UI server's end of the CREATE_* requests of the UI protocol
+// (system/MyAppFramework/src/protocol.mln): one node per request, built
+// through the server-internal helpers in dom/dom_elements.mln, owned by
+// the requesting instance (ui_server.handle sets the owner). The
+// app-facing vocabulary with its defaults is MyAppFramework/src/elements.mln.
+//
+// No handler ever arrives here: an app keeps its onClick / onChange in its
+// own runtime and the DOM emits CLICK / CHANGE / ACTIVATE / TIMER events for
+// owned nodes (dom.emit), so a node an app creates carries no function
+// pointer.
+
+void tag(i32 id, char *testId) {
+    if (testId[0] != 0) { dom.set_test_id(id, testId); }
+}
+
+export i32 create(UiMsg *m) {
+    i32 op = m->op;
+    i32 x = m->a0;
+    i32 y = m->a1;
+    i32 w = m->a2;
+    i32 h = m->a3;
+    i32 id = 0;
+    if (op == UiOp::APPEND_CHILD) { dom.append_child(m->a0, m->a1); return 0; }
+    if (op == UiOp::CREATE_WINDOW) {
+        id = dom_elements.create_window(m->s0, x, y, w, h);
+    } else if (op == UiOp::CREATE_BUTTON) {
+        id = dom_elements.create_button(m->s0, x, y, w, h);
+    } else if (op == UiOp::CREATE_PRIMARY_BUTTON) {
+        id = dom_elements.create_button(m->s0, x, y, w, h);
+        dom.set_style(id, NodeStyle::PRIMARY);
+    } else if (op == UiOp::CREATE_TEXT) {
+        id = dom_elements.create_text(m->s0, x, y);
+    } else if (op == UiOp::CREATE_LABEL) {
+        id = dom_elements.create_text(m->s0, x, y);
+        if (m->a3 != 0) { dom.set_style(id, NodeStyle::BOLD); }
+        dom.set_color(id, m->a2);
+    } else if (op == UiOp::CREATE_BOX) {
+        id = dom_elements.create_box(x, y, w, h, m->a4, m->a5);
+    } else if (op == UiOp::CREATE_PANEL) {
+        id = dom_elements.create_panel(x, y, w, h, m->a4);
+    } else if (op == UiOp::CREATE_COLUMN) {
+        id = dom_elements.create_column(x, y, w, h, m->a4, m->a5);
+    } else if (op == UiOp::CREATE_ROW) {
+        id = dom_elements.create_row(x, y, w, h, m->a4, m->a5);
+    } else if (op == UiOp::CREATE_TEXT_INPUT) {
+        id = dom_elements.create_text_input(m->s0, x, y, w, h, m->a4);
+    } else if (op == UiOp::CREATE_CHECKBOX) {
+        id = dom_elements.create_checkbox(m->s0, x, y, m->a2);
+        dom.set_hit_testable(id, 1); // toggles on click even with no handler
+    } else if (op == UiOp::CREATE_SEPARATOR) {
+        id = dom_elements.create_separator(x, y, w);
+    } else if (op == UiOp::CREATE_TIMER) {
+        return dom_widgets.create_timer(m->a0, 0); // ticks become TIMER events (owner != 0)
+    } else if (op == UiOp::CREATE_TEXT_AREA) {
+        id = dom_elements.create_text_area(m->s0, x, y, w, h, m->a4, m->a5);
+    } else if (op == UiOp::CREATE_LIST) {
+        id = dom_elements.create_list(m->s0, x, y, w, h, m->a4);
+        dom.set_hit_testable(id, 1); // rows select on click even with no handler
+    } else {
+        return 0;
+    }
+    tag(id, m->s1);
+    return id;
+}

@@ -1,0 +1,22 @@
+package host;
+
+// The in-process application host: the shell's stand-in for spawning an
+// app as a process, while apps still share the UI server's address space.
+// This is the only place the OS calls into the SDK's runtime, and it goes
+// away when apps become .mbin processes (MYOS-022): start() becomes
+// loader.spawn and the app's own main() calls runtime.start; pump()
+// becomes each app's own event loop on its own task (MYOS-020).
+
+import runtime from "../../../MyAppFramework/src/runtime.mln";
+
+// Start `self`, an instance of `type`: its runtime runs the @app view and
+// registers what its annotations ask for. Returns the window id.
+export i32 start(i32 self, char *type) {
+    return runtime.start(self, type);
+}
+
+// Deliver every pending event to the apps' handlers. Registered as the
+// consumer of the event ring (ui_events.set_consumer) by boot/main.mln.
+export void pump() {
+    runtime.pump();
+}

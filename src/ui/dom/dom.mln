@@ -5,6 +5,8 @@ import heap from "../../../../MyKernel/src/mm/heap.mln";
 import scheduler from "../../../../MyKernel/src/kernel/scheduler.mln";
 import graphics from "../graphics.mln";
 import theme from "../theme.mln";
+import ui_events from "../ui_events.mln";
+import { UiEventKind } from "../../../../MyAppFramework/src/protocol.mln";
 import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
 
 // Kernel object tree + UI DOM. See docs/DOM_SPEC.md and MYOS-014.
@@ -89,12 +91,15 @@ export enum NodeStyle {
 //
 // Handlers all share one ABI, `void handler(i32 owner, i32 id, i32 arg)`:
 // `owner` is the app instance the node belongs to (see `owner` below), `id`
-// the node, `arg` event data (a key handler gets code | mods << 16). The
-// compiler generates handlers of this shape from `onClick={c->click}` markup
-// and @app methods, so app code never writes it by hand. Handlers are not
-// called where the event is detected: they are queued (push_event) and run
-// by drain_events() at a point the compositor chooses, with g_current_owner
-// set so anything the handler creates is owned by the same app.
+// the node, `arg` event data (a key handler gets code | mods << 16).
+// The on_* fields hold server-side functions only -- the taskbar, menus,
+// the shell's window-close hook, the clock. A node an app owns (owner != 0)
+// never carries a function pointer: what happens to it is emitted as a UI
+// protocol event (emit -> ui_events) and the app's own runtime calls the
+// handler. Server handlers are not called where the event is detected
+// either: they are queued (push_event) and run by drain_events() at a point
+// the compositor chooses, with g_current_owner set so anything the handler
+// creates is owned by the same app.
 //
 // Public because it is the payload type of get_node(). Mutation still goes
 // through the DOM setters by convention.
@@ -405,6 +410,19 @@ export i32 has_events() {
     return 1;
 }
 
+// Something happened to node `n`: an app-owned node emits a protocol event
+// to its owner (the app's runtime runs the handler); a server node queues
+// its own `handler`, if any. Returns 1 when either was done.
+export i32 emit(Node *n, i32 kind, i32 handler, i32 arg) {
+    if (n->owner != 0) {
+        ui_events.push(n->owner, n->id, kind, arg, 0, (char*)0);
+        return 1;
+    }
+    if (handler == 0) { return 0; }
+    push_event(handler, 0, n->id, arg);
+    return 1;
+}
+
 // Run every queued handler, in order, each with g_current_owner set to the
 // app it belongs to. Handlers may queue further events; those run in the
 // same pass.
@@ -422,6 +440,11 @@ export void drain_events() {
         handler(owner, id, arg);
         g_current_owner = outer;
     }
+    // Then the apps' events, in-process: their consumer polls the ring and
+    // runs their handlers (MyOS/src/shell/host.mln). Those may queue server
+    // events or emit more app events; both are handled in this same pass.
+    ui_events.drain();
+    while (g_event_head != g_event_tail) { drain_events(); }
 }
 
 // --- scalar queries -------------------------------------------------------------
@@ -1173,7 +1196,7 @@ export i32 on_close_of(i32 id) {
  * @param n Pointer to DOM Node.
  */
 export void fire_change(Node *n) {
-    push_event(n->on_change, n->owner, n->id, 0);
+    emit(n, UiEventKind::CHANGE, n->on_change, 0);
 }
 
 // Queue a node's click handler, if any. Checkboxes toggle first, so the
@@ -1186,11 +1209,7 @@ export i32 dispatch_click(i32 id) {
         set_state_flag(id, NodeState::CHECKED, now == 0);
         fire_change(n);
     }
-    if (n->on_click != 0) {
-        push_event(n->on_click, n->owner, id, 0);
-        return 1;
-    }
-    return 0;
+    return emit(n, UiEventKind::CLICK, n->on_click, 0);
 }
 
 // --- tree structure -----------------------------------------------------------------------

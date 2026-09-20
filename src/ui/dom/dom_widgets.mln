@@ -6,6 +6,7 @@ import graphics from "../graphics.mln";
 import theme from "../theme.mln";
 import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
 import dom from "dom.mln";
+import { UiEventKind } from "../../../../MyAppFramework/src/protocol.mln";
 import ui_config from "../ui_config.mln";
 import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
 import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
@@ -901,7 +902,7 @@ export void list_click(i32 id, i32 px, i32 py) {
     i32 was = n->sel - 1;
     list_select(id, row);
     if (row == was) {
-        dom.push_event(n->on_click, n->owner, id, 0);
+        dom.emit(n, UiEventKind::ACTIVATE, n->on_click, 0);
     } else {
         dom.fire_change(n);
     }
@@ -934,7 +935,7 @@ export EditResult list_handle(Node *n, i32 type, i32 code) {
     if (code == KEY_END) { list_select(id, count - 1); dom.fire_change(n); return EditResult::Moved; }
     if (code == KEY_ENTER) {
         if (sel >= 0) {
-            dom.push_event(n->on_click, n->owner, id, 0);
+            dom.emit(n, UiEventKind::ACTIVATE, n->on_click, 0);
         }
         return EditResult::Moved;
     }
@@ -1304,7 +1305,7 @@ export void tick() {
         if (t != 0) {
             if (now >= t->next_due) {
                 t->next_due = now + t->interval;
-                dom.push_event(t->on_tick, t->owner, id, 0);
+                dom.emit(t, UiEventKind::TIMER, t->on_tick, 0);
             }
         }
         i++;
@@ -1314,7 +1315,8 @@ export void tick() {
 /**
  * Creates and registers a recurring timer with a given interval and callback.
  * @param interval Periodic interval in system ticks.
- * @param handler Timer tick callback function pointer: fn(timer_id).
+ * @param handler Server-side tick callback, or 0 for an app timer (its
+ * ticks are TIMER events to the owner).
  * @return Timer DOM Node ID.
  */
 export i32 create_timer(i32 interval, i32 handler) {

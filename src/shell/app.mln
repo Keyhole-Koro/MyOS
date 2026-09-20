@@ -12,6 +12,9 @@ import compositor from "../ui/compositor.mln";
 import graphics from "../ui/graphics.mln";
 import annotations from "../../../../toolchain/MyStdLib/meta/annotations.mln";
 import { Annotations } from "../../../../toolchain/MyStdLib/meta/annotations.mln";
+import ui_events from "../ui/ui_events.mln";
+import { UiEventKind } from "../../../MyAppFramework/src/protocol.mln";
+import host from "host.mln";
 
 // The shell: the registry of installed apps and the instances running on
 // the desktop. This is the OS side of the application framework -- apps
@@ -20,18 +23,21 @@ import { Annotations } from "../../../../toolchain/MyStdLib/meta/annotations.mln
 // declarations their meaning (docs/design/os-app-boundaries.md).
 //
 // An app is a struct whose view method carries `@app` (the SDK's
-// annotations.mln).
-// The compiler records every annotation as a metadata row; install() walks
-// the rows (MyStdLib's annotations iterator) and files them into the
-// registry below by the type's name, so `@timer` on Terminal's poll and
-// `@app` on Terminal's view land in the same slot whatever order they appear
-// in. What an annotation means, and when it is acted on, is decided here,
-// not by the compiler.
+// annotations.mln). The compiler records every annotation as a metadata
+// row; install() reads the @app rows (MyStdLib's annotations iterator)
+// into the registry below, keyed by type name, and notes which types take
+// @open. That is all the shell needs to know about an app: what its other
+// annotations mean -- @timer, @key, @on_close -- is the app's own runtime's
+// business (MyAppFramework/src/runtime.mln), which reads them when the
+// instance starts and asks the shell only for what crosses the boundary: a
+// timer node, a key claim.
 //
-// Every registered function is a method, called with the instance pointer
-// first: view(self), poll(self), save(self, id), open(self, path). The DOM
-// calls handlers as (owner, id, arg) and the calling convention ignores
-// trailing arguments, so a timer or key handler is the method itself.
+// The shell talks to a running instance only through UI protocol events
+// (ui_events): KEY when a claimed shortcut is pressed, OPEN with a path,
+// CLOSE when the user closes its window; the instance answers CLOSE with
+// an EXIT request, and only then is it freed. The one call the shell still
+// makes into app code is starting an instance (host.mln) -- the stand-in
+// for spawning it as a process.
 //
 // An instance owns every DOM node created while its code runs (dom.mln's
 // g_current_owner), so closing its window sweeps dialogs and timers with
@@ -42,25 +48,17 @@ import { Annotations } from "../../../../toolchain/MyStdLib/meta/annotations.mln
 // --- registry --------------------------------------------------------------------------------
 
 i32 APPS_MAX = 16;
-i32 HOOKS_MAX = 4;             // timers and keys per app
 
 i32 g_type[16];                // char*: "Counter", the key everything is grouped by
 i32 g_size[16];
 i32 g_view[16];                // 0 until @app registers; a type without it is not launchable
 i32 g_single[16];
 i32 g_name[16];                // char*: launcher label
-i32 g_open[16];
-i32 g_on_close[16];
-i32 g_timer_ms[64];            // [slot * HOOKS_MAX + k]
-i32 g_timer_fn[64];
-i32 g_timer_count[16];
-i32 g_key_spec[64];            // char*
-i32 g_key_fn[64];
-i32 g_key_count[16];
+i32 g_opens[16];               // 1 if the type has an @open method
 i32 g_app_count = 0;
 
 // The slot for a type, made on first sight: annotations arrive in source
-// order, so @timer may precede @app.
+// order, so @open may precede @app.
 i32 slot_of_type(char *type) {
     i32 i = 0;
     while (i < g_app_count) {
@@ -84,26 +82,7 @@ void register_app(char *type, i32 size, i32 view, i32 single, char *name) {
     if (name[0] == 0) { g_name[i] = (i32)type; }
 }
 
-void register_timer(char *type, i32 ms, i32 fn) {
-    i32 i = slot_of_type(type);
-    i32 n = g_timer_count[i];
-    if (n >= HOOKS_MAX) { debug.panic("app: too many @timer on one type"); }
-    g_timer_ms[i * HOOKS_MAX + n] = ms;
-    g_timer_fn[i * HOOKS_MAX + n] = fn;
-    g_timer_count[i] = n + 1;
-}
-
-void register_key(char *type, char *spec, i32 fn) {
-    i32 i = slot_of_type(type);
-    i32 n = g_key_count[i];
-    if (n >= HOOKS_MAX) { debug.panic("app: too many @key on one type"); }
-    g_key_spec[i * HOOKS_MAX + n] = (i32)spec;
-    g_key_fn[i * HOOKS_MAX + n] = fn;
-    g_key_count[i] = n + 1;
-}
-
-void register_open(char *type, i32 fn) { g_open[slot_of_type(type)] = fn; }
-void register_on_close(char *type, i32 fn) { g_on_close[slot_of_type(type)] = fn; }
+void register_open(char *type) { g_opens[slot_of_type(type)] = 1; }
 
 export i32 count() { return g_app_count; }
 
@@ -181,33 +160,30 @@ i32 mount(i32 a) {
     }
     bytes.zero((char*)self, size);
 
-    // Everything view() creates -- and everything the app creates later from
-    // its handlers -- is stamped with `self`.
-    i32 outer = dom.current_owner();
-    dom.set_current_owner(self);
-    i32 view = g_view[a];
-    i32 win = view(self);
+    // The instance is bookkept before it starts: its start-up requests
+    // (CLAIM_KEY, CREATE_TIMER) arrive as this owner.
+    g_inst_self[slot] = self;
+    g_inst_app[slot] = a;
+    g_inst_win[slot] = 0;
+
+    // The app's runtime runs view() and sets up its timers and shortcuts;
+    // every request it sends carries `self`, so everything view() creates
+    // -- and everything the app creates later from its handlers -- is
+    // owned by it.
+    i32 win = host.start(self, (char*)g_type[a]);
     if (win != 0) {
         dom.set_owner(win, self);
         dom.set_on_close(win, window_closed);
         dom.append_child(dom.desktop_id(), win);
     }
-    i32 k = 0;
-    while (k < g_timer_count[a]) {
-        dom_widgets.create_timer(g_timer_ms[a * HOOKS_MAX + k], g_timer_fn[a * HOOKS_MAX + k]);
-        k++;
-    }
-    dom.set_current_owner(outer);
-
-    g_inst_self[slot] = self;
-    g_inst_app[slot] = a;
     g_inst_win[slot] = win;
     if (win != 0) { dom_widgets.focus_window(win); }
     return win;
 }
 
-// The on_close handler every app window carries: run the app's @on_close,
-// then remove everything the instance owns and free it.
+// The on_close handler every app window carries: tell the instance its
+// window is closing (a CLOSE event; its runtime runs the app's @on_close)
+// and wait for its EXIT request to actually take it down.
 void window_closed(i32 owner, i32 win, i32 arg) {
     i32 slot = slot_of_owner(owner);
     if (slot < 0) {
@@ -215,9 +191,16 @@ void window_closed(i32 owner, i32 win, i32 arg) {
         dom_widgets.activate_topmost();
         return;
     }
-    i32 on_close = g_on_close[g_inst_app[slot]];
-    if (on_close != 0) { on_close(owner); }
+    ui_events.push(owner, win, UiEventKind::CLOSE, 0, 0, (char*)0);
+}
+
+// The instance is done (EXIT): remove everything it owns -- its window,
+// dialogs, timers -- drop its key claims and free it.
+export void instance_exited(i32 owner) {
+    i32 slot = slot_of_owner(owner);
+    if (slot < 0) { return; }
     dom.remove_owned(owner);
+    release_claims(owner);
     heap.free(owner);
     g_inst_self[slot] = 0;
     g_inst_app[slot] = 0;
@@ -251,22 +234,13 @@ export i32 launch_named(char *name) {
     return 0;
 }
 
-// Queued by open(): the @open method wants (self, path), not the DOM's
-// (owner, id, arg), so this hop puts the path where the method expects it.
-void deliver_open(i32 owner, i32 win, i32 arg) {
-    i32 slot = slot_of_owner(owner);
-    if (slot < 0) { return; }
-    i32 fn = g_open[g_inst_app[slot]];
-    if (fn != 0) { fn(owner, arg); }
-}
-
 // Hand `path` to an app with an @open method: the running instance of a
-// single-instance app, otherwise a fresh one. Returns 0 when no app opens
-// files.
+// single-instance app, otherwise a fresh one, as an OPEN event. Returns 0
+// when no app opens files.
 export i32 open(char *path) {
     i32 a = 0;
     while (a < g_app_count) {
-        if (g_open[a] != 0) {
+        if (g_opens[a] != 0) {
             if (g_view[a] != 0) {
                 i32 slot = -1;
                 if (g_single[a] != 0) { slot = slot_of_app(a); }
@@ -280,7 +254,7 @@ export i32 open(char *path) {
                 }
                 if (slot < 0) { return 0; }
                 str.ncopy(&g_open_path[0], path, 64);
-                dom.push_event(deliver_open, g_inst_self[slot], win, (i32)(&g_open_path[0]));
+                ui_events.push(g_inst_self[slot], win, UiEventKind::OPEN, 0, 0, &g_open_path[0]);
                 return win;
             }
         }
@@ -403,30 +377,67 @@ i32 key_spec_matches(char *spec, i32 code, i32 mods) {
     return 0;
 }
 
-// Key filter installed on the DOM: a DOWN event matching a @key of the
-// active window's app is queued to that method and claimed.
+// --- key claims -------------------------------------------------------------------------------
+// An instance claims the shortcuts its @key methods name (CLAIM_KEY, sent
+// by its runtime at start-up) and gets a token back; a matching key press
+// while its window is active becomes a KEY event carrying that token, and
+// the widget under focus never sees the key. Matching is done here so no
+// app code has to run to decide whether a key is taken.
+
+i32 CLAIMS_MAX = 64;
+i32 g_claim_owner[64];   // 0 = free
+i32 g_claim_spec[64];    // char*
+i32 g_claim_count = 0;
+
+export i32 claim_key(i32 owner, char *spec) {
+    i32 i = 0;
+    while (i < g_claim_count) {
+        if (g_claim_owner[i] == 0) { break; }
+        i++;
+    }
+    if (i == g_claim_count) {
+        if (g_claim_count >= CLAIMS_MAX) { return 0; }
+        g_claim_count++;
+    }
+    g_claim_owner[i] = owner;
+    g_claim_spec[i] = (i32)spec;
+    return i + 1;
+}
+
+void release_claims(i32 owner) {
+    i32 i = 0;
+    while (i < g_claim_count) {
+        if (g_claim_owner[i] == owner) { g_claim_owner[i] = 0; }
+        i++;
+    }
+}
+
+// Key filter installed on the DOM: a DOWN event matching a claim of the
+// active window's instance becomes a KEY event to it and is taken.
 export i32 dispatch_key(i32 owner, i32 code, i32 mods) {
     if (owner == 0) { return 0; }
     i32 slot = slot_of_owner(owner);
     if (slot < 0) { return 0; }
-    i32 a = g_inst_app[slot];
-    i32 k = 0;
-    while (k < g_key_count[a]) {
-        if (key_spec_matches((char*)g_key_spec[a * HOOKS_MAX + k], code, mods) != 0) {
-            dom.push_event(g_key_fn[a * HOOKS_MAX + k], owner, g_inst_win[slot], code | (mods << 16));
-            return 1;
+    i32 i = 0;
+    while (i < g_claim_count) {
+        if (g_claim_owner[i] == owner) {
+            if (key_spec_matches((char*)g_claim_spec[i], code, mods) != 0) {
+                ui_events.push(owner, g_inst_win[slot], UiEventKind::KEY, code | (mods << 16), i + 1, (char*)0);
+                return 1;
+            }
         }
-        k++;
+        i++;
     }
     return 0;
 }
 
-// Read the metadata and wire the framework to the desktop: taskbar
-// launcher, desktop menu and the keyboard filter. Call once after dom.init().
-// The rows come in source order per module; the registry keys on the type
-// name, so the order among a type's annotations does not matter. A type that
-// got @timer/@key/@open but no @app is a mistake in the app's source,
-// reported here since the compiler does not know what @app means.
+// Read the metadata and wire the shell to the desktop: taskbar launcher,
+// desktop menu and the keyboard filter. Call once after dom.init(). The
+// registry keys on the type name, so the order among a type's annotations
+// does not matter. A type that got @open but no @app is a mistake in the
+// app's source, reported here since the compiler does not know what @app
+// means. (Once apps are .mbin files on disk, these rows come from each
+// file's header instead -- MYOS-021.)
 export void install() {
     // Rows of names we don't know (some other framework's annotations) are
     // simply never asked for.
@@ -434,27 +445,15 @@ export void install() {
     while (apps.next()) {
         register_app(apps.type(), apps.size(), apps.fn(), apps.arg(0), apps.text(1));
     }
-    Annotations timers = annotations.named("timer");
-    while (timers.next()) {
-        register_timer(timers.type(), timers.arg(0), timers.fn());
-    }
-    Annotations keys = annotations.named("key");
-    while (keys.next()) {
-        register_key(keys.type(), keys.text(0), keys.fn());
-    }
     Annotations opens = annotations.named("open");
     while (opens.next()) {
-        register_open(opens.type(), opens.fn());
-    }
-    Annotations closers = annotations.named("on_close");
-    while (closers.next()) {
-        register_on_close(closers.type(), closers.fn());
+        register_open(opens.type());
     }
     i32 i = 0;
     while (i < g_app_count) {
         if (g_view[i] == 0) {
             debug.println((char*)g_type[i]);
-            debug.panic("app: a type has @timer/@key/@open but no @app on its view");
+            debug.panic("app: a type has @open but no @app on its view");
         }
         i++;
     }
