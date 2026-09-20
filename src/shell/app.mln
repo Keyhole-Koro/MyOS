@@ -13,6 +13,12 @@ import graphics from "../ui/graphics.mln";
 import annotations from "../../../../toolchain/MyStdLib/meta/annotations.mln";
 import { Annotations } from "../../../../toolchain/MyStdLib/meta/annotations.mln";
 import ui_events from "../ui/ui_events.mln";
+import fs from "../fs/fs.mln";
+import { FsError } from "../fs/fs.mln";
+import console from "../proc/console.mln";
+import mbin from "../../../../toolchain/MyStdLib/format/mbin.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import { UiEventKind } from "../../../MyAppFramework/src/protocol.mln";
 import host from "host.mln";
 
@@ -55,7 +61,22 @@ i32 g_view[16];                // 0 until @app registers; a type without it is n
 i32 g_single[16];
 i32 g_name[16];                // char*: launcher label
 i32 g_opens[16];               // 1 if the type has an @open method
+i32 g_path[16];                // char*: an installed app's file on disk; 0 for one linked into this image
 i32 g_app_count = 0;
+
+// Names and paths read out of images on disk are copied here: the image
+// buffer is freed once its header has been read.
+char g_names[256];
+i32 g_names_used = 0;
+
+char *keep(char *s) {
+    i32 n = str.len(s) + 1;
+    if (g_names_used + n > 256) { return ""; }
+    char *out = &g_names[g_names_used];
+    str.copy(out, s);
+    g_names_used = g_names_used + n;
+    return out;
+}
 
 // The slot for a type, made on first sight: annotations arrive in source
 // order, so @open may precede @app.
@@ -83,6 +104,57 @@ void register_app(char *type, i32 size, i32 view, i32 single, char *name) {
 }
 
 void register_open(char *type) { g_opens[slot_of_type(type)] = 1; }
+
+// An app installed as an executable on disk: `path` names the file whose
+// header carried the @app row. It has no view function here -- launching
+// it spawns the file -- so the registry keys it by its path.
+void register_file_app(char *path, i32 single, char *name) {
+    i32 i = slot_of_type(path);
+    g_view[i] = 0;
+    g_path[i] = (i32)path;
+    g_single[i] = single;
+    g_name[i] = (i32)name;
+    if (name[0] == 0) { g_name[i] = (i32)path; }
+}
+
+// Every executable on the disk that declares @app is an installed app: read
+// each file's header (MBIN, section directory) for its annotation rows,
+// without loading it. MFS is flat, so "installed" means "an MBIN file on
+// the disk with an @app row" rather than a directory.
+void scan_disk() {
+    char name[16];
+    i32 start = 0;
+    while (1) {
+        Result<Option<i32>, FsError> res = fs.dir_next(start, &name[0], 16);
+        i32 idx = -1;
+        case res of {
+            Ok(v) -> ({ idx = case v of { Some(n) -> n; None -> -1; }; });
+            Err(_) -> ({ return; });
+        };
+        if (idx < 0) { break; }
+        start = idx + 1;
+        i32 size = fs.entry_size(idx);
+        if (size < 36) { continue; }
+        i32 fd = case fs.open(&name[0]) of { Ok(v) -> v; Err(_) -> -1; };
+        if (fd < 0) { continue; }
+        char *image = (char*)heap.alloc(size);
+        if (image == 0) { fs.close(fd); continue; }
+        i32 got = case fs.read(fd, (i32)image, size) of { Ok(v) -> v; Err(_) -> 0; };
+        fs.close(fd);
+        if (got == size) {
+            if (mbin.is_image(image, size)) {
+                Annotations rows = annotations.in_image(image);
+                rows.on("app", (char*)0);
+                if (rows.next()) {
+                    char *path = keep(&name[0]);
+                    register_file_app(path, rows.arg(0), keep(rows.text(1)));
+                    debug.printf("app: installed %s from disk\n", (i32)path);
+                }
+            }
+        }
+        heap.free((i32)image);
+    }
+}
 
 export i32 count() { return g_app_count; }
 
@@ -213,6 +285,12 @@ export void instance_exited(i32 owner) {
 export i32 launch(i32 index) {
     if (index < 0) { return 0; }
     if (index >= g_app_count) { return 0; }
+    if (g_path[index] != 0) {
+        // Installed on disk: run it as a process. It has no window here
+        // until GUI apps speak the UI protocol from user space (MYOS-022).
+        console.spawn_file((char*)g_path[index]);
+        return 0;
+    }
     if (g_view[index] == 0) { return 0; }
     if (g_single[index] != 0) {
         i32 slot = slot_of_app(index);
@@ -457,6 +535,7 @@ export void install() {
         }
         i++;
     }
+    scan_disk();
     dom_render.set_launcher(launch_menu);
     compositor.set_desktop_menu(menu_items(), on_menu);
     dom.set_key_filter(dispatch_key);

@@ -1,0 +1,25 @@
+package app;
+
+import ulib from "../lib/ulib.mln";
+import { app } from "../../../MyAppFramework/src/annotations.mln";
+
+// An application installed on the disk rather than linked into the kernel:
+// the shell finds its @app row in this file's MBIN header at boot and lists
+// it in the launcher without loading it (docs/design/os-app-boundaries.md,
+// MYOS-021). Launching it spawns the process; it has no window yet -- that
+// needs the UI protocol from user space (MYOS-022) -- so it just says hello
+// on the serial console and exits.
+struct Demo {
+    i32 launched;
+};
+
+@app(name = "Demo")
+i32 (Demo *d) view() {
+    d->launched = 1;
+    return 0;
+}
+
+export i32 main() {
+    ulib.println("demo: launched from the desktop");
+    return 0;
+}
