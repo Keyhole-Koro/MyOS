@@ -5,7 +5,6 @@ import scheduler from "../../../../MyKernel/src/kernel/scheduler.mln";
 import graphics from "../graphics.mln";
 import theme from "../theme.mln";
 import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
-import { Window, Text, Button, Panel, Box, TextInput, TextArea, Checkbox, Row, Column, List, Taskbar, Menu, Separator, PrimaryButton, Label } from "dom_elements.mln";
 import dom_widgets from "dom_widgets.mln";
 import dom from "dom.mln";
 import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";

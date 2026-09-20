@@ -1,0 +1,464 @@
+package app;
+
+import debug from "../../../MyKernel/src/debug/debug.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import bytes from "../../../../toolchain/MyStdLib/text/bytes.mln";
+import str from "../../../../toolchain/MyStdLib/str.mln";
+import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
+import dom from "../ui/dom/dom.mln";
+import dom_widgets from "../ui/dom/dom_widgets.mln";
+import dom_render from "../ui/dom/dom_render.mln";
+import compositor from "../ui/compositor.mln";
+import graphics from "../ui/graphics.mln";
+import annotations from "../../../../toolchain/MyStdLib/meta/annotations.mln";
+import { Annotations } from "../../../../toolchain/MyStdLib/meta/annotations.mln";
+
+// The shell: the registry of installed apps and the instances running on
+// the desktop. This is the OS side of the application framework -- apps
+// never call it; they link against the SDK (system/MyAppFramework: the
+// annotation declarations, `ui`, `elements`) and this is what gives those
+// declarations their meaning (docs/design/os-app-boundaries.md).
+//
+// An app is a struct whose view method carries `@app` (the SDK's
+// annotations.mln).
+// The compiler records every annotation as a metadata row; install() walks
+// the rows (MyStdLib's annotations iterator) and files them into the
+// registry below by the type's name, so `@timer` on Terminal's poll and
+// `@app` on Terminal's view land in the same slot whatever order they appear
+// in. What an annotation means, and when it is acted on, is decided here,
+// not by the compiler.
+//
+// Every registered function is a method, called with the instance pointer
+// first: view(self), poll(self), save(self, id), open(self, path). The DOM
+// calls handlers as (owner, id, arg) and the calling convention ignores
+// trailing arguments, so a timer or key handler is the method itself.
+//
+// An instance owns every DOM node created while its code runs (dom.mln's
+// g_current_owner), so closing its window sweeps dialogs and timers with
+// it. Registry and instances are fixed-size tables, like the rest of the
+// kernel's bookkeeping; pointers are kept in i32 arrays (see the note on
+// pointer arrays in docs/APP_FRAMEWORK.md).
+
+// --- registry --------------------------------------------------------------------------------
+
+i32 APPS_MAX = 16;
+i32 HOOKS_MAX = 4;             // timers and keys per app
+
+i32 g_type[16];                // char*: "Counter", the key everything is grouped by
+i32 g_size[16];
+i32 g_view[16];                // 0 until @app registers; a type without it is not launchable
+i32 g_single[16];
+i32 g_name[16];                // char*: launcher label
+i32 g_open[16];
+i32 g_on_close[16];
+i32 g_timer_ms[64];            // [slot * HOOKS_MAX + k]
+i32 g_timer_fn[64];
+i32 g_timer_count[16];
+i32 g_key_spec[64];            // char*
+i32 g_key_fn[64];
+i32 g_key_count[16];
+i32 g_app_count = 0;
+
+// The slot for a type, made on first sight: annotations arrive in source
+// order, so @timer may precede @app.
+i32 slot_of_type(char *type) {
+    i32 i = 0;
+    while (i < g_app_count) {
+        if (str.eq((char*)g_type[i], type) != 0) { return i; }
+        i++;
+    }
+    if (g_app_count >= APPS_MAX) {
+        debug.panic("app: registry full");
+    }
+    g_type[g_app_count] = (i32)type;
+    g_app_count++;
+    return g_app_count - 1;
+}
+
+void register_app(char *type, i32 size, i32 view, i32 single, char *name) {
+    i32 i = slot_of_type(type);
+    g_size[i] = size;
+    g_view[i] = view;
+    g_single[i] = single;
+    g_name[i] = (i32)name;
+    if (name[0] == 0) { g_name[i] = (i32)type; }
+}
+
+void register_timer(char *type, i32 ms, i32 fn) {
+    i32 i = slot_of_type(type);
+    i32 n = g_timer_count[i];
+    if (n >= HOOKS_MAX) { debug.panic("app: too many @timer on one type"); }
+    g_timer_ms[i * HOOKS_MAX + n] = ms;
+    g_timer_fn[i * HOOKS_MAX + n] = fn;
+    g_timer_count[i] = n + 1;
+}
+
+void register_key(char *type, char *spec, i32 fn) {
+    i32 i = slot_of_type(type);
+    i32 n = g_key_count[i];
+    if (n >= HOOKS_MAX) { debug.panic("app: too many @key on one type"); }
+    g_key_spec[i * HOOKS_MAX + n] = (i32)spec;
+    g_key_fn[i * HOOKS_MAX + n] = fn;
+    g_key_count[i] = n + 1;
+}
+
+void register_open(char *type, i32 fn) { g_open[slot_of_type(type)] = fn; }
+void register_on_close(char *type, i32 fn) { g_on_close[slot_of_type(type)] = fn; }
+
+export i32 count() { return g_app_count; }
+
+export char* app_name(i32 index) {
+    if (index < 0) { return ""; }
+    if (index >= g_app_count) { return ""; }
+    return (char*)g_name[index];
+}
+
+// --- instances -------------------------------------------------------------------------------
+
+i32 INSTANCES_MAX = 32;
+i32 g_inst_self[32];   // instance pointer (0 = free slot)
+i32 g_inst_app[32];    // registry slot
+i32 g_inst_win[32];    // its main window
+i32 g_inst_count = 0;  // slots in use, including freed ones below the high-water mark
+
+char g_menu_buf[256];  // "\n"-joined app names for the launcher menu
+char g_open_path[64];  // path handed to an @open handler (copied: the caller's buffer may go away)
+
+i32 slot_of_owner(i32 owner) {
+    i32 i = 0;
+    while (i < g_inst_count) {
+        if (g_inst_self[i] == owner) { return i; }
+        i++;
+    }
+    return -1;
+}
+
+i32 slot_of_app(i32 app) {
+    i32 i = 0;
+    while (i < g_inst_count) {
+        if (g_inst_self[i] != 0) {
+            if (g_inst_app[i] == app) { return i; }
+        }
+        i++;
+    }
+    return -1;
+}
+
+i32 free_slot() {
+    i32 i = 0;
+    while (i < g_inst_count) {
+        if (g_inst_self[i] == 0) { return i; }
+        i++;
+    }
+    if (g_inst_count >= INSTANCES_MAX) { return -1; }
+    g_inst_count++;
+    return g_inst_count - 1;
+}
+
+// The instance whose window this is, or 0.
+export i32 owner_of_window(i32 win) {
+    i32 i = 0;
+    while (i < g_inst_count) {
+        if (g_inst_win[i] == win) { return g_inst_self[i]; }
+        i++;
+    }
+    return 0;
+}
+
+// Create an instance of app `a`, build its window and put it on the desktop.
+// Returns the window id, or 0 when out of slots or memory.
+i32 mount(i32 a) {
+    i32 slot = free_slot();
+    if (slot < 0) {
+        debug.println("app: too many instances");
+        return 0;
+    }
+    i32 size = g_size[a];
+    i32 self = heap.alloc(size);
+    if (self == 0) {
+        debug.println("app: out of memory");
+        return 0;
+    }
+    bytes.zero((char*)self, size);
+
+    // Everything view() creates -- and everything the app creates later from
+    // its handlers -- is stamped with `self`.
+    i32 outer = dom.current_owner();
+    dom.set_current_owner(self);
+    i32 view = g_view[a];
+    i32 win = view(self);
+    if (win != 0) {
+        dom.set_owner(win, self);
+        dom.set_on_close(win, window_closed);
+        dom.append_child(dom.desktop_id(), win);
+    }
+    i32 k = 0;
+    while (k < g_timer_count[a]) {
+        dom_widgets.create_timer(g_timer_ms[a * HOOKS_MAX + k], g_timer_fn[a * HOOKS_MAX + k]);
+        k++;
+    }
+    dom.set_current_owner(outer);
+
+    g_inst_self[slot] = self;
+    g_inst_app[slot] = a;
+    g_inst_win[slot] = win;
+    if (win != 0) { dom_widgets.focus_window(win); }
+    return win;
+}
+
+// The on_close handler every app window carries: run the app's @on_close,
+// then remove everything the instance owns and free it.
+void window_closed(i32 owner, i32 win, i32 arg) {
+    i32 slot = slot_of_owner(owner);
+    if (slot < 0) {
+        dom.remove_node(win);
+        dom_widgets.activate_topmost();
+        return;
+    }
+    i32 on_close = g_on_close[g_inst_app[slot]];
+    if (on_close != 0) { on_close(owner); }
+    dom.remove_owned(owner);
+    heap.free(owner);
+    g_inst_self[slot] = 0;
+    g_inst_app[slot] = 0;
+    g_inst_win[slot] = 0;
+    dom_widgets.activate_topmost();
+}
+
+// Start the app at `index`; a single-instance app that is already running is
+// brought to the front instead. Returns the window id.
+export i32 launch(i32 index) {
+    if (index < 0) { return 0; }
+    if (index >= g_app_count) { return 0; }
+    if (g_view[index] == 0) { return 0; }
+    if (g_single[index] != 0) {
+        i32 slot = slot_of_app(index);
+        if (slot >= 0) {
+            dom_widgets.focus_window(g_inst_win[slot]);
+            return g_inst_win[slot];
+        }
+    }
+    return mount(index);
+}
+
+// Start the app called `name` (as the launcher shows it); 0 if there is none.
+export i32 launch_named(char *name) {
+    i32 i = 0;
+    while (i < g_app_count) {
+        if (str.eq((char*)g_name[i], name) != 0) { return launch(i); }
+        i++;
+    }
+    return 0;
+}
+
+// Queued by open(): the @open method wants (self, path), not the DOM's
+// (owner, id, arg), so this hop puts the path where the method expects it.
+void deliver_open(i32 owner, i32 win, i32 arg) {
+    i32 slot = slot_of_owner(owner);
+    if (slot < 0) { return; }
+    i32 fn = g_open[g_inst_app[slot]];
+    if (fn != 0) { fn(owner, arg); }
+}
+
+// Hand `path` to an app with an @open method: the running instance of a
+// single-instance app, otherwise a fresh one. Returns 0 when no app opens
+// files.
+export i32 open(char *path) {
+    i32 a = 0;
+    while (a < g_app_count) {
+        if (g_open[a] != 0) {
+            if (g_view[a] != 0) {
+                i32 slot = -1;
+                if (g_single[a] != 0) { slot = slot_of_app(a); }
+                i32 win = 0;
+                if (slot >= 0) {
+                    win = g_inst_win[slot];
+                    dom_widgets.focus_window(win);
+                } else {
+                    win = mount(a);
+                    slot = slot_of_app(a);
+                }
+                if (slot < 0) { return 0; }
+                str.ncopy(&g_open_path[0], path, 64);
+                dom.push_event(deliver_open, g_inst_self[slot], win, (i32)(&g_open_path[0]));
+                return win;
+            }
+        }
+        a++;
+    }
+    return 0;
+}
+
+// --- launcher menu ---------------------------------------------------------------------------
+
+export char* menu_items() {
+    i32 n = strbuf.reset(&g_menu_buf[0]);
+    i32 i = 0;
+    while (i < g_app_count) {
+        if (i > 0) { n = strbuf.append(&g_menu_buf[0], 256, n, "\n"); }
+        n = strbuf.append(&g_menu_buf[0], 256, n, (char*)g_name[i]);
+        i++;
+    }
+    return &g_menu_buf[0];
+}
+
+// Menu handler(index): the same table order as menu_items().
+export void on_menu(i32 index) {
+    launch(index);
+}
+
+// Taskbar launcher: pop the app menu up above the button.
+export void launch_menu() {
+    i32 s = dom.ui_scale();
+    i32 rows = g_app_count;
+    if (rows < 1) { rows = 1; }
+    i32 y = graphics.display_height() - dom_widgets.taskbar_height() - (rows * 34 + 20) * s;
+    dom_widgets.open_menu(8 * s, y, menu_items(), on_menu, 0);
+}
+
+// --- keyboard shortcuts ----------------------------------------------------------------------
+
+i32 MOD_SHIFT = 1;
+i32 MOD_CTRL = 2;
+i32 MOD_ALT = 4;
+
+// True if `word` (n chars, case-insensitive) is `name`.
+i32 word_is(char *word, i32 n, char *name) {
+    i32 i = 0;
+    while (i < n) {
+        i32 c = word[i] & 0xFF;
+        if (c >= 'A') { if (c <= 'Z') { c = c + 32; } }
+        i32 d = name[i] & 0xFF;
+        if (d == 0) { return 0; }
+        if (c != d) { return 0; }
+        i++;
+    }
+    if (name[n] != 0) { return 0; }
+    return 1;
+}
+
+// The key code a spec's final word names: a single character (as lower
+// case), or a named key in the kernel's keyboard.mln encoding. -1 if unknown.
+i32 named_key(char *word, i32 n) {
+    if (n == 1) {
+        i32 c = word[0] & 0xFF;
+        if (c >= 'A') { if (c <= 'Z') { c = c + 32; } }
+        return c;
+    }
+    if (word_is(word, n, "enter") != 0) { return 13; }
+    if (word_is(word, n, "return") != 0) { return 13; }
+    if (word_is(word, n, "tab") != 0) { return 9; }
+    if (word_is(word, n, "escape") != 0) { return 27; }
+    if (word_is(word, n, "esc") != 0) { return 27; }
+    if (word_is(word, n, "space") != 0) { return 32; }
+    if (word_is(word, n, "backspace") != 0) { return 8; }
+    if (word_is(word, n, "delete") != 0) { return 127; }
+    if (word_is(word, n, "left") != 0) { return 0x101; }
+    if (word_is(word, n, "right") != 0) { return 0x102; }
+    if (word_is(word, n, "up") != 0) { return 0x103; }
+    if (word_is(word, n, "down") != 0) { return 0x104; }
+    if (word_is(word, n, "home") != 0) { return 0x105; }
+    if (word_is(word, n, "end") != 0) { return 0x106; }
+    if (word_is(word, n, "pageup") != 0) { return 0x107; }
+    if (word_is(word, n, "pagedown") != 0) { return 0x108; }
+    if (n >= 2) {
+        if (word[0] == 'F') {
+            i32 f = str.atoi(&word[1]);
+            if (f >= 1) { if (f <= 12) { return 0x120 + f; } }
+        }
+    }
+    return -1;
+}
+
+// Does "Ctrl+Shift+S" describe this key DOWN? Words before the last are
+// modifiers (Ctrl, Shift, Alt); the last is the key.
+i32 key_spec_matches(char *spec, i32 code, i32 mods) {
+    i32 want_mods = 0;
+    i32 i = 0;
+    while (1) {
+        i32 start = i;
+        while (spec[i] != 0) {
+            if (spec[i] == '+') { break; }
+            i++;
+        }
+        i32 n = i - start;
+        if (spec[i] == '+') {
+            if (n == 0) {
+                // "Ctrl++": the '+' key itself.
+                if (spec[i + 1] != 0) { return 0; }
+                n = 1;
+            } else {
+                if (word_is(&spec[start], n, "ctrl") != 0) { want_mods = want_mods | MOD_CTRL; }
+                else if (word_is(&spec[start], n, "shift") != 0) { want_mods = want_mods | MOD_SHIFT; }
+                else if (word_is(&spec[start], n, "alt") != 0) { want_mods = want_mods | MOD_ALT; }
+                else { return 0; }
+                i++;
+                continue;
+            }
+        }
+        if (want_mods != mods) { return 0; }
+        if (named_key(&spec[start], n) != code) { return 0; }
+        return 1;
+    }
+    return 0;
+}
+
+// Key filter installed on the DOM: a DOWN event matching a @key of the
+// active window's app is queued to that method and claimed.
+export i32 dispatch_key(i32 owner, i32 code, i32 mods) {
+    if (owner == 0) { return 0; }
+    i32 slot = slot_of_owner(owner);
+    if (slot < 0) { return 0; }
+    i32 a = g_inst_app[slot];
+    i32 k = 0;
+    while (k < g_key_count[a]) {
+        if (key_spec_matches((char*)g_key_spec[a * HOOKS_MAX + k], code, mods) != 0) {
+            dom.push_event(g_key_fn[a * HOOKS_MAX + k], owner, g_inst_win[slot], code | (mods << 16));
+            return 1;
+        }
+        k++;
+    }
+    return 0;
+}
+
+// Read the metadata and wire the framework to the desktop: taskbar
+// launcher, desktop menu and the keyboard filter. Call once after dom.init().
+// The rows come in source order per module; the registry keys on the type
+// name, so the order among a type's annotations does not matter. A type that
+// got @timer/@key/@open but no @app is a mistake in the app's source,
+// reported here since the compiler does not know what @app means.
+export void install() {
+    // Rows of names we don't know (some other framework's annotations) are
+    // simply never asked for.
+    Annotations apps = annotations.named("app");
+    while (apps.next()) {
+        register_app(apps.type(), apps.size(), apps.fn(), apps.arg(0), apps.text(1));
+    }
+    Annotations timers = annotations.named("timer");
+    while (timers.next()) {
+        register_timer(timers.type(), timers.arg(0), timers.fn());
+    }
+    Annotations keys = annotations.named("key");
+    while (keys.next()) {
+        register_key(keys.type(), keys.text(0), keys.fn());
+    }
+    Annotations opens = annotations.named("open");
+    while (opens.next()) {
+        register_open(opens.type(), opens.fn());
+    }
+    Annotations closers = annotations.named("on_close");
+    while (closers.next()) {
+        register_on_close(closers.type(), closers.fn());
+    }
+    i32 i = 0;
+    while (i < g_app_count) {
+        if (g_view[i] == 0) {
+            debug.println((char*)g_type[i]);
+            debug.panic("app: a type has @timer/@key/@open but no @app on its view");
+        }
+        i++;
+    }
+    dom_render.set_launcher(launch_menu);
+    compositor.set_desktop_menu(menu_items(), on_menu);
+    dom.set_key_filter(dispatch_key);
+}

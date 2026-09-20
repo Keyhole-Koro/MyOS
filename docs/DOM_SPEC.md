@@ -563,10 +563,11 @@ checked/hitTestableを含める。host側は`MyOS` / strict `Locator` / `expect`
   `g_current_owner` を `owner` に刻む（`drain_events` がハンドラ実行中に設定）。
   `set_owner(id, owner)` は部分木を再刻印、`remove_owned(owner)` は所有ノードを
   全削除。`dom_widgets.close_window` は `on_close` があればキューに積んで戻り、
-  ノードの削除は framework（`app.mln`）に任せる。
+  ノードの削除はシェル（`shell/app.mln`）に任せる。
 - **キーフィルタ**: `dom.set_key_filter(fn)`。`dispatch_key_event` が DOWN の先頭で
   `fn(owner_of(active_window), code, mods)` を呼び、1 なら widget に渡さない
   （`@key` ショートカット）。
-- **要素関数** (`dom_elements.mln`): 位置・サイズ・ハンドラにデフォルト値、
-  `testId` プロパティ、`append_child` の再 export。`Checkbox` / `List` は
+- **要素関数** (`ui/elements.mln`、宣言とデフォルトは SDK の `MyAppFramework/src/elements.mln`):
+  位置・サイズ・ハンドラにデフォルト値、`testId` プロパティ、`append_child`。
+  `dom/dom_elements.mln` はサーバ内部の `create_*` だけ。`Checkbox` / `List` は
   ハンドラ無しでも hit-testable。

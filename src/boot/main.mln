@@ -18,7 +18,7 @@ import mmu from "../../../MyKernel/src/mm/mmu.mln";
 import { MmuError } from "../../../MyKernel/src/mm/mmu.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
-import app from "../../../MyAppFramework/src/app.mln";
+import app from "../shell/app.mln";
 
 // The applications. Importing a module is what puts it in the program (the
 // build follows imports from here), and the annotations in it -- @app on a
@@ -105,7 +105,7 @@ void kernel_init() {
     fs.init();
     console.init();
 
-    // The framework (system/MyAppFramework) reads the apps' annotations and
+    // The shell (../shell/app.mln) reads the apps' annotations and
     // owns launching, the app menu, shortcuts and window close.
     app.install();
 

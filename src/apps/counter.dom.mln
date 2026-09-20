@@ -1,6 +1,6 @@
 package counter;
 
-import dom_elements from "../ui/dom/dom_elements.mln";
+import elements from "../../../MyAppFramework/src/elements.mln";
 import ui from "../../../MyAppFramework/src/ui.mln";
 import { app } from "../../../MyAppFramework/src/annotations.mln";
 
