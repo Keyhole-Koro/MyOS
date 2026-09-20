@@ -41,9 +41,10 @@ import host from "host.mln";
 // The shell talks to a running instance only through UI protocol events
 // (ui_events): KEY when a claimed shortcut is pressed, OPEN with a path,
 // CLOSE when the user closes its window; the instance answers CLOSE with
-// an EXIT request, and only then is it freed. The one call the shell still
-// makes into app code is starting an instance (host.mln) -- the stand-in
-// for spawning it as a process.
+// an EXIT request, and only then is it freed. App code never runs on this
+// task: starting an instance hands it to the app task (host.mln, the
+// stand-in for spawning a process), and the instance's window comes back
+// as a MAIN_WINDOW request.
 //
 // An instance owns every DOM node created while its code runs (dom.mln's
 // g_current_owner), so closing its window sweeps dialogs and timers with
@@ -169,7 +170,8 @@ export char* app_name(i32 index) {
 i32 INSTANCES_MAX = 32;
 i32 g_inst_self[32];   // instance pointer (0 = free slot)
 i32 g_inst_app[32];    // registry slot
-i32 g_inst_win[32];    // its main window
+i32 g_inst_win[32];    // its main window; 0 until the instance reports it (MAIN_WINDOW)
+i32 g_inst_open[32];   // 1: an OPEN with g_open_path waits for the window
 i32 g_inst_count = 0;  // slots in use, including freed ones below the high-water mark
 
 char g_menu_buf[256];  // "\n"-joined app names for the launcher menu
@@ -216,41 +218,55 @@ export i32 owner_of_window(i32 win) {
     return 0;
 }
 
-// Create an instance of app `a`, build its window and put it on the desktop.
-// Returns the window id, or 0 when out of slots or memory.
+// Create an instance of app `a` and start it. Its window arrives later:
+// the app's task runs view() and reports the result with a MAIN_WINDOW
+// request (window_ready below). Returns the instance slot, or -1 when out
+// of slots or memory.
 i32 mount(i32 a) {
     i32 slot = free_slot();
     if (slot < 0) {
         debug.println("app: too many instances");
-        return 0;
+        return -1;
     }
     i32 size = g_size[a];
     i32 self = heap.alloc(size);
     if (self == 0) {
         debug.println("app: out of memory");
-        return 0;
+        return -1;
     }
     bytes.zero((char*)self, size);
 
     // The instance is bookkept before it starts: its start-up requests
-    // (CLAIM_KEY, CREATE_TIMER) arrive as this owner.
+    // (CREATE_*, CLAIM_KEY, CREATE_TIMER, MAIN_WINDOW) arrive as this owner.
     g_inst_self[slot] = self;
     g_inst_app[slot] = a;
     g_inst_win[slot] = 0;
+    g_inst_open[slot] = 0;
 
-    // The app's runtime runs view() and sets up its timers and shortcuts;
-    // every request it sends carries `self`, so everything view() creates
-    // -- and everything the app creates later from its handlers -- is
-    // owned by it.
-    i32 win = host.start(self, (char*)g_type[a]);
-    if (win != 0) {
-        dom.set_owner(win, self);
-        dom.set_on_close(win, window_closed);
-        dom.append_child(dom.desktop_id(), win);
-    }
+    // The app's runtime runs view() and sets up its timers and shortcuts
+    // on the app task; every request it sends carries `self`, so everything
+    // view() creates -- and everything the app creates later from its
+    // handlers -- is owned by it.
+    host.start(self, (char*)g_type[a]);
+    return slot;
+}
+
+// MAIN_WINDOW from an instance: its view() built `win`. Put it on the
+// desktop as the instance's window, and deliver an OPEN that was waiting
+// for it.
+export void window_ready(i32 owner, i32 win) {
+    i32 slot = slot_of_owner(owner);
+    if (slot < 0) { return; }
+    if (win == 0) { return; }
+    dom.set_owner(win, owner);
+    dom.set_on_close(win, window_closed);
+    dom.append_child(dom.desktop_id(), win);
     g_inst_win[slot] = win;
-    if (win != 0) { dom_widgets.focus_window(win); }
-    return win;
+    dom_widgets.focus_window(win);
+    if (g_inst_open[slot] != 0) {
+        g_inst_open[slot] = 0;
+        ui_events.push(owner, win, UiEventKind::OPEN, 0, 0, &g_open_path[0]);
+    }
 }
 
 // The on_close handler every app window carries: tell the instance its
@@ -277,11 +293,13 @@ export void instance_exited(i32 owner) {
     g_inst_self[slot] = 0;
     g_inst_app[slot] = 0;
     g_inst_win[slot] = 0;
+    g_inst_open[slot] = 0;
     dom_widgets.activate_topmost();
 }
 
 // Start the app at `index`; a single-instance app that is already running is
-// brought to the front instead. Returns the window id.
+// brought to the front instead. Returns the running instance's window, or
+// 0 when the instance is only starting (its window comes with MAIN_WINDOW).
 export i32 launch(i32 index) {
     if (index < 0) { return 0; }
     if (index >= g_app_count) { return 0; }
@@ -295,11 +313,12 @@ export i32 launch(i32 index) {
     if (g_single[index] != 0) {
         i32 slot = slot_of_app(index);
         if (slot >= 0) {
-            dom_widgets.focus_window(g_inst_win[slot]);
+            if (g_inst_win[slot] != 0) { dom_widgets.focus_window(g_inst_win[slot]); }
             return g_inst_win[slot];
         }
     }
-    return mount(index);
+    mount(index);
+    return 0;
 }
 
 // Start the app called `name` (as the launcher shows it); 0 if there is none.
@@ -313,8 +332,10 @@ export i32 launch_named(char *name) {
 }
 
 // Hand `path` to an app with an @open method: the running instance of a
-// single-instance app, otherwise a fresh one, as an OPEN event. Returns 0
-// when no app opens files.
+// single-instance app, otherwise a fresh one, as an OPEN event -- sent at
+// once to a running instance, or as soon as a new one reports its window.
+// Returns the window it went to (0 while the instance is still starting),
+// or 0 when no app opens files.
 export i32 open(char *path) {
     i32 a = 0;
     while (a < g_app_count) {
@@ -322,17 +343,16 @@ export i32 open(char *path) {
             if (g_view[a] != 0) {
                 i32 slot = -1;
                 if (g_single[a] != 0) { slot = slot_of_app(a); }
-                i32 win = 0;
-                if (slot >= 0) {
-                    win = g_inst_win[slot];
-                    dom_widgets.focus_window(win);
-                } else {
-                    win = mount(a);
-                    slot = slot_of_app(a);
-                }
+                if (slot < 0) { slot = mount(a); }
                 if (slot < 0) { return 0; }
                 str.ncopy(&g_open_path[0], path, 64);
-                ui_events.push(g_inst_self[slot], win, UiEventKind::OPEN, 0, 0, &g_open_path[0]);
+                i32 win = g_inst_win[slot];
+                if (win != 0) {
+                    dom_widgets.focus_window(win);
+                    ui_events.push(g_inst_self[slot], win, UiEventKind::OPEN, 0, 0, &g_open_path[0]);
+                } else {
+                    g_inst_open[slot] = 1;
+                }
                 return win;
             }
         }

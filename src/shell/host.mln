@@ -1,22 +1,66 @@
 package host;
 
-// The in-process application host: the shell's stand-in for spawning an
-// app as a process, while apps still share the UI server's address space.
+// The in-process application host: the task every app runs on while apps
+// still share the UI server's address space -- the shell's stand-in for
+// spawning them as processes. Its loop is the SDK's runtime.run(): pump
+// events, sleep a tick. start() queues an instance for it; the task picks
+// it up and runs the instance's start-up (view(), timers, key claims),
+// which talks to the UI server only through requests.
+//
 // This is the only place the OS calls into the SDK's runtime, and it goes
 // away when apps become .mbin processes (MYOS-022): start() becomes
-// loader.spawn and the app's own main() calls runtime.start; pump()
-// becomes each app's own event loop on its own task (MYOS-020).
+// loader.spawn and each process runs runtime.run() itself.
 
+import debug from "../../../MyKernel/src/debug/debug.mln";
+import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+import { SchedulerError } from "../../../MyKernel/src/kernel/scheduler.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import runtime from "../../../MyAppFramework/src/runtime.mln";
 
-// Start `self`, an instance of `type`: its runtime runs the @app view and
-// registers what its annotations ask for. Returns the window id.
-export i32 start(i32 self, char *type) {
-    return runtime.start(self, type);
+i32 STARTS_MAX = 16;
+i32 g_start_self[16];
+i32 g_start_type[16];   // char*
+i32 g_start_head = 0;
+i32 g_start_tail = 0;
+
+// Queue an instance of `type` to be started on the app task.
+export void start(i32 self, char *type) {
+    i32 next = g_start_tail + 1;
+    if (next >= STARTS_MAX) { next = 0; }
+    if (next == g_start_head) {
+        debug.println("host: too many apps starting at once");
+        return;
+    }
+    g_start_self[g_start_tail] = self;
+    g_start_type[g_start_tail] = (i32)type;
+    g_start_tail = next;
 }
 
-// Deliver every pending event to the apps' handlers. Registered as the
-// consumer of the event ring (ui_events.set_consumer) by boot/main.mln.
-export void pump() {
-    runtime.pump();
+void start_pending() {
+    while (g_start_head != g_start_tail) {
+        i32 self = g_start_self[g_start_head];
+        char *type = (char*)g_start_type[g_start_head];
+        g_start_head = g_start_head + 1;
+        if (g_start_head >= STARTS_MAX) { g_start_head = 0; }
+        runtime.start(self, type);
+    }
+}
+
+// The app task: what runtime.run() will be in every process.
+void task() {
+    while (1) {
+        start_pending();
+        runtime.pump();
+        scheduler.sleep(1);
+    }
+}
+
+// Spawn the app task. Application code needs a real stack: view() and the
+// handlers build markup and format text on it.
+export void init() {
+    Result<i32, SchedulerError> r = scheduler.spawn_task_sized(task, 65536);
+    case r of {
+        Ok(_) -> 0;
+        Err(_) -> ({ debug.panic("host: cannot spawn the app task"); });
+    };
 }

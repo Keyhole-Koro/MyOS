@@ -71,8 +71,9 @@ def main() -> int:
             term_in.click()
             os._type("hello")
             os._press("enter")
-            out = wait_text_contains(term_out, "Hello from user space!")
-            assert "exited with 7" in out, f"missing exit code:\n{out}"
+            wait_text_contains(term_out, "Hello from user space!")
+            # The terminal notices the exit on its @timer, a tick or two later.
+            wait_text_contains(term_out, "exited with 7")
 
             # `ls` is a terminal built-in reading the MFS disk.
             os._type("ls")

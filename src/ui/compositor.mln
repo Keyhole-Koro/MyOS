@@ -11,10 +11,8 @@ import keyboard from "../../../MyKernel/src/io/keyboard.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import irq from "../../../MyKernel/src/arch/irq.mln";
 // The server's end of the UI protocol (system/MyAppFramework/src/protocol.mln):
-// the request carrier apps call and the handlers behind it. Nothing here
-// calls them; importing them is what puts them in the program (the build
-// follows imports), so an app's `uiproto_request` resolves at link.
-import ui_channel from "ui_channel.mln";
+// the request carrier apps call, served from the loop below.
+import uiproto from "ui_channel.mln";
 
 // Presents the DOM scene and turns mouse and keyboard events into DOM
 // interactions: hover, press/click, window focus and z-order, title-bar
@@ -258,6 +256,8 @@ void on_motion(i32 ex, i32 ey) {
  *
  * Consumes hardware events, manages focus, coordinates window drags and clicks, updates timers, and paints dirty DOM regions.
  */
+i32 g_paint_deferred = 0;
+
 export void run() {
     i32 prev_left = 0;
     i32 prev_right = 0;
@@ -266,6 +266,7 @@ export void run() {
     // before interrupts were enabled, so that paint could not be preempted).
 
     while (1) {
+        dom.lock();
 
         // Consume all queued mouse events. Clicks are dispatched at the
         // event's own coordinates: where the press happened, not where the
@@ -329,18 +330,29 @@ export void run() {
         // Timers (clock, animations) run on this task between events.
         dom_widgets.tick();
 
-        // Handlers queued by the input above and the timers run here, on
-        // this task, between input and paint: nothing else touches the DOM
-        // meanwhile. Moving this drain to its own task is what would make
-        // apps preemptible, and would need the DOM locked around paint.
+        // The apps' requests (UI protocol) are answered here, on this task:
+        // the app task sleeps on each until its reply. Their handlers run
+        // over there, on events the DOM emitted above.
+        i32 served = uiproto.serve();
+
+        // The server's own queued handlers (taskbar, menus, the shell's
+        // window-close hook) run here, between input and paint.
         dom.drain_events();
 
         // The setters above record what changed, so the damage region is the
-        // authority on whether a repaint is needed.
+        // authority on whether a repaint is needed. A pass that answered
+        // requests is likely in the middle of an app's burst (view() is a
+        // dozen creates, each one pass apart): hold the paint until a quiet
+        // pass, but never for more than a few, so a chatty app still shows.
+        if (served > 0) { g_paint_deferred++; } else { g_paint_deferred = 0; }
         if (dom.has_damage() != 0) {
-            present_frame();
+            if (served == 0 || g_paint_deferred > 8) {
+                g_paint_deferred = 0;
+                present_frame();
+            }
         }
 
+        dom.unlock();
         scheduler.sleep(1); // yield the CPU to other tasks between passes
     }
 }

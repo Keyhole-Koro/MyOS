@@ -2,10 +2,12 @@ package ui_server;
 
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
+import str from "../../../../toolchain/MyStdLib/str.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import dom from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
 import graphics from "graphics.mln";
+import irq from "../../../MyKernel/src/arch/irq.mln";
 import app from "../shell/app.mln";
 import elements_server from "elements_server.mln";
 import { UiMsg, UiOp } from "../../../MyAppFramework/src/protocol.mln";
@@ -33,7 +35,7 @@ i32 run_request(UiMsg *m) {
     i32 op = m->op;
     i32 id = m->a0;
     if (op == UiOp::SET_TEXT)       { set_text(id, m->s0); return 0; }
-    if (op == UiOp::TEXT_OF)        { return (i32)text_of(id); }
+    if (op == UiOp::TEXT_COPY)      { return text_copy(id, (char*)m->a1, m->a2); }
     if (op == UiOp::SET_TEXT_FMT)   { set_text_fmt(id, m->s0, m->a1, m->a2); return 0; }
     if (op == UiOp::IS_CHECKED)     { if (is_checked(id)) { return 1; } return 0; }
     if (op == UiOp::SET_CHECKED)    { set_checked(id, m->a1); return 0; }
@@ -57,6 +59,7 @@ i32 run_request(UiMsg *m) {
     if (op == UiOp::RGB)            { return rgb(m->a0, m->a1, m->a2); }
     if (op == UiOp::OPEN)           { return app.open(m->s0); }
     if (op == UiOp::CLAIM_KEY)      { return app.claim_key(m->owner, m->s0); }
+    if (op == UiOp::MAIN_WINDOW)    { app.window_ready(m->owner, m->a0); return 0; }
     if (op == UiOp::EXIT)           { app.instance_exited(m->owner); return 0; }
     if (op >= UiOp::CREATE_WINDOW) {
         if (op <= UiOp::APPEND_CHILD) { return elements_server.create(m); }
@@ -67,7 +70,12 @@ i32 run_request(UiMsg *m) {
 // --- text -------------------------------------------------------------------------------------
 
 void set_text(i32 id, char *s) { dom.set_text(id, s); }
-char* text_of(i32 id) { return dom.text_of(id); }
+// The node's text into the app's buffer (cap bytes incl. NUL); its length.
+i32 text_copy(i32 id, char *out, i32 cap) {
+    char *t = dom.text_of(id);
+    if (t == 0) { out[0] = (char)0; return 0; }
+    return str.ncopy(out, t, cap);
+}
 
 // Labels keep a pointer to their text rather than a copy, so formatted text
 // needs a buffer that outlives the call. set_text_fmt keeps one per label
@@ -135,7 +143,15 @@ bool is_checked(i32 id) { return dom.is_checked(id); }
 void set_checked(i32 id, i32 on) { dom.set_checked(id, on); }
 
 void input_set(i32 id, char *s) { dom_widgets.set_input_text(id, s); }
-void area_append(i32 id, char *s) { dom_widgets.append_text(id, s); }
+// A user process writes to a terminal's TextArea from its stdout syscall,
+// which runs with interrupts off; this append runs on the UI server's task
+// with them on. Keep a timer tick from switching to the process mid-append
+// and letting the two interleave in the shared buffer.
+void area_append(i32 id, char *s) {
+    irq.disable();
+    dom_widgets.append_text(id, s);
+    irq.enable();
+}
 void area_clear(i32 id) { dom_widgets.clear_text_area(id); }
 i32 area_lines(i32 id) { return dom_widgets.text_area_line_count(id); }
 

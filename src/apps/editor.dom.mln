@@ -66,14 +66,16 @@ void (Editor *e) open(char *path) {
     ui.set_text_fmt(e->status, "loaded %d bytes", total, 0);
 }
 
+char g_save_name[32];
+char g_save_text[4096];   // CAP
+
 @key("Ctrl+S")
 void (Editor *e) save(i32 id) {
-    char *path = ui.text_of(e->name);
-    if (path == 0) { return; }
+    char *path = &g_save_name[0];
+    ui.text_copy(e->name, path, 32);
     if (path[0] == 0) { ui.set_text(e->status, "enter a file name first"); return; }
-    char *text = ui.text_of(e->area);
-    i32 len = 0;
-    while (text[len] != 0) { len++; }
+    char *text = &g_save_text[0];
+    i32 len = ui.text_copy(e->area, text, 4096);
     // Bind the Result: a discarded aggregate return has no out-pointer.
     Result<_, FsError> removed = fs.remove(path);
     case removed of { Ok(_) -> _; Err(_) -> _; };

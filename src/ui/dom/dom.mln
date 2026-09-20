@@ -6,6 +6,7 @@ import scheduler from "../../../../MyKernel/src/kernel/scheduler.mln";
 import graphics from "../graphics.mln";
 import theme from "../theme.mln";
 import ui_events from "../ui_events.mln";
+import irq from "../../../../MyKernel/src/arch/irq.mln";
 import { UiEventKind } from "../../../../MyAppFramework/src/protocol.mln";
 import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
 
@@ -440,11 +441,55 @@ export void drain_events() {
         handler(owner, id, arg);
         g_current_owner = outer;
     }
-    // Then the apps' events, in-process: their consumer polls the ring and
-    // runs their handlers (MyOS/src/shell/host.mln). Those may queue server
-    // events or emit more app events; both are handled in this same pass.
-    ui_events.drain();
-    while (g_event_head != g_event_tail) { drain_events(); }
+}
+
+// --- the DOM lock ----------------------------------------------------------------------
+// The DOM is the UI server's: its task holds this lock for every pass
+// (input, requests, handlers, paint) and gives it up while it sleeps. The
+// only other task that reads the tree is the automation service; it takes
+// the lock around a dump. Apps never touch the DOM -- they send requests.
+// Kernel tasks preempt on the timer, so the test-and-set is done with
+// interrupts off.
+
+i32 g_lock = 0;      // held
+i32 g_want = 0;      // tasks waiting for it
+i32 g_handoff = 0;   // unlock() passed the lock straight to a waiter
+
+// Take the lock. A waiter sleeps a tick at a time; when the holder lets go
+// while someone waits, the lock is handed over rather than released, so a
+// long-running holder (the UI server's pass) cannot grab it again ahead of
+// a task that was already waiting -- the automation dump would otherwise
+// starve behind the compositor.
+export void lock() {
+    irq.disable();
+    if (g_lock == 0) {
+        g_lock = 1;
+        irq.enable();
+        return;
+    }
+    g_want = g_want + 1;
+    irq.enable();
+    while (1) {
+        irq.disable();
+        if (g_handoff != 0) {
+            g_handoff = 0;
+            g_want = g_want - 1;
+            irq.enable();
+            return;   // g_lock stays 1: it is ours now
+        }
+        irq.enable();
+        scheduler.sleep(1);
+    }
+}
+
+export void unlock() {
+    irq.disable();
+    if (g_want != 0) {
+        g_handoff = 1;   // the next waiter to look owns it
+    } else {
+        g_lock = 0;
+    }
+    irq.enable();
 }
 
 // --- scalar queries -------------------------------------------------------------

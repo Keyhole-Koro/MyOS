@@ -570,7 +570,9 @@ checked/hitTestableを含める。host側は`MyOS` / strict `Locator` / `expect`
 - **所有ノードのイベント**: `dom.emit(n, kind, handler, arg)`。`owner != 0` なら
   `ui_events` に `UiEvent` を積む（アプリの runtime が配る）、そうでなければ従来の
   `push_event(handler, ...)`。アプリのノードは関数ポインタを持たない
-  （`docs/design/ui-protocol.md`）。`drain_events()` は末尾で `ui_events.drain()` を呼ぶ。
+  （`docs/design/ui-protocol.md`）。
+- **ロック**: `dom.lock()` / `dom.unlock()`。UI サーバのタスクが 1 パスの間持つ。他に
+  取るのは automation のダンプだけ。待ちがいれば unlock は手渡す。
 - **要素関数** (`ui/elements.mln`、宣言とデフォルトは SDK の `MyAppFramework/src/elements.mln`):
   位置・サイズ・ハンドラにデフォルト値、`testId` プロパティ、`append_child`。
   `dom/dom_elements.mln` はサーバ内部の `create_*` だけ。`Checkbox` / `List` は

@@ -1,64 +1,49 @@
 package ui_events;
 
 // The server's outbound side of the UI protocol: events for applications
-// (system/MyAppFramework/src/protocol.mln, UiEvent). The DOM, the widgets
-// and the shell push here whenever something happens to a node an app
-// owns; the app's runtime takes them with poll() and runs its handlers.
+// (system/MyAppFramework/src/protocol.mln, UiEvent), carried on a kernel
+// channel (MyKernel ipc.mln). The DOM, the widgets and the shell push here
+// -- all on the UI server's task -- whenever something happens to a node an
+// app owns; the app's runtime, on its own task, takes them with poll().
 //
-// While apps share the server's address space this is one ring for all of
-// them, drained by a consumer the boot code registers (the in-process app
-// host, MyOS/src/shell/host.mln) at the point the compositor used to run
-// handlers directly. As processes, each app gets its own channel and the
-// consumer goes away (MYOS-020).
+// One channel for every app while they share the server's address space;
+// as processes each gets its own (MYOS-022).
 
+import ipc from "../../../MyKernel/src/kernel/ipc.mln";
 import { UiEvent } from "../../../MyAppFramework/src/protocol.mln";
 
-i32 EVENT_MAX = 64;
-i32 WORDS = 6;
-i32 g_ring[384];       // EVENT_MAX * WORDS: owner, id, kind, arg, token, text
-i32 g_head = 0;
-i32 g_tail = 0;
-i32 g_consumer = 0;
+i32 g_channel = 0;
 
-// Queue an event for `owner`. A full ring drops it.
-export void push(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) {
-    if (owner == 0) { return; }
-    i32 next = g_tail + 1;
-    if (next >= EVENT_MAX) { next = 0; }
-    if (next == g_head) { return; }
-    i32 at = g_tail * WORDS;
-    g_ring[at] = owner;
-    g_ring[at + 1] = id;
-    g_ring[at + 2] = kind;
-    g_ring[at + 3] = arg;
-    g_ring[at + 4] = token;
-    g_ring[at + 5] = (i32)text;
-    g_tail = next;
+export void init() {
+    if (g_channel == 0) { g_channel = ipc.create(); }
 }
 
-// Take the oldest event; false when the ring is empty.
+// Queue an event for `owner`. A full channel drops it.
+export void push(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) {
+    if (owner == 0) { return; }
+    if (g_channel == 0) { return; }
+    i32 w[16];
+    w[0] = owner;
+    w[1] = id;
+    w[2] = kind;
+    w[3] = arg;
+    w[4] = token;
+    w[5] = (i32)text;
+    ipc.send(g_channel, &w[0]);
+}
+
+// Take the oldest event; false when there is none.
 export bool poll(UiEvent *out) {
-    if (g_head == g_tail) { return false; }
-    i32 at = g_head * WORDS;
-    out->owner = g_ring[at];
-    out->id = g_ring[at + 1];
-    out->kind = g_ring[at + 2];
-    out->arg = g_ring[at + 3];
-    out->token = g_ring[at + 4];
-    out->text = (char*)g_ring[at + 5];
-    g_head = g_head + 1;
-    if (g_head >= EVENT_MAX) { g_head = 0; }
+    if (g_channel == 0) { return false; }
+    i32 w[16];
+    if (!ipc.recv(g_channel, &w[0])) { return false; }
+    out->owner = w[0];
+    out->id = w[1];
+    out->kind = w[2];
+    out->arg = w[3];
+    out->token = w[4];
+    out->text = (char*)w[5];
     return true;
 }
 
-export bool has_events() { return g_head != g_tail; }
-
-// Who drains the ring (in-process only): a `void fn()` that polls until
-// empty. Called by dom.drain_events() after the server's own handlers.
-export void set_consumer(i32 fn) { g_consumer = fn; }
-
-export void drain() {
-    if (g_consumer == 0) { return; }
-    i32 fn = g_consumer;
-    fn();
-}
+export bool has_events() { return ipc.pending(g_channel); }

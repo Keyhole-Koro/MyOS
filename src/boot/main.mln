@@ -20,7 +20,7 @@ import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import app from "../shell/app.mln";
 import host from "../shell/host.mln";
-import ui_events from "../ui/ui_events.mln";
+import uiproto from "../ui/ui_channel.mln";
 
 // The applications. Importing a module is what puts it in the program (the
 // build follows imports from here), and the annotations in it -- @app on a
@@ -110,11 +110,11 @@ void kernel_init() {
     // The shell (../shell/app.mln) reads the apps' annotations and
     // owns launching, the app menu, shortcuts and window close.
     app.install();
-    // Apps share this address space for now: their events are delivered by
-    // the in-process host whenever the DOM drains its queue.
-    ui_events.set_consumer(host.pump);
+    uiproto.init();   // the UI protocol's channels
 
-    // Open a few at boot; the last one launched is the active window.
+    // Open a few at boot; the last one launched is the active window. Each
+    // is queued for the app task (spawned below): its window appears once
+    // that task has run view() and the server has answered its requests.
     app.launch_named("Counter");
     app.launch_named("Notes");
     app.launch_named("Terminal");
@@ -140,6 +140,10 @@ void kernel_init() {
     case shell_task of { Ok(_) -> _; Err(_) -> ({ debug.println("kernel: no task slot for the shell"); }); };
     Result<i32, SchedulerError> automation_task = scheduler.spawn_task(automation_ui.run);
     case automation_task of { Ok(_) -> _; Err(_) -> ({ debug.println("kernel: no task slot for automation"); }); };
+    // The task the apps run on: their code never runs on this (the UI
+    // server's) task. They share its address space for now (MYOS-022
+    // makes them processes).
+    host.init();
 
     debug.println("ui: click the button (window must have focus)");
     compositor.run();

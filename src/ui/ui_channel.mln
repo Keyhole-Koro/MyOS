@@ -1,19 +1,72 @@
 package uiproto;
 
 // The OS end of the UI protocol carriers declared in
-// system/MyAppFramework/src/protocol.mln: request() hands a message to the
-// UI server, poll() takes an event from the ring. In-process versions --
-// apps call straight into these; as processes the same two names are
-// syscalls (MYOS-020) and nothing on the app side changes.
+// system/MyAppFramework/src/protocol.mln, over kernel channels
+// (MyKernel ipc.mln): request() queues a UiMsg for the UI server's task and
+// sleeps until the reply; poll() takes an event; idle() yields. The server
+// answers requests from its own loop (serve(), called by the compositor
+// once per pass), so app code never runs on the server's task and the DOM
+// is touched only there.
+//
+// Apps still share the kernel's address space, so a message's pointers
+// (strings, output buffers) are followed as they are. As processes the
+// same three names become syscalls that copy across (MYOS-022).
 
+import ipc from "../../../MyKernel/src/kernel/ipc.mln";
+import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import { UiMsg, UiEvent } from "../../../MyAppFramework/src/protocol.mln";
 import ui_server from "ui_server.mln";
 import ui_events from "ui_events.mln";
 
+i32 g_requests = 0;   // apps -> server
+i32 g_replies = 0;    // server -> apps: one i32 per request, in order
+
+export void init() {
+    if (g_requests == 0) { g_requests = ipc.create(); }
+    if (g_replies == 0) { g_replies = ipc.create(); }
+    ui_events.init();
+}
+
+// Send `m` to the server and wait for its result.
 export i32 request(UiMsg *m) {
-    return ui_server.handle(m);
+    i32 w[16];
+    w[0] = m->op;
+    w[1] = m->owner;
+    w[2] = m->a0; w[3] = m->a1; w[4] = m->a2; w[5] = m->a3; w[6] = m->a4; w[7] = m->a5;
+    w[8] = (i32)m->s0;
+    w[9] = (i32)m->s1;
+    while (!ipc.send(g_requests, &w[0])) {
+        scheduler.sleep(1);   // the server drains the ring every pass
+    }
+    i32 r[16];
+    ipc.wait(g_replies, &r[0]);
+    return r[0];
 }
 
 export bool poll(UiEvent *out) {
     return ui_events.poll(out);
+}
+
+export void idle() {
+    scheduler.sleep(1);
+}
+
+// Answer every queued request. Runs on the UI server's task. Returns how
+// many were answered.
+export i32 serve() {
+    i32 served = 0;
+    i32 w[16];
+    while (ipc.recv(g_requests, &w[0])) {
+        served++;
+        UiMsg m;
+        m.op = w[0];
+        m.owner = w[1];
+        m.a0 = w[2]; m.a1 = w[3]; m.a2 = w[4]; m.a3 = w[5]; m.a4 = w[6]; m.a5 = w[7];
+        m.s0 = (char*)w[8];
+        m.s1 = (char*)w[9];
+        i32 r[16];
+        r[0] = ui_server.handle(&m);
+        ipc.send(g_replies, &r[0]);
+    }
+    return served;
 }
