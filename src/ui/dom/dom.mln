@@ -73,6 +73,7 @@ export enum NodeState {
     CHECKED      = 0b1000000, // Checkbox
     MAXIMIZED    = 128,       // Window fills the desktop; sx..sh hold the restore bounds
     MINIMIZED    = 256,       // Window hidden to the taskbar
+    TEXT_OWNED   = 512,       // `text` is a heap copy this node frees (set_text_copy)
 }
 
 export enum NodeStyle {
@@ -188,6 +189,13 @@ export i32 g_menu_target = 0;     // the window a window-menu acts on (0 for the
 // each new node's `owner`, so dialogs and timers an app makes on the fly are
 // swept with it by remove_owned(). 0 while the system itself runs.
 export i32 g_current_owner = 0;
+
+// Apps the shell has started whose window has not arrived yet. Reported in
+// the automation snapshot ("starting") so a test harness can tell a
+// desktop that is still booting from a settled one.
+i32 g_apps_starting = 0;
+export void note_app_starting(i32 delta) { g_apps_starting = g_apps_starting + delta; if (g_apps_starting < 0) { g_apps_starting = 0; } }
+export i32 apps_starting() { return g_apps_starting; }
 
 // Installed by the app framework: i32 filter(owner, code, mods) sees every
 // key DOWN before the focused widget and returns 1 to claim it (shortcuts).
@@ -461,35 +469,35 @@ i32 g_handoff = 0;   // unlock() passed the lock straight to a waiter
 // a task that was already waiting -- the automation dump would otherwise
 // starve behind the compositor.
 export void lock() {
-    irq.disable();
+    i32 was = irq.save_disable();
     if (g_lock == 0) {
         g_lock = 1;
-        irq.enable();
+        irq.restore(was);
         return;
     }
     g_want = g_want + 1;
-    irq.enable();
+    irq.restore(was);
     while (1) {
-        irq.disable();
+        was = irq.save_disable();
         if (g_handoff != 0) {
             g_handoff = 0;
             g_want = g_want - 1;
-            irq.enable();
+            irq.restore(was);
             return;   // g_lock stays 1: it is ours now
         }
-        irq.enable();
+        irq.restore(was);
         scheduler.sleep(1);
     }
 }
 
 export void unlock() {
-    irq.disable();
+    i32 was = irq.save_disable();
     if (g_want != 0) {
         g_handoff = 1;   // the next waiter to look owns it
     } else {
         g_lock = 0;
     }
-    irq.enable();
+    irq.restore(was);
 }
 
 // --- scalar queries -------------------------------------------------------------
@@ -908,6 +916,10 @@ export void set_text(i32 id, char *text) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
     damage_node(id);   // old string's extent
+    if ((n->state & NodeState::TEXT_OWNED) != 0) {
+        if (n->text != 0) { heap.free((i32)n->text); }
+        n->state = (u16)(n->state & ~NodeState::TEXT_OWNED);
+    }
     n->text = text;
     // Text keeps physical bounds equal to its measured size so damage,
     // clipping, layout, and hit testing all agree. Windows and buttons also
@@ -921,6 +933,22 @@ export void set_text(i32 id, char *text) {
     }
     damage_node(id);   // new string may be longer
     touch();
+}
+
+// set_text with a copy the node owns: for text that comes from an app
+// (another address space, or a buffer it will reuse). Freed when the text
+// is replaced or the node removed.
+export void set_text_copy(i32 id, char *text) {
+    Node *n = node_ptr(id);
+    if (n == 0) { return; }
+    i32 len = 0;
+    while (text[len] != 0) { len++; }
+    char *copy = (char*)heap.alloc(len + 1);
+    if (copy == 0) { return; }
+    i32 k = 0;
+    while (k <= len) { copy[k] = text[k]; k++; }
+    set_text(id, copy);
+    n->state = (u16)(n->state | NodeState::TEXT_OWNED);
 }
 
 /**
@@ -1407,7 +1435,7 @@ export void free_subtree(i32 id) {
             i++;
         }
     }
-    if (owns_buffer(n) != 0) {
+    if (owns_buffer(n) != 0 || (n->state & NodeState::TEXT_OWNED) != 0) {
         if (n->text != 0) { heap.free((i32)n->text); }
     }
     if (g_menu_id == id) { g_menu_id = 0; }

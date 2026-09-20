@@ -19,24 +19,13 @@ import { MmuError } from "../../../MyKernel/src/mm/mmu.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import app from "../shell/app.mln";
-import host from "../shell/host.mln";
-import uiproto from "../ui/ui_channel.mln";
+import ui_channel from "../ui/ui_channel.mln";
+import os_calls from "../proc/os_calls.mln";
 
-// The applications. Importing a module is what puts it in the program (the
-// build follows imports from here), and the annotations in it -- @app on a
-// view, @timer, @key, ... -- are recorded by the compiler as metadata that
-// app.install() reads. Nothing else registers an app.
-//
-// TODO(apps-on-disk): this list is the interim form. The intended one is
-// apps as .mbin files on the MFS disk, loaded by the process loader, with
-// the same metadata table carried in the MBIN header and read by the
-// framework at load time -- then "which apps exist" is `ls`, not an import.
-// See docs/learn/annotations-and-metaprogramming.md.
-import counter from "../apps/counter.dom.mln";
-import editor from "../apps/editor.dom.mln";
-import files from "../apps/files.dom.mln";
-import notes from "../apps/notes.dom.mln";
-import terminal from "../apps/terminal.dom.mln";
+// The applications are not part of this image: each is an executable on
+// the MFS disk (system/MyOS/src/apps/*.dom.mln built by
+// qa/runners/build_user_apps.py), and the shell finds them by the @app row
+// in their headers (app.install). "Which apps exist" is `ls`.
 
 // System bring-up.
 //
@@ -110,14 +99,9 @@ void kernel_init() {
     // The shell (../shell/app.mln) reads the apps' annotations and
     // owns launching, the app menu, shortcuts and window close.
     app.install();
-    uiproto.init();   // the UI protocol's channels
+    ui_channel.init();   // the UI protocol's channels
+    os_calls.init();     // what a process reaches through OS_CALL: UI, files, processes
 
-    // Open a few at boot; the last one launched is the active window. Each
-    // is queued for the app task (spawned below): its window appears once
-    // that task has run view() and the server has answered its requests.
-    app.launch_named("Counter");
-    app.launch_named("Notes");
-    app.launch_named("Terminal");
     dom_automation.dump();
 
     // Paint the desktop once before interrupts are enabled. render_all()
@@ -132,6 +116,12 @@ void kernel_init() {
     scheduler.init();
     irq.set_handler();
     irq.enable();
+    heap.enable_locking();   // tasks and syscalls share the heap from here on
+
+    // Boot counts as an app still starting until the desktop's apps have
+    // been launched below (the automation snapshot reports it, so a test
+    // harness waits for a settled desktop; see dom.note_app_starting).
+    dom.note_app_starting(1);
 
     debug.println("kernel: spawning shell task");
     // spawn_task returns a Result; bind it so the callee has somewhere to
@@ -140,10 +130,14 @@ void kernel_init() {
     case shell_task of { Ok(_) -> _; Err(_) -> ({ debug.println("kernel: no task slot for the shell"); }); };
     Result<i32, SchedulerError> automation_task = scheduler.spawn_task(automation_ui.run);
     case automation_task of { Ok(_) -> _; Err(_) -> ({ debug.println("kernel: no task slot for automation"); }); };
-    // The task the apps run on: their code never runs on this (the UI
-    // server's) task. They share its address space for now (MYOS-022
-    // makes them processes).
-    host.init();
+
+    // Open a few apps at boot; the last one launched is the active window.
+    // Each is a process (the scheduler is up now): its window appears once
+    // it has run view() and the server has answered its requests.
+    app.launch_named("Counter");
+    app.launch_named("Notes");
+    app.launch_named("Terminal");
+    dom.note_app_starting(-1);
 
     debug.println("ui: click the button (window must have focus)");
     compositor.run();

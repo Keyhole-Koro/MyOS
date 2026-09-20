@@ -712,6 +712,15 @@ export Result<i32, FsError> read(i32 fd, i32 buf, i32 size) {
                     Err(_) -> ({ return Err(FsError::IoError); });
                 };
                 i32 next = buf_word(0);
+                // Whole words while both sides are aligned: a byte loop over
+                // a 60 KB executable is most of what a process's start-up
+                // costs.
+                while (in_block + 4 <= fs_config.PAYLOAD && read_total + 4 <= size &&
+                       ((buf + read_total) & 3) == 0 && ((4 + in_block) & 3) == 0) {
+                    mem.write_word(buf + read_total, mem.read_word(g_buf + 4 + in_block));
+                    read_total = read_total + 4;
+                    in_block = in_block + 4;
+                }
                 while (in_block < fs_config.PAYLOAD) {
                     if (read_total >= size) {
                         f.offset = f.offset + read_total;

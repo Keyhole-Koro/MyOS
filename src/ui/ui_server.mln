@@ -1,7 +1,5 @@
 package ui_server;
 
-import heap from "../../../MyKernel/src/mm/heap.mln";
-import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
 import str from "../../../../toolchain/MyStdLib/str.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import dom from "dom/dom.mln";
@@ -36,7 +34,6 @@ i32 run_request(UiMsg *m) {
     i32 id = m->a0;
     if (op == UiOp::SET_TEXT)       { set_text(id, m->s0); return 0; }
     if (op == UiOp::TEXT_COPY)      { return text_copy(id, (char*)m->a1, m->a2); }
-    if (op == UiOp::SET_TEXT_FMT)   { set_text_fmt(id, m->s0, m->a1, m->a2); return 0; }
     if (op == UiOp::IS_CHECKED)     { if (is_checked(id)) { return 1; } return 0; }
     if (op == UiOp::SET_CHECKED)    { set_checked(id, m->a1); return 0; }
     if (op == UiOp::INPUT_SET)      { input_set(id, m->s0); return 0; }
@@ -69,72 +66,12 @@ i32 run_request(UiMsg *m) {
 
 // --- text -------------------------------------------------------------------------------------
 
-void set_text(i32 id, char *s) { dom.set_text(id, s); }
+void set_text(i32 id, char *s) { dom.set_text_copy(id, s); }
 // The node's text into the app's buffer (cap bytes incl. NUL); its length.
 i32 text_copy(i32 id, char *out, i32 cap) {
     char *t = dom.text_of(id);
     if (t == 0) { out[0] = (char)0; return 0; }
     return str.ncopy(out, t, cap);
-}
-
-// Labels keep a pointer to their text rather than a copy, so formatted text
-// needs a buffer that outlives the call. set_text_fmt keeps one per label
-// (96 bytes, allocated on first use) and formats `fmt` into it: `%d` takes
-// the next i32 argument, `%s` the next as a char*, `%%` is a percent sign.
-i32 FMT_SLOTS = 32;
-i32 FMT_CAP = 96;
-i32 g_fmt_ids[32];
-i32 g_fmt_bufs[32];
-i32 g_fmt_count = 0;
-
-char* fmt_buffer(i32 id) {
-    i32 i = 0;
-    while (i < g_fmt_count) {
-        if (g_fmt_ids[i] == id) { return (char*)g_fmt_bufs[i]; }
-        i++;
-    }
-    if (g_fmt_count >= FMT_SLOTS) { return (char*)0; }
-    i32 buf = heap.alloc(FMT_CAP);
-    if (buf == 0) { return (char*)0; }
-    g_fmt_ids[g_fmt_count] = id;
-    g_fmt_bufs[g_fmt_count] = buf;
-    g_fmt_count++;
-    return (char*)buf;
-}
-
-void set_text_fmt(i32 id, char *fmt, i32 a, i32 b) {
-    char *buf = fmt_buffer(id);
-    if (buf == 0) { dom.set_text(id, fmt); return; }
-    i32 n = strbuf.reset(buf);
-    i32 next = 0;
-    i32 i = 0;
-    while (fmt[i] != 0) {
-        i32 c = fmt[i] & 0xFF;
-        if (c == '%') {
-            i32 spec = fmt[i + 1] & 0xFF;
-            i32 value = a;
-            if (next == 1) { value = b; }
-            if (spec == 'd') {
-                n = strbuf.append_i32(buf, FMT_CAP, n, value);
-                next++;
-                i = i + 2;
-            } else if (spec == 's') {
-                if (value != 0) { n = strbuf.append(buf, FMT_CAP, n, (char*)value); }
-                next++;
-                i = i + 2;
-            } else if (spec == '%') {
-                n = strbuf.push(buf, FMT_CAP, n, '%');
-                i = i + 2;
-            } else {
-                n = strbuf.push(buf, FMT_CAP, n, c);
-                i++;
-            }
-        } else {
-            n = strbuf.push(buf, FMT_CAP, n, c);
-            i++;
-        }
-    }
-    dom.set_text(id, buf);
 }
 
 // --- widgets --------------------------------------------------------------------------------
@@ -148,9 +85,9 @@ void input_set(i32 id, char *s) { dom_widgets.set_input_text(id, s); }
 // with them on. Keep a timer tick from switching to the process mid-append
 // and letting the two interleave in the shared buffer.
 void area_append(i32 id, char *s) {
-    irq.disable();
+    i32 was = irq.save_disable();
     dom_widgets.append_text(id, s);
-    irq.enable();
+    irq.restore(was);
 }
 void area_clear(i32 id) { dom_widgets.clear_text_area(id); }
 i32 area_lines(i32 id) { return dom_widgets.text_area_line_count(id); }

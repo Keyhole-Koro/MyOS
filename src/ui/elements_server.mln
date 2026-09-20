@@ -3,6 +3,7 @@ package elements_server;
 import dom from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
 import dom_elements from "dom/dom_elements.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
 import { NodeStyle } from "dom/dom.mln";
 import { UiMsg, UiOp } from "../../../MyAppFramework/src/protocol.mln";
 
@@ -17,8 +18,20 @@ import { UiMsg, UiOp } from "../../../MyAppFramework/src/protocol.mln";
 // owned nodes (dom.emit), so a node an app creates carries no function
 // pointer.
 
+// Strings from an app are kernel copies that last only for the request:
+// a node's text becomes its own copy, and its name / test id are kept.
 void tag(i32 id, char *testId) {
-    if (testId[0] != 0) { dom.set_test_id(id, testId); }
+    if (testId[0] != 0) { dom.set_test_id(id, dup_string(testId)); }
+}
+
+char *dup_string(char *s) {
+    i32 len = 0;
+    while (s[len] != 0) { len++; }
+    char *copy = (char*)heap.alloc(len + 1);
+    if (copy == 0) { return ""; }
+    i32 k = 0;
+    while (k <= len) { copy[k] = s[k]; k++; }
+    return copy;
 }
 
 export i32 create(UiMsg *m) {
@@ -29,17 +42,23 @@ export i32 create(UiMsg *m) {
     i32 h = m->a3;
     i32 id = 0;
     if (op == UiOp::APPEND_CHILD) { dom.append_child(m->a0, m->a1); return 0; }
+    char *s0 = dup_string(m->s0);   // the node's name: kept for its lifetime
     if (op == UiOp::CREATE_WINDOW) {
-        id = dom_elements.create_window(m->s0, x, y, w, h);
+        id = dom_elements.create_window(s0, x, y, w, h);
+        dom.set_text_copy(id, m->s0);
     } else if (op == UiOp::CREATE_BUTTON) {
-        id = dom_elements.create_button(m->s0, x, y, w, h);
+        id = dom_elements.create_button(s0, x, y, w, h);
+        dom.set_text_copy(id, m->s0);
     } else if (op == UiOp::CREATE_PRIMARY_BUTTON) {
-        id = dom_elements.create_button(m->s0, x, y, w, h);
+        id = dom_elements.create_button(s0, x, y, w, h);
+        dom.set_text_copy(id, m->s0);
         dom.set_style(id, NodeStyle::PRIMARY);
     } else if (op == UiOp::CREATE_TEXT) {
-        id = dom_elements.create_text(m->s0, x, y);
+        id = dom_elements.create_text(s0, x, y);
+        dom.set_text_copy(id, m->s0);
     } else if (op == UiOp::CREATE_LABEL) {
-        id = dom_elements.create_text(m->s0, x, y);
+        id = dom_elements.create_text(s0, x, y);
+        dom.set_text_copy(id, m->s0);
         if (m->a3 != 0) { dom.set_style(id, NodeStyle::BOLD); }
         dom.set_color(id, m->a2);
     } else if (op == UiOp::CREATE_BOX) {
@@ -51,18 +70,19 @@ export i32 create(UiMsg *m) {
     } else if (op == UiOp::CREATE_ROW) {
         id = dom_elements.create_row(x, y, w, h, m->a4, m->a5);
     } else if (op == UiOp::CREATE_TEXT_INPUT) {
-        id = dom_elements.create_text_input(m->s0, x, y, w, h, m->a4);
+        id = dom_elements.create_text_input(s0, x, y, w, h, m->a4);
     } else if (op == UiOp::CREATE_CHECKBOX) {
-        id = dom_elements.create_checkbox(m->s0, x, y, m->a2);
+        id = dom_elements.create_checkbox(s0, x, y, m->a2);
+        dom.set_text_copy(id, m->s0);
         dom.set_hit_testable(id, 1); // toggles on click even with no handler
     } else if (op == UiOp::CREATE_SEPARATOR) {
         id = dom_elements.create_separator(x, y, w);
     } else if (op == UiOp::CREATE_TIMER) {
         return dom_widgets.create_timer(m->a0, 0); // ticks become TIMER events (owner != 0)
     } else if (op == UiOp::CREATE_TEXT_AREA) {
-        id = dom_elements.create_text_area(m->s0, x, y, w, h, m->a4, m->a5);
+        id = dom_elements.create_text_area(s0, x, y, w, h, m->a4, m->a5);
     } else if (op == UiOp::CREATE_LIST) {
-        id = dom_elements.create_list(m->s0, x, y, w, h, m->a4);
+        id = dom_elements.create_list(s0, x, y, w, h, m->a4);
         dom.set_hit_testable(id, 1); // rows select on click even with no handler
     } else {
         return 0;

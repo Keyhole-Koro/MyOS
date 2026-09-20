@@ -3,12 +3,12 @@ package terminal;
 import elements from "../../../MyAppFramework/src/elements.mln";
 import ui from "../../../MyAppFramework/src/ui.mln";
 import { app, timer, key, on_close } from "../../../MyAppFramework/src/annotations.mln";
-import console from "../proc/console.mln";
-import fs from "../fs/fs.mln";
+import console from "../../../MyAppFramework/src/console.mln";
+import fs from "../../../MyAppFramework/src/fs.mln";
 import str from "../../../../toolchain/MyStdLib/str.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
-import { FsError } from "../fs/fs.mln";
+import { FsError } from "../../../MyAppFramework/src/fs.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 
 // Terminal: a read-only TextArea for output and a command line. Lines typed
@@ -105,12 +105,11 @@ void (Terminal *t) cmd_run(char *path) {
         t->say_line("a process is still running here");
         return;
     }
-    i32 pid = console.spawn_file(path);
+    i32 pid = console.spawn_bound(path, t->out);
     if (pid <= 0) {
         t->say_line("run: cannot start that (no such file, or not an executable)");
         return;
     }
-    console.bind(pid, t->out);
     t->pid = pid;
     i32 k = strbuf.reset(&g_line_buf[0]);
     k = strbuf.append(&g_line_buf[0], 96, k, "[pid ");

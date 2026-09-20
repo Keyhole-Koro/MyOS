@@ -2,7 +2,6 @@ package app;
 
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
-import bytes from "../../../../toolchain/MyStdLib/text/bytes.mln";
 import str from "../../../../toolchain/MyStdLib/str.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
 import dom from "../ui/dom/dom.mln";
@@ -16,106 +15,76 @@ import ui_events from "../ui/ui_events.mln";
 import fs from "../fs/fs.mln";
 import { FsError } from "../fs/fs.mln";
 import console from "../proc/console.mln";
+import os_calls from "../proc/os_calls.mln";
 import mbin from "../../../../toolchain/MyStdLib/format/mbin.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import { UiEventKind } from "../../../MyAppFramework/src/protocol.mln";
-import host from "host.mln";
 
 // The shell: the registry of installed apps and the instances running on
 // the desktop. This is the OS side of the application framework -- apps
-// never call it; they link against the SDK (system/MyAppFramework: the
-// annotation declarations, `ui`, `elements`) and this is what gives those
-// declarations their meaning (docs/design/os-app-boundaries.md).
+// never call it; they link against the SDK (system/MyAppFramework) and
+// this is what gives `@app` its meaning (docs/design/os-app-boundaries.md).
 //
-// An app is a struct whose view method carries `@app` (the SDK's
-// annotations.mln). The compiler records every annotation as a metadata
-// row; install() reads the @app rows (MyStdLib's annotations iterator)
-// into the registry below, keyed by type name, and notes which types take
-// @open. That is all the shell needs to know about an app: what its other
-// annotations mean -- @timer, @key, @on_close -- is the app's own runtime's
-// business (MyAppFramework/src/runtime.mln), which reads them when the
-// instance starts and asks the shell only for what crosses the boundary: a
-// timer node, a key claim.
+// An installed app is an executable on the disk whose header carries an
+// @app row (the compiler recorded it; install() reads it with MyStdLib's
+// annotations iterator, without loading the file): its type name, launcher
+// name, whether it is single-instance and whether it takes @open. What its
+// other annotations mean -- @timer, @key, @on_close -- is the app's own
+// runtime's business (MyAppFramework/src/runtime.mln), which reads them
+// when the process starts and asks the shell only for what crosses the
+// boundary: a timer node, a key claim.
 //
-// The shell talks to a running instance only through UI protocol events
-// (ui_events): KEY when a claimed shortcut is pressed, OPEN with a path,
-// CLOSE when the user closes its window; the instance answers CLOSE with
-// an EXIT request, and only then is it freed. App code never runs on this
-// task: starting an instance hands it to the app task (host.mln, the
-// stand-in for spawning a process), and the instance's window comes back
-// as a MAIN_WINDOW request.
+// An instance is a process. The shell talks to it only through UI protocol
+// events (ui_events): KEY when a claimed shortcut is pressed, OPEN with a
+// path, CLOSE when the user closes its window; the instance answers CLOSE
+// with an EXIT request and ends, and the shell then frees what it owned
+// and reaps it. The instance's window comes back as a MAIN_WINDOW request.
 //
-// An instance owns every DOM node created while its code runs (dom.mln's
-// g_current_owner), so closing its window sweeps dialogs and timers with
-// it. Registry and instances are fixed-size tables, like the rest of the
-// kernel's bookkeeping; pointers are kept in i32 arrays (see the note on
+// A process owns every DOM node it creates (requests carry its pid as the
+// owner), so closing its window sweeps dialogs and timers with it.
+// Registry and instances are fixed-size tables, like the rest of the
+// kernel's bookkeeping; strings are kept in i32 arrays (see the note on
 // pointer arrays in docs/APP_FRAMEWORK.md).
 
 // --- registry --------------------------------------------------------------------------------
 
 i32 APPS_MAX = 16;
 
-i32 g_type[16];                // char*: "Counter", the key everything is grouped by
-i32 g_size[16];
-i32 g_view[16];                // 0 until @app registers; a type without it is not launchable
+i32 g_path[16];                // char*: the executable on disk
+i32 g_type[16];                // char*: "Counter", the @app row's receiver type
 i32 g_single[16];
 i32 g_name[16];                // char*: launcher label
 i32 g_opens[16];               // 1 if the type has an @open method
-i32 g_path[16];                // char*: an installed app's file on disk; 0 for one linked into this image
 i32 g_app_count = 0;
 
-// Names and paths read out of images on disk are copied here: the image
-// buffer is freed once its header has been read.
-char g_names[256];
+// Names, types and paths read out of images on disk are copied here: the
+// image buffer is freed once its header has been read.
+char g_names[512];
 i32 g_names_used = 0;
 
 char *keep(char *s) {
     i32 n = str.len(s) + 1;
-    if (g_names_used + n > 256) { return ""; }
+    if (g_names_used + n > 512) { return ""; }
     char *out = &g_names[g_names_used];
     str.copy(out, s);
     g_names_used = g_names_used + n;
     return out;
 }
 
-// The slot for a type, made on first sight: annotations arrive in source
-// order, so @open may precede @app.
-i32 slot_of_type(char *type) {
-    i32 i = 0;
-    while (i < g_app_count) {
-        if (str.eq((char*)g_type[i], type) != 0) { return i; }
-        i++;
-    }
+void register_app(char *path, char *type, i32 single, char *name, i32 opens) {
     if (g_app_count >= APPS_MAX) {
-        debug.panic("app: registry full");
+        debug.println("app: registry full");
+        return;
     }
-    g_type[g_app_count] = (i32)type;
+    i32 i = g_app_count;
     g_app_count++;
-    return g_app_count - 1;
-}
-
-void register_app(char *type, i32 size, i32 view, i32 single, char *name) {
-    i32 i = slot_of_type(type);
-    g_size[i] = size;
-    g_view[i] = view;
+    g_path[i] = (i32)path;
+    g_type[i] = (i32)type;
     g_single[i] = single;
     g_name[i] = (i32)name;
     if (name[0] == 0) { g_name[i] = (i32)type; }
-}
-
-void register_open(char *type) { g_opens[slot_of_type(type)] = 1; }
-
-// An app installed as an executable on disk: `path` names the file whose
-// header carried the @app row. It has no view function here -- launching
-// it spawns the file -- so the registry keys it by its path.
-void register_file_app(char *path, i32 single, char *name) {
-    i32 i = slot_of_type(path);
-    g_view[i] = 0;
-    g_path[i] = (i32)path;
-    g_single[i] = single;
-    g_name[i] = (i32)name;
-    if (name[0] == 0) { g_name[i] = (i32)path; }
+    g_opens[i] = opens;
 }
 
 // Every executable on the disk that declares @app is an installed app: read
@@ -147,9 +116,13 @@ void scan_disk() {
                 Annotations rows = annotations.in_image(image);
                 rows.on("app", (char*)0);
                 if (rows.next()) {
-                    char *path = keep(&name[0]);
-                    register_file_app(path, rows.arg(0), keep(rows.text(1)));
-                    debug.printf("app: installed %s from disk\n", (i32)path);
+                    char *type = keep(rows.type());
+                    Annotations opens = annotations.in_image(image);
+                    opens.on("open", type);
+                    i32 has_open = 0;
+                    if (opens.next()) { has_open = 1; }
+                    register_app(keep(&name[0]), type, rows.arg(0), keep(rows.text(1)), has_open);
+                    debug.printf("app: installed %s (%s)\n", (i32)type, (i32)(&name[0]));
                 }
             }
         }
@@ -168,10 +141,11 @@ export char* app_name(i32 index) {
 // --- instances -------------------------------------------------------------------------------
 
 i32 INSTANCES_MAX = 32;
-i32 g_inst_self[32];   // instance pointer (0 = free slot)
+i32 g_inst_pid[32];    // the process (0 = free slot)
 i32 g_inst_app[32];    // registry slot
 i32 g_inst_win[32];    // its main window; 0 until the instance reports it (MAIN_WINDOW)
 i32 g_inst_open[32];   // 1: an OPEN with g_open_path waits for the window
+i32 g_inst_done[32];   // 1: it sent EXIT; the process is reaped once it has exited
 i32 g_inst_count = 0;  // slots in use, including freed ones below the high-water mark
 
 char g_menu_buf[256];  // "\n"-joined app names for the launcher menu
@@ -180,7 +154,7 @@ char g_open_path[64];  // path handed to an @open handler (copied: the caller's 
 i32 slot_of_owner(i32 owner) {
     i32 i = 0;
     while (i < g_inst_count) {
-        if (g_inst_self[i] == owner) { return i; }
+        if (g_inst_pid[i] == owner) { return i; }
         i++;
     }
     return -1;
@@ -189,7 +163,7 @@ i32 slot_of_owner(i32 owner) {
 i32 slot_of_app(i32 app) {
     i32 i = 0;
     while (i < g_inst_count) {
-        if (g_inst_self[i] != 0) {
+        if (g_inst_pid[i] != 0 && g_inst_done[i] == 0) {
             if (g_inst_app[i] == app) { return i; }
         }
         i++;
@@ -200,7 +174,7 @@ i32 slot_of_app(i32 app) {
 i32 free_slot() {
     i32 i = 0;
     while (i < g_inst_count) {
-        if (g_inst_self[i] == 0) { return i; }
+        if (g_inst_pid[i] == 0) { return i; }
         i++;
     }
     if (g_inst_count >= INSTANCES_MAX) { return -1; }
@@ -212,42 +186,32 @@ i32 free_slot() {
 export i32 owner_of_window(i32 win) {
     i32 i = 0;
     while (i < g_inst_count) {
-        if (g_inst_win[i] == win) { return g_inst_self[i]; }
+        if (g_inst_win[i] == win) { return g_inst_pid[i]; }
         i++;
     }
     return 0;
 }
 
-// Create an instance of app `a` and start it. Its window arrives later:
-// the app's task runs view() and reports the result with a MAIN_WINDOW
-// request (window_ready below). Returns the instance slot, or -1 when out
-// of slots or memory.
+// Start an instance of app `a`: spawn its executable. Its window arrives
+// later, as a MAIN_WINDOW request (window_ready below). Returns the
+// instance slot, or -1 when out of slots or the spawn failed.
 i32 mount(i32 a) {
     i32 slot = free_slot();
     if (slot < 0) {
         debug.println("app: too many instances");
         return -1;
     }
-    i32 size = g_size[a];
-    i32 self = heap.alloc(size);
-    if (self == 0) {
-        debug.println("app: out of memory");
+    i32 pid = console.spawn_file((char*)g_path[a]);
+    if (pid <= 0) {
+        debug.printf("app: cannot start %s\n", g_path[a]);
         return -1;
     }
-    bytes.zero((char*)self, size);
-
-    // The instance is bookkept before it starts: its start-up requests
-    // (CREATE_*, CLAIM_KEY, CREATE_TIMER, MAIN_WINDOW) arrive as this owner.
-    g_inst_self[slot] = self;
+    g_inst_pid[slot] = pid;
     g_inst_app[slot] = a;
     g_inst_win[slot] = 0;
     g_inst_open[slot] = 0;
-
-    // The app's runtime runs view() and sets up its timers and shortcuts
-    // on the app task; every request it sends carries `self`, so everything
-    // view() creates -- and everything the app creates later from its
-    // handlers -- is owned by it.
-    host.start(self, (char*)g_type[a]);
+    g_inst_done[slot] = 0;
+    dom.note_app_starting(1);
     return slot;
 }
 
@@ -257,6 +221,7 @@ i32 mount(i32 a) {
 export void window_ready(i32 owner, i32 win) {
     i32 slot = slot_of_owner(owner);
     if (slot < 0) { return; }
+    if (g_inst_win[slot] == 0) { dom.note_app_starting(-1); }
     if (win == 0) { return; }
     dom.set_owner(win, owner);
     dom.set_on_close(win, window_closed);
@@ -283,18 +248,42 @@ void window_closed(i32 owner, i32 win, i32 arg) {
 }
 
 // The instance is done (EXIT): remove everything it owns -- its window,
-// dialogs, timers -- drop its key claims and free it.
+// dialogs, timers -- and drop its key claims. The process ends itself
+// right after; reap_exited() collects it.
 export void instance_exited(i32 owner) {
     i32 slot = slot_of_owner(owner);
     if (slot < 0) { return; }
     dom.remove_owned(owner);
     release_claims(owner);
-    heap.free(owner);
-    g_inst_self[slot] = 0;
-    g_inst_app[slot] = 0;
-    g_inst_win[slot] = 0;
-    g_inst_open[slot] = 0;
+    g_inst_done[slot] = 1;
     dom_widgets.activate_topmost();
+}
+
+// A timer on the desktop: collect processes that have ended -- ones that
+// sent EXIT, and ones that died without (a crash): their nodes go too.
+void reap_exited(i32 owner, i32 id, i32 arg) {
+    i32 i = 0;
+    while (i < g_inst_count) {
+        i32 pid = g_inst_pid[i];
+        if (pid != 0) {
+            if (console.has_exited(pid)) {
+                if (g_inst_win[i] == 0) { dom.note_app_starting(-1); }
+                if (g_inst_done[i] == 0) {
+                    dom.remove_owned(pid);
+                    release_claims(pid);
+                    dom_widgets.activate_topmost();
+                }
+                console.reap(pid);
+                os_calls.process_gone(pid);
+                g_inst_pid[i] = 0;
+                g_inst_app[i] = 0;
+                g_inst_win[i] = 0;
+                g_inst_open[i] = 0;
+                g_inst_done[i] = 0;
+            }
+        }
+        i++;
+    }
 }
 
 // Start the app at `index`; a single-instance app that is already running is
@@ -303,13 +292,6 @@ export void instance_exited(i32 owner) {
 export i32 launch(i32 index) {
     if (index < 0) { return 0; }
     if (index >= g_app_count) { return 0; }
-    if (g_path[index] != 0) {
-        // Installed on disk: run it as a process. It has no window here
-        // until GUI apps speak the UI protocol from user space (MYOS-022).
-        console.spawn_file((char*)g_path[index]);
-        return 0;
-    }
-    if (g_view[index] == 0) { return 0; }
     if (g_single[index] != 0) {
         i32 slot = slot_of_app(index);
         if (slot >= 0) {
@@ -340,21 +322,19 @@ export i32 open(char *path) {
     i32 a = 0;
     while (a < g_app_count) {
         if (g_opens[a] != 0) {
-            if (g_view[a] != 0) {
-                i32 slot = -1;
-                if (g_single[a] != 0) { slot = slot_of_app(a); }
-                if (slot < 0) { slot = mount(a); }
-                if (slot < 0) { return 0; }
-                str.ncopy(&g_open_path[0], path, 64);
-                i32 win = g_inst_win[slot];
-                if (win != 0) {
-                    dom_widgets.focus_window(win);
-                    ui_events.push(g_inst_self[slot], win, UiEventKind::OPEN, 0, 0, &g_open_path[0]);
-                } else {
-                    g_inst_open[slot] = 1;
-                }
-                return win;
+            i32 slot = -1;
+            if (g_single[a] != 0) { slot = slot_of_app(a); }
+            if (slot < 0) { slot = mount(a); }
+            if (slot < 0) { return 0; }
+            str.ncopy(&g_open_path[0], path, 64);
+            i32 win = g_inst_win[slot];
+            if (win != 0) {
+                dom_widgets.focus_window(win);
+                ui_events.push(g_inst_pid[slot], win, UiEventKind::OPEN, 0, 0, &g_open_path[0]);
+            } else {
+                g_inst_open[slot] = 1;
             }
+            return win;
         }
         a++;
     }
@@ -483,8 +463,9 @@ i32 key_spec_matches(char *spec, i32 code, i32 mods) {
 // app code has to run to decide whether a key is taken.
 
 i32 CLAIMS_MAX = 64;
-i32 g_claim_owner[64];   // 0 = free
-i32 g_claim_spec[64];    // char*
+i32 SPEC_MAX = 16;         // "Ctrl+Shift+F12" fits
+i32 g_claim_owner[64];     // 0 = free
+char g_claim_spec[1024];   // CLAIMS_MAX * SPEC_MAX; the spec is copied: the request's string is gone by the next
 i32 g_claim_count = 0;
 
 export i32 claim_key(i32 owner, char *spec) {
@@ -498,7 +479,7 @@ export i32 claim_key(i32 owner, char *spec) {
         g_claim_count++;
     }
     g_claim_owner[i] = owner;
-    g_claim_spec[i] = (i32)spec;
+    str.ncopy(&g_claim_spec[i * SPEC_MAX], spec, SPEC_MAX);
     return i + 1;
 }
 
@@ -519,7 +500,7 @@ export i32 dispatch_key(i32 owner, i32 code, i32 mods) {
     i32 i = 0;
     while (i < g_claim_count) {
         if (g_claim_owner[i] == owner) {
-            if (key_spec_matches((char*)g_claim_spec[i], code, mods) != 0) {
+            if (key_spec_matches(&g_claim_spec[i * SPEC_MAX], code, mods) != 0) {
                 ui_events.push(owner, g_inst_win[slot], UiEventKind::KEY, code | (mods << 16), i + 1, (char*)0);
                 return 1;
             }
@@ -529,34 +510,13 @@ export i32 dispatch_key(i32 owner, i32 code, i32 mods) {
     return 0;
 }
 
-// Read the metadata and wire the shell to the desktop: taskbar launcher,
-// desktop menu and the keyboard filter. Call once after dom.init(). The
-// registry keys on the type name, so the order among a type's annotations
-// does not matter. A type that got @open but no @app is a mistake in the
-// app's source, reported here since the compiler does not know what @app
-// means. (Once apps are .mbin files on disk, these rows come from each
-// file's header instead -- MYOS-021.)
+// Read the disk and wire the shell to the desktop: taskbar launcher,
+// desktop menu, the keyboard filter and the reaper. Call once after
+// dom.init() and fs.init().
 export void install() {
-    // Rows of names we don't know (some other framework's annotations) are
-    // simply never asked for.
-    Annotations apps = annotations.named("app");
-    while (apps.next()) {
-        register_app(apps.type(), apps.size(), apps.fn(), apps.arg(0), apps.text(1));
-    }
-    Annotations opens = annotations.named("open");
-    while (opens.next()) {
-        register_open(opens.type());
-    }
-    i32 i = 0;
-    while (i < g_app_count) {
-        if (g_view[i] == 0) {
-            debug.println((char*)g_type[i]);
-            debug.panic("app: a type has @open but no @app on its view");
-        }
-        i++;
-    }
     scan_disk();
     dom_render.set_launcher(launch_menu);
     compositor.set_desktop_menu(menu_items(), on_menu);
     dom.set_key_filter(dispatch_key);
+    dom_widgets.create_timer(50, reap_exited);
 }

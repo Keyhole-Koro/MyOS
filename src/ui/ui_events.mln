@@ -1,27 +1,49 @@
 package ui_events;
 
 // The server's outbound side of the UI protocol: events for applications
-// (system/MyAppFramework/src/protocol.mln, UiEvent), carried on a kernel
-// channel (MyKernel ipc.mln). The DOM, the widgets and the shell push here
-// -- all on the UI server's task -- whenever something happens to a node an
-// app owns; the app's runtime, on its own task, takes them with poll().
+// (system/MyAppFramework/src/protocol.mln, UiEvent), one kernel channel
+// (MyKernel ipc.mln) per process. The DOM, the widgets and the shell push
+// here -- all on the UI server's task -- whenever something happens to a
+// node an app owns; the process takes them with UI_POLL (proc/os_calls.mln),
+// which binds the channel here on the process's first UI call.
 //
-// One channel for every app while they share the server's address space;
-// as processes each gets its own (MYOS-022).
+// An owner is a pid. An event for an owner with no channel is dropped.
 
 import ipc from "../../../MyKernel/src/kernel/ipc.mln";
-import { UiEvent } from "../../../MyAppFramework/src/protocol.mln";
 
-i32 g_channel = 0;
+i32 OWNERS_MAX = 16;
+i32 g_owner[16];     // pid, 0 = free
+i32 g_channel[16];
 
-export void init() {
-    if (g_channel == 0) { g_channel = ipc.create(); }
+export void init() { }
+
+// Events for `owner` go to `channel`.
+export void bind(i32 owner, i32 channel) {
+    i32 free = -1;
+    i32 i = 0;
+    while (i < OWNERS_MAX) {
+        if (g_owner[i] == owner) { g_channel[i] = channel; return; }
+        if (g_owner[i] == 0 && free < 0) { free = i; }
+        i++;
+    }
+    if (free < 0) { return; }
+    g_owner[free] = owner;
+    g_channel[free] = channel;
+}
+
+i32 channel_of(i32 owner) {
+    i32 i = 0;
+    while (i < OWNERS_MAX) {
+        if (g_owner[i] == owner) { return g_channel[i]; }
+        i++;
+    }
+    return 0;
 }
 
 // Queue an event for `owner`. A full channel drops it.
 export void push(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) {
-    if (owner == 0) { return; }
-    if (g_channel == 0) { return; }
+    i32 ch = channel_of(owner);
+    if (ch == 0) { return; }
     i32 w[16];
     w[0] = owner;
     w[1] = id;
@@ -29,21 +51,5 @@ export void push(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) {
     w[3] = arg;
     w[4] = token;
     w[5] = (i32)text;
-    ipc.send(g_channel, &w[0]);
+    ipc.send(ch, &w[0]);
 }
-
-// Take the oldest event; false when there is none.
-export bool poll(UiEvent *out) {
-    if (g_channel == 0) { return false; }
-    i32 w[16];
-    if (!ipc.recv(g_channel, &w[0])) { return false; }
-    out->owner = w[0];
-    out->id = w[1];
-    out->kind = w[2];
-    out->arg = w[3];
-    out->token = w[4];
-    out->text = (char*)w[5];
-    return true;
-}
-
-export bool has_events() { return ipc.pending(g_channel); }

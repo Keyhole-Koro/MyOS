@@ -3,11 +3,10 @@ package files;
 import elements from "../../../MyAppFramework/src/elements.mln";
 import ui from "../../../MyAppFramework/src/ui.mln";
 import { app } from "../../../MyAppFramework/src/annotations.mln";
-import fs from "../fs/fs.mln";
-import fs_config from "../fs/fs_config.mln";
+import fs from "../../../MyAppFramework/src/fs.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
-import { FsError } from "../fs/fs.mln";
+import { FsError } from "../../../MyAppFramework/src/fs.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 
 // File manager: lists the MFS disk, opens a file in the editor (activate a
@@ -92,7 +91,7 @@ char* (Files *f) selected_name() {
         if (item[i] == ' ') { break; }
         g_selected[i] = item[i];
         i++;
-        if (i >= fs_config.NAME_MAX - 1) { break; }
+        if (i >= fs.NAME_MAX - 1) { break; }
     }
     g_selected[i] = (char)0;
     return &g_selected[0];

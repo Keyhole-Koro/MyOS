@@ -10,8 +10,9 @@ framework, not any one app, is responsible for:
   - ui.open() routes a path to the @open app from another app (Files -> Editor);
   - closing a window frees the instance: a relaunch starts from initial state;
   - a dialog an app opened is a window of its own and closes with Cancel;
-  - an app installed on the disk (an MBIN file with an @app row, read from
-    its header at boot) is listed in the launcher and runs as a process.
+  - every app is an executable on the disk (an MBIN file with an @app row,
+    read from its header at boot): the launcher lists exactly those, and
+    each launch is a process.
 
 Run after `make build`:  python3 system/MyOS/tests/app_framework_test.py
 """
@@ -25,9 +26,9 @@ sys.path.insert(0, str(REPO_ROOT / "system" / "MyOS" / "tests"))
 
 from mydomtester import MyOS, expect  # noqa: E402
 
-# Registry order: the apps linked into the image (in boot/main.mln's import
-# order), then those found on the disk (MFS entry order).
-MENU = ["Counter", "Editor", "Files", "Notes", "Terminal", "Demo"]
+# Registry order: the executables on the disk that declare @app, in MFS
+# entry order (tools/mkfs.py adds them sorted by name).
+MENU = ["Counter", "Editor", "Files", "Notes", "Terminal"]
 MOD_CTRL = 2
 ROW_H = 39  # menu row height at 2x UI scale (see apps_e2e_test.py)
 
@@ -43,20 +44,6 @@ def wait_text_contains(locator, needle: str, timeout: float = 8.0) -> str:
             return last
         time.sleep(0.1)
     raise AssertionError(f"{needle!r} not found; last text was:\n{last}")
-
-
-def wait_log_contains(os, needle: str, timeout: float = 8.0) -> None:
-    """Poll the guest's serial log until a line contains `needle`.
-
-    The emulator only runs the guest while it serves a request, so each poll
-    takes a snapshot to let it advance."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if any(needle in line for line in os._log):
-            return
-        os.snapshot()
-        time.sleep(0.1)
-    raise AssertionError(f"{needle!r} not found in the guest log")
 
 
 def click_point(os, x, y):
@@ -144,19 +131,15 @@ def main() -> int:
             launch_app(os, "Counter")
             expect(os.get_by_test_id("counter")).to_have_text("clicks: 0")
 
-            # 8. An app installed on the disk: the shell read `@app(name =
-            #    "Demo")` from demo.mbin's header (MBIN section directory)
-            #    without loading it; launching spawns the process, which
-            #    reports on the serial console.
+            # 8. The launcher is the disk: the shell read each executable's
+            #    `@app(name = ...)` from its MBIN header without loading it.
             click_point(os, 40, 1516)
             menu = os.get_by_role("menu").snapshot()
-            if "Demo" not in (menu.text or ""):
-                raise AssertionError(f"launcher menu lacks the disk app: {menu.text!r}")
-            row = MENU.index("Demo")
-            click_point(os, menu.bounds.x + 40, menu.bounds.y + 16 + ROW_H * row + ROW_H // 2)
-            wait_log_contains(os, "demo: launched from the desktop")
+            if (menu.text or "").split("\n") != MENU:
+                raise AssertionError(f"launcher menu is not the installed apps: {menu.text!r}")
+            click_point(os, 900, 1400)  # dismiss
 
-        print("PASS: launcher, single instance, @key, @open routing, close/relaunch, dialogs, disk app")
+        print("PASS: launcher, single instance, @key, @open routing, close/relaunch, dialogs, apps from disk")
         return 0
     except (AssertionError, RuntimeError) as error:
         print(f"FAIL: {error}")

@@ -12,7 +12,7 @@ import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import irq from "../../../MyKernel/src/arch/irq.mln";
 // The server's end of the UI protocol (system/MyAppFramework/src/protocol.mln):
 // the request carrier apps call, served from the loop below.
-import uiproto from "ui_channel.mln";
+import ui_channel from "ui_channel.mln";
 
 // Presents the DOM scene and turns mouse and keyboard events into DOM
 // interactions: hover, press/click, window focus and z-order, title-bar
@@ -333,7 +333,7 @@ export void run() {
         // The apps' requests (UI protocol) are answered here, on this task:
         // the app task sleeps on each until its reply. Their handlers run
         // over there, on events the DOM emitted above.
-        i32 served = uiproto.serve();
+        i32 served = ui_channel.serve();
 
         // The server's own queued handlers (taskbar, menus, the shell's
         // window-close hook) run here, between input and paint.

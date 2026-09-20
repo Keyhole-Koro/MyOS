@@ -194,6 +194,7 @@ void automation_node(i32 id) {
 export void write_automation_snapshot() {
     g_automation_first = 1;
     automation_raw("{\"revision\":"); automation_i32(dom.revision());
+    automation_raw(",\"starting\":"); automation_i32(dom.apps_starting());
     automation_raw(",\"nodes\":[");
     automation_node(dom.root_node_id());
     automation_raw("]}");

@@ -3,9 +3,9 @@ package editor;
 import elements from "../../../MyAppFramework/src/elements.mln";
 import ui from "../../../MyAppFramework/src/ui.mln";
 import { app, open, key } from "../../../MyAppFramework/src/annotations.mln";
-import fs from "../fs/fs.mln";
+import fs from "../../../MyAppFramework/src/fs.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
-import { FsError } from "../fs/fs.mln";
+import { FsError } from "../../../MyAppFramework/src/fs.mln";
 
 // Text editor: a TextArea over one file on the MFS disk. Save rewrites the
 // file (MFS writes are append-only, so the file is removed and recreated).
