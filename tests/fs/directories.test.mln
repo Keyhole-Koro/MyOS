@@ -1,0 +1,103 @@
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import fs from "../../src/fs/fs.mln";
+import { FsError } from "../../src/fs/fs.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+import { assert_eq } from "../../../../toolchain/MyStdLib/assert.mln";
+import str from "../../../../toolchain/MyStdLib/str.mln";
+
+// Directories: an entry with FLAG_DIR and a parent; paths walk them.
+
+i32 classify(FsError e) {
+    return case e of { NotFound -> 2; WrongType(_) -> 3; _ -> 4; };
+}
+
+// open(path): 1 = opened (and closed again), 2 = NotFound, 3 = WrongType, 4 = other error.
+i32 open_status(char *path) {
+    Result<i32, FsError> r = fs.open(path);
+    i32 code = 0;
+    i32 fd = 0;
+    case r of {
+        Ok(v) -> ({ fd = v; code = 1; });
+        Err(e) -> ({ code = classify(e); });
+    };
+    if (code == 1) { fs.close(fd); }
+    return code;
+}
+
+// create(path): 1 = created (and closed), 2 = NotFound (missing directory), 4 = other.
+i32 create_status(char *path) {
+    Result<i32, FsError> r = fs.create(path);
+    i32 code = 0;
+    i32 fd = 0;
+    case r of {
+        Ok(v) -> ({ fd = v; code = 1; });
+        Err(e) -> ({ code = classify(e); });
+    };
+    if (code == 1) { fs.close(fd); }
+    return code;
+}
+
+i32 count_in(char *dir) {
+    char name[16];
+    i32 n = 0;
+    i32 start = 0;
+    while (1) {
+        Result<Option<i32>, FsError> res = fs.dir_next_at(dir, start, &name[0], 16);
+        i32 idx = -1;
+        case res of {
+            Ok(v) -> ({ idx = case v of { Some(i) -> i; None -> -1; }; });
+            Err(_) -> ({ return -1; });
+        };
+        if (idx < 0) { break; }
+        n++;
+        start = idx + 1;
+    }
+    return n;
+}
+
+/*@Test "filesystem directories" {
+    disk: true;
+    step: 80000000;
+}*/
+void filesystem_directories() {
+    heap.init();
+    fs.init();
+
+    i32 root_before = count_in("");
+
+    // mkdir, then a file inside it, reachable by path and listed there.
+    Result<i32, FsError> made = fs.mkdir("docs");
+    i32 dir_idx = case made of {
+        Ok(v) -> v;
+        Err(_) -> ({ assert_eq<i32>(1, 0, "mkdir docs"); 0; });
+    };
+    assert_eq<i32>(fs.is_dir(dir_idx) ? 1 : 0, 1, "docs is a directory");
+    assert_eq<i32>(count_in(""), root_before + 1, "docs appears in the root");
+
+    Result<i32, FsError> created = fs.create("docs/note.txt");
+    i32 fd = case created of {
+        Ok(v) -> v;
+        Err(_) -> ({ assert_eq<i32>(1, 0, "create docs/note.txt"); 0; });
+    };
+    fs.close(fd);
+    assert_eq<i32>(count_in("docs"), 1, "note.txt listed in docs");
+    assert_eq<i32>(count_in(""), root_before + 1, "note.txt not listed in the root");
+
+    assert_eq<i32>(open_status("/docs/note.txt"), 1, "open by path with a leading slash");
+    assert_eq<i32>(open_status("note.txt"), 2, "the file is not at the root");
+    assert_eq<i32>(open_status("docs"), 3, "a directory cannot be opened as a file");
+
+    // A non-empty directory does not go; an empty one does.
+    Result<_, FsError> rm_full = fs.remove("docs");
+    i32 kept = case rm_full of { Ok(_) -> 0; Err(_) -> 1; };
+    assert_eq<i32>(kept, 1, "removing a non-empty directory fails");
+    Result<_, FsError> rm_file = fs.remove("docs/note.txt");
+    case rm_file of { Ok(_) -> _; Err(_) -> ({ assert_eq<i32>(1, 0, "remove docs/note.txt"); }); };
+    Result<_, FsError> rm_dir = fs.remove("docs");
+    case rm_dir of { Ok(_) -> _; Err(_) -> ({ assert_eq<i32>(1, 0, "remove the empty docs"); }); };
+    assert_eq<i32>(count_in(""), root_before, "root back to where it was");
+
+    // A missing directory on the way.
+    assert_eq<i32>(create_status("nope/x"), 2, "create under a missing directory fails");
+}

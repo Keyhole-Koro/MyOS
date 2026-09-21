@@ -87,15 +87,16 @@ void register_app(char *path, char *type, i32 single, char *name, i32 opens) {
     g_opens[i] = opens;
 }
 
-// Every executable on the disk that declares @app is an installed app: read
+// Every executable in /apps that declares @app is an installed app: read
 // each file's header (MBIN, section directory) for its annotation rows,
-// without loading it. MFS is flat, so "installed" means "an MBIN file on
-// the disk with an @app row" rather than a directory.
+// without loading it.
+char g_scan_path[32];
+
 void scan_disk() {
     char name[16];
     i32 start = 0;
     while (1) {
-        Result<Option<i32>, FsError> res = fs.dir_next(start, &name[0], 16);
+        Result<Option<i32>, FsError> res = fs.dir_next_at("apps", start, &name[0], 16);
         i32 idx = -1;
         case res of {
             Ok(v) -> ({ idx = case v of { Some(n) -> n; None -> -1; }; });
@@ -105,7 +106,10 @@ void scan_disk() {
         start = idx + 1;
         i32 size = fs.entry_size(idx);
         if (size < 36) { continue; }
-        i32 fd = case fs.open(&name[0]) of { Ok(v) -> v; Err(_) -> -1; };
+        i32 k = strbuf.reset(&g_scan_path[0]);
+        k = strbuf.append(&g_scan_path[0], 32, k, "apps/");
+        k = strbuf.append(&g_scan_path[0], 32, k, &name[0]);
+        i32 fd = case fs.open(&g_scan_path[0]) of { Ok(v) -> v; Err(_) -> -1; };
         if (fd < 0) { continue; }
         char *image = (char*)heap.alloc(size);
         if (image == 0) { fs.close(fd); continue; }
@@ -121,8 +125,8 @@ void scan_disk() {
                     opens.on("open", type);
                     i32 has_open = 0;
                     if (opens.next()) { has_open = 1; }
-                    register_app(keep(&name[0]), type, rows.arg(0), keep(rows.text(1)), has_open);
-                    debug.printf("app: installed %s (%s)\n", (i32)type, (i32)(&name[0]));
+                    register_app(keep(&g_scan_path[0]), type, rows.arg(0), keep(rows.text(1)), has_open);
+                    debug.printf("app: installed %s (%s)\n", (i32)type, (i32)(&g_scan_path[0]));
                 }
             }
         }

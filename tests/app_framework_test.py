@@ -55,6 +55,13 @@ def click_point(os, x, y):
 def launch_app(os, name):
     """Open the taskbar app menu and click the named row."""
     click_point(os, 40, 1516)  # the MyOS launcher at the taskbar's left
+    # The menu is built by the UI server on its next pass; a snapshot can
+    # land before that, so wait for it.
+    deadline = time.monotonic() + 5.0
+    while not [n for n in os.snapshot().nodes if n.role == "menu"]:
+        if time.monotonic() > deadline:
+            raise AssertionError("the launcher menu did not open")
+        time.sleep(0.05)
     menu = os.get_by_role("menu").snapshot()
     row = MENU.index(name)
     click_point(os, menu.bounds.x + 40, menu.bounds.y + 16 + ROW_H * row + ROW_H // 2)
@@ -139,7 +146,31 @@ def main() -> int:
                 raise AssertionError(f"launcher menu is not the installed apps: {menu.text!r}")
             click_point(os, 900, 1400)  # dismiss
 
-        print("PASS: launcher, single instance, @key, @open routing, close/relaunch, dialogs, apps from disk")
+            # 9. Node ids are reused: launching and closing an app over and
+            #    over does not push the id high-water mark up. (Before,
+            #    256 ids were handed out once each and then the DOM stopped.)
+            def max_id():
+                return max(n.id for n in os.snapshot().nodes)
+
+            def close_focused(name):
+                # The launched instance is the active window.
+                w = [n for n in os.snapshot().nodes if n.role == "window" and n.text == name and n.focused][0]
+                click_point(os, w.bounds.x + 30, w.bounds.y + 16)
+
+            launch_app(os, "Counter")
+            expect(os.get_by_role("window", name="Counter")).to_have_count(2)
+            close_focused("Counter")
+            expect(os.get_by_role("window", name="Counter")).to_have_count(1)
+            first = max_id()
+            for _ in range(6):
+                launch_app(os, "Counter")
+                expect(os.get_by_role("window", name="Counter")).to_have_count(2)
+                close_focused("Counter")
+                expect(os.get_by_role("window", name="Counter")).to_have_count(1)
+            if max_id() > first + 2:
+                raise AssertionError(f"node ids are not reused: high-water mark {first} -> {max_id()}")
+
+        print("PASS: launcher, single instance, @key, @open routing, close/relaunch, dialogs, apps from disk, id reuse")
         return 0
     except (AssertionError, RuntimeError) as error:
         print(f"FAIL: {error}")

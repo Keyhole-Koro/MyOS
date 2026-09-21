@@ -10,6 +10,7 @@ package ui_events;
 // An owner is a pid. An event for an owner with no channel is dropped.
 
 import ipc from "../../../MyKernel/src/kernel/ipc.mln";
+import { UiEventKind } from "../../../MyAppFramework/src/protocol.mln";
 
 i32 OWNERS_MAX = 16;
 i32 g_owner[16];     // pid, 0 = free
@@ -40,10 +41,19 @@ i32 channel_of(i32 owner) {
     return 0;
 }
 
-// Queue an event for `owner`. A full channel drops it.
+i32 g_dropped = 0;   // events lost to a full channel (an app that stopped polling)
+export i32 dropped() { return g_dropped; }
+
+// Queue an event for `owner`. A timer tick whose previous tick the app has
+// not taken yet is not queued again (one pending tick per timer: a slow
+// app catches up, it does not fall behind). A full channel drops the event
+// and counts it.
 export void push(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) {
     i32 ch = channel_of(owner);
     if (ch == 0) { return; }
+    if (kind == UiEventKind::TIMER) {
+        if (ipc.has(ch, id, kind)) { return; }
+    }
     i32 w[16];
     w[0] = owner;
     w[1] = id;
@@ -51,5 +61,5 @@ export void push(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) {
     w[3] = arg;
     w[4] = token;
     w[5] = (i32)text;
-    ipc.send(ch, &w[0]);
+    if (!ipc.send(ch, &w[0])) { g_dropped++; }
 }

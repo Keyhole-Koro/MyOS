@@ -53,32 +53,37 @@ void (Terminal *t) say_line(char *s) {
 
 char g_line_buf[96];   // scratch for one formatted line
 
-void (Terminal *t) cmd_ls() {
+// `ls [dir]`: the root, or a directory (`ls apps`).
+void (Terminal *t) cmd_ls(char *dir) {
     char name[16];
     i32 n = 0;
     i32 start = 0;
     while (1) {
         // See files.dom.mln's refresh(): decode Result<Option> in two
         // statement-level cases.
-        Result<Option<i32>, FsError> res = fs.dir_next(start, &name[0], 16);
+        Result<Option<i32>, FsError> res = fs.dir_next_at(dir, start, &name[0], 16);
         i32 idx = -1;
         case res of {
             Ok(v) -> ({ idx = case v of { Some(n) -> n; None -> -1; }; });
+            Err(NotFound) -> ({ t->say_line("ls: no such directory"); return; });
             Err(e) -> ({ t->say_line("ls: filesystem error"); return; });
         };
         if (idx < 0) { break; }
-        i32 size = fs.entry_size(idx);
         i32 k = strbuf.reset(&g_line_buf[0]);
         k = strbuf.append(&g_line_buf[0], 96, k, "  ");
         k = strbuf.append(&g_line_buf[0], 96, k, &name[0]);
-        k = strbuf.append(&g_line_buf[0], 96, k, "  ");
-        k = strbuf.append_i32(&g_line_buf[0], 96, k, size);
-        k = strbuf.append(&g_line_buf[0], 96, k, " bytes\n");
+        if (fs.is_dir(idx)) {
+            k = strbuf.append(&g_line_buf[0], 96, k, "/\n");
+        } else {
+            k = strbuf.append(&g_line_buf[0], 96, k, "  ");
+            k = strbuf.append_i32(&g_line_buf[0], 96, k, fs.entry_size(idx));
+            k = strbuf.append(&g_line_buf[0], 96, k, " bytes\n");
+        }
         t->say(&g_line_buf[0]);
         n++;
         start = idx + 1;
     }
-    if (n == 0) { t->say_line("  (no files)"); }
+    if (n == 0) { t->say_line("  (empty)"); }
 }
 
 void (Terminal *t) cmd_cat(char *path) {
@@ -154,13 +159,13 @@ void (Terminal *t) run_line(char *line) {
     if (cmd[0] == 0) { return; }
     if (str.eq(cmd, "help") != 0) {
         t->say_line("help          this text");
-        t->say_line("ls            list files on the disk");
+        t->say_line("ls [dir]      list the disk, or a directory (bin, apps)");
         t->say_line("cat <file>    print a file");
         t->say_line("run <file>    start a user program (or just type its name)");
         t->say_line("clear         clear the screen");
         return;
     }
-    if (str.eq(cmd, "ls") != 0) { t->cmd_ls(); return; }
+    if (str.eq(cmd, "ls") != 0) { t->cmd_ls(arg); return; }
     if (str.eq(cmd, "clear") != 0) { ui.area_clear(t->out); return; }
     if (str.eq(cmd, "cat") != 0) { t->cmd_cat(arg); return; }
     if (str.eq(cmd, "run") != 0) { t->cmd_run(arg); return; }

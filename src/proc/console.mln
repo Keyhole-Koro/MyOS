@@ -14,6 +14,7 @@ import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import { FsError } from "../fs/fs.mln";
 import fs from "../fs/fs.mln";
+import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
 import dom_widgets from "../ui/dom/dom_widgets.mln";
 import dom from "../ui/dom/dom.mln";
 
@@ -181,11 +182,32 @@ i32 on_read(i32 pid, i32 buf, i32 count) {
  * @param path Pointer to null-terminated file path.
  * @return PID of spawned process on success, or 0 on failure.
  */
+char g_spawn_path[80];
+
+// The file for an executable name: a path as given, or a bare name looked
+// up in /bin then /apps (the search path).
+i32 open_executable(char *path) {
+    i32 has_slash = 0;
+    i32 i = 0;
+    while (path[i] != 0) { if (path[i] == '/') { has_slash = 1; } i++; }
+    if (has_slash == 0) {
+        i32 k = strbuf.reset(&g_spawn_path[0]);
+        k = strbuf.append(&g_spawn_path[0], 80, k, "bin/");
+        k = strbuf.append(&g_spawn_path[0], 80, k, path);
+        i32 fd = case fs.open(&g_spawn_path[0]) of { Ok(v) -> v; Err(_) -> -1; };
+        if (fd >= 0) { return fd; }
+        k = strbuf.reset(&g_spawn_path[0]);
+        k = strbuf.append(&g_spawn_path[0], 80, k, "apps/");
+        k = strbuf.append(&g_spawn_path[0], 80, k, path);
+        fd = case fs.open(&g_spawn_path[0]) of { Ok(v) -> v; Err(_) -> -1; };
+        if (fd >= 0) { return fd; }
+    }
+    return case fs.open(path) of { Ok(v) -> v; Err(_) -> -1; };
+}
+
 export i32 spawn_file(char *path) {
-    i32 fd = case fs.open(path) of {
-        Ok(v) -> v;
-        Err(e) -> ({ return 0; });
-    };
+    i32 fd = open_executable(path);
+    if (fd < 0) { return 0; }
     i32 size = case fs.seek(fd, 0, 2) of {
         Ok(v) -> v;
         Err(e) -> ({ fs.close(fd); return 0; });

@@ -207,9 +207,45 @@ export i32 g_events[256];
 export i32 g_event_head = 0;
 export i32 g_event_tail = 0;
 
-// Up to 256 nodes for now to keep memory small
-// TODO: grow this table and Node.id to u32 when we need more than 256 nodes.
-Node *g_node_table[256];
+// Up to NODE_IDS nodes at once. Ids are reused: remove_node() returns an id
+// to a free list and create_node() takes from it before growing the high-
+// water mark (g_next_node_id), so opening and closing apps does not run
+// the space out. A node's id is only ever handed out again after the node
+// is gone; anything that kept the old id (the shell's instance tables, an
+// automation snapshot) checks the node it names, not the number.
+//
+// Each owner (an app process) may hold at most NODES_PER_OWNER nodes, so
+// one app cannot take the whole table from the others; create_node()
+// returns 0 past that, and past NODE_IDS.
+i32 NODE_IDS = 512;
+export i32 NODES_PER_OWNER = 96;
+Node *g_node_table[512];
+i32 g_free_ids[512];
+i32 g_free_count = 0;
+i32 g_owner_nodes_owner[32];   // per-owner node counts, 0 = free slot
+i32 g_owner_nodes_count[32];
+
+i32 owner_slot(i32 owner, i32 make) {
+    i32 free = -1;
+    i32 i = 0;
+    while (i < 32) {
+        if (g_owner_nodes_owner[i] == owner) { return i; }
+        if (g_owner_nodes_owner[i] == 0 && free < 0) { free = i; }
+        i++;
+    }
+    if (make == 0) { return -1; }
+    if (free < 0) { return -1; }
+    g_owner_nodes_owner[free] = owner;
+    g_owner_nodes_count[free] = 0;
+    return free;
+}
+
+// Nodes the owner holds right now.
+export i32 nodes_of(i32 owner) {
+    i32 s = owner_slot(owner, 0);
+    if (s < 0) { return 0; }
+    return g_owner_nodes_count[s];
+}
 export Node **get_g_node_table() { return (Node**)(&g_node_table[0]); }
 
 // Registered timers (ids), scanned by tick().
@@ -302,13 +338,28 @@ export bool node_exists(i32 id) {
  * @return Newly allocated Node ID.
  */
 export i32 create_node(i32 kind, char *name) {
-    if (g_next_node_id >= 256) {
-        debug.panic("dom: out of node ids");
+    // The owner's share first: an app past its limit gets 0, not a panic.
+    i32 oslot = -1;
+    if (g_current_owner != 0) {
+        oslot = owner_slot(g_current_owner, 1);
+        if (oslot < 0) { return 0; }
+        if (g_owner_nodes_count[oslot] >= NODES_PER_OWNER) { return 0; }
     }
+    i32 id = 0;
+    if (g_free_count > 0) {
+        g_free_count = g_free_count - 1;
+        id = g_free_ids[g_free_count];
+    } else {
+        if (g_next_node_id >= NODE_IDS) {
+            if (g_current_owner != 0) { return 0; }
+            debug.panic("dom: out of node ids");
+        }
+        id = g_next_node_id;
+        g_next_node_id = g_next_node_id + 1;
+    }
+    if (oslot >= 0) { g_owner_nodes_count[oslot] = g_owner_nodes_count[oslot] + 1; }
 
     Node *n = (Node *)heap.alloc(NODE_SIZE);
-    i32 id = g_next_node_id;
-    g_next_node_id = g_next_node_id + 1;
 
     n->id = (u16)id;
     n->kind = (u16)kind;
@@ -1439,7 +1490,16 @@ export void free_subtree(i32 id) {
         if (n->text != 0) { heap.free((i32)n->text); }
     }
     if (g_menu_id == id) { g_menu_id = 0; }
+    if (n->owner != 0) {
+        i32 oslot = owner_slot(n->owner, 0);
+        if (oslot >= 0) {
+            g_owner_nodes_count[oslot] = g_owner_nodes_count[oslot] - 1;
+            if (g_owner_nodes_count[oslot] <= 0) { g_owner_nodes_owner[oslot] = 0; }
+        }
+    }
     g_node_table[id] = (Node*)0;
+    g_free_ids[g_free_count] = id;
+    g_free_count = g_free_count + 1;
     heap.free((i32)n);
 }
 

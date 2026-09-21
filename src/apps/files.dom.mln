@@ -30,6 +30,8 @@ struct Files {
 char g_items[1024];    // "\n"-joined list rows
 char g_selected[16];   // name of the selected row
 char g_question[64];   // dialog text
+char g_dir[64];        // the directory shown ("" = root)
+char g_path[80];       // g_dir + "/" + a name, for the calls that take a path
 
 @app(single)
 i32 (Files *f) view() {
@@ -50,17 +52,34 @@ i32 (Files *f) view() {
     return win;
 }
 
-// Rebuild the list from the disk: one "name  (N bytes)" row per file.
+// `name` inside the directory shown, as a path.
+char* path_of(char *name) {
+    i32 k = strbuf.reset(&g_path[0]);
+    if (g_dir[0] != 0) {
+        k = strbuf.append(&g_path[0], 80, k, &g_dir[0]);
+        k = strbuf.append(&g_path[0], 80, k, "/");
+    }
+    k = strbuf.append(&g_path[0], 80, k, name);
+    return &g_path[0];
+}
+
+// Rebuild the list from the directory shown: ".." first unless at the
+// root, then one row per entry -- "name/" for a directory, "name  (N
+// bytes)" for a file.
 void (Files *f) refresh(i32 id) {
     char name[16];
     i32 k = strbuf.reset(&g_items[0]);
     i32 start = 0;
     i32 count = 0;
+    if (g_dir[0] != 0) {
+        k = strbuf.append(&g_items[0], 1024, k, "..");
+        count++;
+    }
     while (1) {
         // Decode the nested Result<Option> with statement-level cases: a
         // struct-valued case arm (`Ok(v) -> v` into an Option local) is not
         // copied correctly yet, while `case v of` on the bound field is.
-        Result<Option<i32>, FsError> res = fs.dir_next(start, &name[0], 16);
+        Result<Option<i32>, FsError> res = fs.dir_next_at(&g_dir[0], start, &name[0], 16);
         i32 idx = -1;
         case res of {
             Ok(v) -> ({ idx = case v of { Some(n) -> n; None -> -1; }; });
@@ -69,15 +88,53 @@ void (Files *f) refresh(i32 id) {
         if (idx < 0) { break; }
         if (count > 0) { k = strbuf.append(&g_items[0], 1024, k, "\n"); }
         k = strbuf.append(&g_items[0], 1024, k, &name[0]);
-        k = strbuf.append(&g_items[0], 1024, k, "   (");
-        k = strbuf.append_i32(&g_items[0], 1024, k, fs.entry_size(idx));
-        k = strbuf.append(&g_items[0], 1024, k, " bytes)");
+        if (fs.is_dir(idx)) {
+            k = strbuf.append(&g_items[0], 1024, k, "/");
+        } else {
+            k = strbuf.append(&g_items[0], 1024, k, "   (");
+            k = strbuf.append_i32(&g_items[0], 1024, k, fs.entry_size(idx));
+            k = strbuf.append(&g_items[0], 1024, k, " bytes)");
+        }
         count++;
         start = idx + 1;
     }
     ui.list_set_items(f->list, &g_items[0]);
-    ui.set_text_fmt(f->status, "%d file(s) on disk", count, 0);
+    if (g_dir[0] != 0) {
+        ui.set_text_fmt(f->status, "/%s: %d entries", (i32)(&g_dir[0]), count - 1);
+    } else {
+        ui.set_text_fmt(f->status, "%d entries on disk", count, 0);
+    }
     strbuf.reset(&g_selected[0]);
+}
+
+// Whether the selected row is a directory ("name/" or "..").
+i32 (Files *f) selected_is_dir() {
+    i32 row = ui.list_selected(f->list);
+    if (row < 0) { return 0; }
+    char item[48];
+    ui.list_item(f->list, row, &item[0], 48);
+    if (item[0] == '.' && item[1] == '.' && item[2] == 0) { return 1; }
+    i32 i = 0;
+    while (item[i] != 0) { i++; }
+    if (i > 0 && item[i - 1] == '/') { return 1; }
+    return 0;
+}
+
+// Enter the selected directory (".." goes up), and show it.
+void (Files *f) enter(char *name) {
+    if (name[0] == '.' && name[1] == '.' && name[2] == 0) {
+        i32 n = 0;
+        while (g_dir[n] != 0) { n++; }
+        while (n > 0 && g_dir[n - 1] != '/') { n--; }
+        if (n > 0) { n--; }
+        g_dir[n] = (char)0;
+    } else {
+        i32 k = 0;
+        while (g_dir[k] != 0) { k++; }
+        if (k > 0) { k = strbuf.append(&g_dir[0], 64, k, "/"); }
+        k = strbuf.append(&g_dir[0], 64, k, name);
+    }
+    f->refresh(0);
 }
 
 // The selected row's file name (the part before the size), or 0.
@@ -89,6 +146,7 @@ char* (Files *f) selected_name() {
     i32 i = 0;
     while (item[i] != 0) {
         if (item[i] == ' ') { break; }
+        if (item[i] == '/') { break; }
         g_selected[i] = item[i];
         i++;
         if (i >= fs.NAME_MAX - 1) { break; }
@@ -106,11 +164,12 @@ void (Files *f) select(i32 id) {
 void (Files *f) open(i32 id) {
     char *name = f->selected_name();
     if (name == 0) { ui.set_text(f->status, "select a file first"); return; }
-    ui.open(name);
+    if (f->selected_is_dir() != 0) { f->enter(name); return; }
+    ui.open(path_of(name));
 }
 
 void (Files *f) create(i32 id) {
-    ui.open("untitled.txt");
+    ui.open(path_of("untitled.txt"));
 }
 
 // --- delete confirmation dialog ---
@@ -126,7 +185,7 @@ void (Files *f) confirm_delete(i32 id) {
     f->close_dialog();
     char *name = f->selected_name();
     if (name == 0) { return; }
-    Result<_, FsError> removed = fs.remove(name);
+    Result<_, FsError> removed = fs.remove(path_of(name));
     case removed of { Ok(_) -> _; Err(_) -> _; };
     f->refresh(0);
     ui.set_text(f->status, "deleted");

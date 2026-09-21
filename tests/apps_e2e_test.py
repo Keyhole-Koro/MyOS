@@ -99,14 +99,27 @@ def main() -> int:
             wait_text_contains(os.get_by_test_id("editor-status"), "saved")
 
             # 3. The file manager lists the disk, including the file the
-            #    editor just wrote -- proof the save reached the disk image.
+            #    editor just wrote -- proof the save reached the disk image --
+            #    and the directories the executables live in (MFS has
+            #    directories: /bin for programs, /apps for desktop apps).
             launch_app(os, 2)  # Files
             files = os.get_by_role("window", name="Files")
             expect(files).to_be_visible()
             os.get_by_role("button", name="Refresh").click()
             listing = os.get_by_test_id("file-list").snapshot().text
-            for name in ("hello", "readme.txt", "note.txt"):
+            for name in ("bin/", "apps/", "readme.txt", "note.txt"):
                 assert name in listing, f"{name} missing from the file list:\n{listing}"
+
+            # 4. Entering a directory: activate "bin/" (double-click = click the
+            #    selected row again) and the programs are listed; ".." leads back.
+            rows = listing.split("\n")
+            row = rows.index("bin/")
+            box = os.get_by_test_id("file-list").snapshot().bounds
+            for _ in range(2):
+                click_point(os, box.x + 40, box.y + 20 + 39 * row)
+            wait_text_contains(os.get_by_test_id("file-list"), "hello")
+            listing = os.get_by_test_id("file-list").snapshot().text
+            assert listing.split("\n")[0] == "..", f"no way back from /bin:\n{listing}"
 
         print("PASS: user process, editor disk round-trip and file manager via automation")
         return 0
