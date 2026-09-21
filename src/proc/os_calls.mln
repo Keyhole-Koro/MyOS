@@ -297,26 +297,6 @@ i32 svc_fs_close(i32 user_args) {
 
 char g_name[16];
 
-i32 svc_fs_dir_next(i32 user_args) {
-    i32 start = mem.read_word(user_args);
-    i32 user_out = mem.read_word(user_args + 4);
-    i32 cap = mem.read_word(user_args + 8);
-    if (cap > 16) { cap = 16; }
-    Result<Option<i32>, FsError> res = fs.dir_next(start, &g_name[0], 16);
-    i32 idx = -1;
-    i32 code = 0;
-    case res of {
-        Ok(v) -> ({ idx = case v of { Some(n) -> n; None -> -1; }; });
-        Err(e) -> ({ code = fs_code(e); });
-    };
-    if (code != 0) { return code; }
-    if (idx < 0) { return -1; }
-    i32 n = str.len(&g_name[0]) + 1;
-    if (n > cap) { n = cap; }
-    copy_out(user_out, &g_name[0], n);
-    mem.write_byte(user_out + cap - 1, 0);
-    return idx;
-}
 
 i32 svc_fs_entry_size(i32 user_args) {
     return fs.entry_size(mem.read_word(user_args));
@@ -406,7 +386,6 @@ i32 handle(i32 pid, i32 service, i32 args) {
     if (service == OsService::FS_SEEK)       { return svc_fs_seek(args); }
     if (service == OsService::FS_CLOSE)      { return svc_fs_close(args); }
     if (service == OsService::FS_REMOVE)     { return svc_fs_remove(args); }
-    if (service == OsService::FS_DIR_NEXT)   { return svc_fs_dir_next(args); }
     if (service == OsService::FS_ENTRY_SIZE) { return svc_fs_entry_size(args); }
     if (service == OsService::FS_MKDIR)      { return svc_fs_mkdir(args); }
     if (service == OsService::FS_DIR_NEXT_AT) { return svc_fs_dir_next_at(args); }

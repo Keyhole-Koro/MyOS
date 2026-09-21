@@ -396,11 +396,6 @@ Option<i32> find_entry_by_path(char* path) {
     return find_entry_in(parent_code, &name[0]);
 }
 
-// Kept for the flat callers: a root entry by name.
-Option<i32> find_entry_by_name(char* name) {
-    return find_entry_in(0, name);
-}
-
 /**
  * Searches the directory table on disk for an unused file entry slot.
  * @return Option containing free entry index, or None if directory table is full.
@@ -456,29 +451,10 @@ Option<i32> find_free_fd() {
     return None;
 }
 
-// --- Path Resolution Constraints ---
+// --- Path Resolution Constraints (split_path / find_entry_by_path) ---
 // 1. Absolute paths with leading '/' (e.g. "/readme.txt") and relative paths ("readme.txt")
-//    are normalized to the same file entry name.
+//    name the same entry.
 // 2. Path components longer than (fs_config.NAME_MAX - 1 = 15 characters) are truncated.
-
-/**
- * Strips leading slash from path and normalizes filename into `out_name` up to NAME_MAX length.
- * @param path Input path string.
- * @param out_name Destination buffer of at least NAME_MAX bytes.
- */
-void path_clean_name(char* path, char* out_name) {
-    if (path == 0) {
-        out_name[0] = 0;
-        return;
-    }
-    i32 start = 0;
-    if (path[0] == '/') {
-        start = 1;
-    }
-    // Truncates to fs_config.NAME_MAX - 1 characters and always terminates, the same
-    // bound the byte-at-a-time loop enforced.
-    str.ncopy(out_name, &path[start], fs_config.NAME_MAX);
-}
 
 // =========================================================================
 // 6. Format / Init
@@ -1133,18 +1109,6 @@ export void list() {
 // =========================================================================
 // 8. Directory enumeration (MYOS-015: file manager)
 // =========================================================================
-
-/**
- * Finds the next used file entry starting at index `start`.
- * @param start Starting entry table index.
- * @param out Buffer to receive null-terminated filename.
- * @param cap Maximum capacity of output buffer.
- * @return Ok(Some(idx)) on match, Ok(None) at end of directory, or Err(FsError).
- */
-export Result<Option<i32>, FsError> dir_next(i32 start, char* out, i32 cap) {
-    Result<Option<i32>, FsError> r = dir_next_in(0, start, out, cap);
-    return r;
-}
 
 // The entries of the directory `path` names ("" or "/" for the root),
 // from entry index `start`: Some(index) with the name copied into `out`,
