@@ -6,7 +6,7 @@ import graphics from "../graphics.mln";
 import theme from "../theme.mln";
 import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
 import dom from "dom.mln";
-import { UiEventKind } from "../../../../MyAppFramework/src/protocol.mln";
+import { UiEventKind } from "../../../../MyAppFramework/src/protocol/ui.mln";
 import ui_config from "../ui_config.mln";
 import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
 import { Option } from "../../../../../toolchain/MyStdLib/option.mln";

@@ -5,10 +5,10 @@ import dom_widgets from "dom/dom_widgets.mln";
 import dom_elements from "dom/dom_elements.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import { NodeStyle } from "dom/dom.mln";
-import { UiMsg, UiOp } from "../../../MyAppFramework/src/protocol.mln";
+import { UiMsg, UiOp } from "../../../MyAppFramework/src/protocol/ui.mln";
 
 // The UI server's end of the CREATE_* requests of the UI protocol
-// (system/MyAppFramework/src/protocol.mln): one node per request, built
+// (system/MyAppFramework/src/protocol/ui.mln): one node per request, built
 // through the server-internal helpers in dom/dom_elements.mln, owned by
 // the requesting instance (ui_server.handle sets the owner). The
 // app-facing vocabulary with its defaults is MyAppFramework/src/elements.mln.

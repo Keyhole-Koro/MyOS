@@ -8,10 +8,10 @@ import graphics from "graphics.mln";
 import irq from "../../../MyKernel/src/arch/irq.mln";
 import app from "../shell/app.mln";
 import elements_server from "elements_server.mln";
-import { UiMsg, UiOp } from "../../../MyAppFramework/src/protocol.mln";
+import { UiMsg, UiOp } from "../../../MyAppFramework/src/protocol/ui.mln";
 
 // The UI server's end of the request side of the UI protocol
-// (system/MyAppFramework/src/protocol.mln; table in
+// (system/MyAppFramework/src/protocol/ui.mln; table in
 // docs/design/ui-protocol.md). handle() takes one UiMsg from an app, runs
 // it against the DOM as that app's instance -- nodes it creates are owned
 // by m->owner -- and returns the i32 result. The functions below are the

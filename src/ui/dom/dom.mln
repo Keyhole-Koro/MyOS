@@ -7,7 +7,7 @@ import graphics from "../graphics.mln";
 import theme from "../theme.mln";
 import ui_events from "../ui_events.mln";
 import irq from "../../../../MyKernel/src/arch/irq.mln";
-import { UiEventKind } from "../../../../MyAppFramework/src/protocol.mln";
+import { UiEventKind } from "../../../../MyAppFramework/src/protocol/ui.mln";
 import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
 
 // Kernel object tree + UI DOM. See docs/DOM_SPEC.md and MYOS-014.

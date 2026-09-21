@@ -1,7 +1,7 @@
 package ui_events;
 
 // The server's outbound side of the UI protocol: events for applications
-// (system/MyAppFramework/src/protocol.mln, UiEvent), one kernel channel
+// (system/MyAppFramework/src/protocol/ui.mln, UiEvent), one kernel channel
 // (MyKernel ipc.mln) per process. The DOM, the widgets and the shell push
 // here -- all on the UI server's task -- whenever something happens to a
 // node an app owns; the process takes them with UI_POLL (proc/os_calls.mln),
@@ -10,7 +10,7 @@ package ui_events;
 // An owner is a pid. An event for an owner with no channel is dropped.
 
 import ipc from "../../../MyKernel/src/kernel/ipc.mln";
-import { UiEventKind } from "../../../MyAppFramework/src/protocol.mln";
+import { UiEventKind } from "../../../MyAppFramework/src/protocol/ui.mln";
 
 i32 OWNERS_MAX = 16;
 i32 g_owner[16];     // pid, 0 = free

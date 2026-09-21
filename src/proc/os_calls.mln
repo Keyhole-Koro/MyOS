@@ -5,7 +5,7 @@ package os_calls;
 // the UI protocol, the filesystem, process control -- arrives here as
 // (pid, service, args) with `args` a user address, and is answered by
 // calling the OS's own modules. The service numbers are the SDK's
-// (system/MyAppFramework/src/os_services.mln); what each takes is
+// (system/MyAppFramework/src/protocol/services.mln); what each takes is
 // documented at the SDK stub that sends it.
 //
 // This runs in the calling process's context (its page tables are active),
@@ -35,9 +35,9 @@ import { FsError } from "../fs/fs.mln";
 import console from "console.mln";
 import ui_channel from "../ui/ui_channel.mln";
 import ui_events from "../ui/ui_events.mln";
-import { OsService } from "../../../MyAppFramework/src/os_services.mln";
-import os_services from "../../../MyAppFramework/src/os_services.mln";
-import { UiOp } from "../../../MyAppFramework/src/protocol.mln";
+import { OsService } from "../../../MyAppFramework/src/protocol/services.mln";
+import os_services from "../../../MyAppFramework/src/protocol/services.mln";
+import { UiOp } from "../../../MyAppFramework/src/protocol/ui.mln";
 
 // --- per-process UI state ------------------------------------------------------------------
 

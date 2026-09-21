@@ -1,7 +1,7 @@
 package ui_channel;
 
 // The UI server's inbound side of the UI protocol
-// (system/MyAppFramework/src/protocol.mln): requests arrive on one kernel
+// (system/MyAppFramework/src/protocol/ui.mln): requests arrive on one kernel
 // channel (MyKernel ipc.mln) from every process, each carrying the channel
 // its reply goes to; serve() answers them all from the compositor's pass.
 // Requests reach the channel through the OS_CALL handler
@@ -9,7 +9,7 @@ package ui_channel;
 // names out of the process's memory -- the words here are kernel words.
 
 import ipc from "../../../MyKernel/src/kernel/ipc.mln";
-import { UiMsg } from "../../../MyAppFramework/src/protocol.mln";
+import { UiMsg } from "../../../MyAppFramework/src/protocol/ui.mln";
 import ui_server from "ui_server.mln";
 import ui_events from "ui_events.mln";
 

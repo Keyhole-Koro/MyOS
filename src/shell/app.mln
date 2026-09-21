@@ -19,7 +19,7 @@ import os_calls from "../proc/os_calls.mln";
 import mbin from "../../../../toolchain/MyStdLib/format/mbin.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
-import { UiEventKind } from "../../../MyAppFramework/src/protocol.mln";
+import { UiEventKind } from "../../../MyAppFramework/src/protocol/ui.mln";
 
 // The shell: the registry of installed apps and the instances running on
 // the desktop. This is the OS side of the application framework -- apps
@@ -31,7 +31,7 @@ import { UiEventKind } from "../../../MyAppFramework/src/protocol.mln";
 // annotations iterator, without loading the file): its type name, launcher
 // name, whether it is single-instance and whether it takes @open. What its
 // other annotations mean -- @timer, @key, @on_close -- is the app's own
-// runtime's business (MyAppFramework/src/runtime.mln), which reads them
+// runtime's business (MyAppFramework/src/runtime/runtime.mln), which reads them
 // when the process starts and asks the shell only for what crosses the
 // boundary: a timer node, a key claim.
 //
