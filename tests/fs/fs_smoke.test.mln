@@ -1,6 +1,6 @@
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import fs from "../../src/fs/fs.mln";
-import { FsError } from "../../src/fs/fs.mln";
+import { FsError } from "../../../../contracts/io/fs.contract.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { assert_eq } from "../../../../toolchain/MyStdLib/assert.mln";
 

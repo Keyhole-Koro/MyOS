@@ -5,27 +5,42 @@ package fs_config;
 // ============================================================================
 
 // --- Magic & Version ---
+/** Filesystem image signature identifying the MFS1 on-disk format. */
 export i32 MAGIC        = 0x4D465331; // 'MFS1' (MyFileSystem v1)
+/** On-disk format version expected by this filesystem implementation. */
 export i32 VERSION      = 1;
 
 // --- Storage Geometry ---
 // Note: Must match hardware SSD block registers in MyEmulator (constants.rs) & mkfs.py
+/** Size of one storage block in bytes. */
 export i32 BLOCK_SIZE   = 65536; // 64 KiB block transfers
+/** Number of blocks in the configured storage device. */
 export i32 BLOCK_COUNT  = 16384; // 16,384 blocks = 1 GiB total storage
+/** Payload capacity of a data block after its four-byte next-block link. */
 export i32 PAYLOAD      = 65532; // BLOCK_SIZE - 4 bytes for next-block pointer
 
 // --- Directory Table & Entry Limits ---
+/** Size in bytes of one fixed-width directory-table record. */
 export i32 ENTRY_SIZE        = 32;   // 32-byte fixed-size directory record
+/** Maximum filename storage in bytes, including the terminating NUL. */
 export i32 NAME_MAX          = 16;   // 15 ASCII characters + 1 null terminator
+/** Number of directory records that fit in one storage block. */
 export i32 ENTRIES_PER_BLOCK = 2048; // BLOCK_SIZE / ENTRY_SIZE
+/** Maximum number of file and directory records in the filesystem. */
 export i32 MAX_FILES         = 2048; // Maximum 2,048 files system-wide (fits in 1 block)
 
 // --- Disk Layout (Block Offsets) ---
+/** Block index of the filesystem superblock. */
 export i32 SB_BLOCK     = 0; // Superblock
+/** Block index of the fixed directory-entry table. */
 export i32 ENTRY_BLOCK  = 1; // File entry table (1 block)
+/** Block index of the block-allocation bitmap. */
 export i32 BITMAP_BLOCK = 2; // Block allocation bitmap (1 block)
+/** First block available for file and directory data. */
 export i32 DATA_START   = 3; // First data block
 
 // --- Inode & File Descriptor Limits ---
+/** Maximum number of filesystem entries cached in memory at once. */
 export i32 MINODE_CACHE_MAX = 16; // Maximum active in-memory cached inodes
+/** Maximum number of open file descriptors shared system-wide. */
 export i32 FD_MAX           = 8;  // Maximum simultaneous open descriptors system-wide

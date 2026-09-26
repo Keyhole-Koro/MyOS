@@ -1,6 +1,6 @@
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import fs from "../../src/fs/fs.mln";
-import { FsError } from "../../src/fs/fs.mln";
+import { FsError } from "../../../../contracts/io/fs.contract.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import { assert_eq } from "../../../../toolchain/MyStdLib/assert.mln";
@@ -44,12 +44,10 @@ i32 count_in(char *dir) {
     i32 start = 0;
     while (1) {
         Result<Option<i32>, FsError> res = fs.dir_next_at(dir, start, &name[0], 16);
-        i32 idx = -1;
-        case res of {
-            Ok(v) -> ({ idx = case v of { Some(i) -> i; None -> -1; }; });
+        i32 idx = case res of {
+            Ok(v) -> case v of { Some(i) -> i; None -> ({ break; }); };
             Err(_) -> ({ return -1; });
         };
-        if (idx < 0) { break; }
         n++;
         start = idx + 1;
     }
@@ -72,7 +70,9 @@ void filesystem_directories() {
         Ok(v) -> v;
         Err(_) -> ({ assert_eq<i32>(1, 0, "mkdir docs"); 0; });
     };
-    assert_eq<i32>(fs.is_dir(dir_idx) ? 1 : 0, 1, "docs is a directory");
+    Result<bool, FsError> is_directory = fs.is_dir(dir_idx);
+    bool directory_value = case is_directory of { Ok(value) -> value; Err(_) -> false; };
+    assert_eq<bool>(directory_value, true, "docs is a directory");
     assert_eq<i32>(count_in(""), root_before + 1, "docs appears in the root");
 
     Result<i32, FsError> created = fs.create("docs/note.txt");

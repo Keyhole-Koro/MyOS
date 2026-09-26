@@ -4,8 +4,9 @@ import mem from "../../../MyKernel/src/mm/mem.mln";
 import fs from "../../src/fs/fs.mln";
 import fs_config from "../../src/fs/fs_config.mln";
 import ssd from "../../src/fs/ssd.mln";
-import { FsError } from "../../src/fs/fs.mln";
+import { FsError, SeekWhence } from "../../../../contracts/io/fs.contract.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+
 
 i32 is_invalid_name(Result<i32, FsError>* result) {
     return case *result of {
@@ -92,10 +93,10 @@ void filesystem_error_contracts() {
     Result<i32, FsError> duplicate = fs.create("same");
     assert.assert_true(is_already_exists(&duplicate) == 1, "duplicate create is AlreadyExists");
 
-    Result<i32, FsError> bad_fd = fs.seek(-1, 0, fs.SEEK_SET);
+    Result<i32, FsError> bad_fd = fs.seek(-1, 0, SeekWhence::Set);
     assert.assert_true(is_bad_fd(&bad_fd, -1) == 1, "negative descriptor preserves BadFd payload");
 
-    Result<i32, FsError> serial_seek = fs.seek(1, 0, fs.SEEK_SET);
+    Result<i32, FsError> serial_seek = fs.seek(1, 0, SeekWhence::Set);
     assert.assert_true(is_wrong_type(&serial_seek, 1) == 1, "serial descriptor is WrongType for seek");
 
     Result<i32, FsError> bad_whence = fs.seek(fd, 0, 99);

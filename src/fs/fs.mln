@@ -13,6 +13,7 @@ import ssd from "ssd.mln";
 import { SsdError } from "ssd.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+import { FsError, SeekWhence } from "../../../../contracts/io/fs.contract.mln";
 
 // =========================================================================
 // MyFileSystem (MFS): Direct File Descriptor (mfd) Subsystem (No RAM Cache)
@@ -40,23 +41,14 @@ import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 //   Offset 24..27 : flags (i32: reserved)
 //   Offset 28..31 : reserved (i32)
 
-// Error type for the Result<T, FsError> and Result<_, FsError> operations below.
-// Unit variants can be returned directly with `return Err(FsError::Variant);`.
-// Payload variants are constructed first (`FsError cause = BadFd(fd); return Err(cause);`).
-// Operations without a return value use Result<_, FsError> and `return Ok(_);`.
-export enum FsError {
-    Disabled,        // filesystem not enabled (SSD absent / not formatted)
-    InvalidName,     // path cleans to an empty name
-    AlreadyExists,   // create(): a file with this name already exists
-    NoFreeSlot,      // entry table (create) or fd table (open) is full
-    AllocFailed,     // create()/write(): no free data block on the SSD
-    NotFound,        // open()/remove(): no file with this name
-    BadFd(i32),      // the fd that was out of range or not an open descriptor
-    WrongType(i32),  // the fd that was open, but not the kind this call needs
-    BadWhence(i32),  // seek(): the whence value, none of SEEK_SET/CUR/END
-    Closed(i32),     // the fd whose backing file entry was removed out from under it
-    InvalidSize(i32),// the size argument, <= 0
-    IoError,         // I/O error talking to SSD
+// Result operations use the shared semantic FsError contract.
+// Unit variants can be returned directly with `return Err(FsError::Variant);`;
+// payload variants retain their argument across hosted-process boundaries.
+
+/** Path parsing failures detected before filesystem lookup. */
+enum PathError {
+    EmptyName,
+    MissingDirectory,
 }
 
 
@@ -80,10 +72,14 @@ i32 g_enabled = 0;
 //    and loaded metadata (entry_idx, first_block, file_size).
 
 
-export i32 SEEK_SET = 0;
-export i32 SEEK_CUR = 1;
-export i32 SEEK_END = 2;
-
+/**
+ * Open-file cursor and cached on-disk metadata for one file descriptor.
+ * @property entry_idx Index of the file's record in the directory-entry table.
+ * @property offset Current byte offset within the file.
+ * @property first_block First data block in the file's linked block chain.
+ * @property file_size Current file size in bytes.
+ * @property flags File-entry flags copied from the on-disk record.
+ */
 export struct FileState {
     i32 entry_idx;
     i32 offset;
@@ -92,10 +88,15 @@ export struct FileState {
     i32 flags;
 };
 
+/**
+ * Access mode stored for a reserved serial-backed standard descriptor.
+ * @property flags Read/write mode flags for this serial descriptor.
+ */
 export struct SerialState {
     i32 flags;
 };
 
+/** Active descriptor variant: unused, serial-backed, or a disk file. */
 export enum OpenFile {
     Unused,
     Serial(SerialState),
@@ -338,7 +339,7 @@ Option<i32> find_entry_in(i32 parent_code, char* name) {
         i32 off = idx * fs_config.ENTRY_SIZE;
         if (buf_word(off + 16) != 0) { // first_block != 0 => in use
             if (buf_word(off + 28) == parent_code) {
-                if (name_match(off, name) != 0) {
+                if (name_match(off, name)) {
                     return Some(idx);
                 }
             }
@@ -349,11 +350,11 @@ Option<i32> find_entry_in(i32 parent_code, char* name) {
 }
 
 // Split `path` into the directory holding its last component (as a parent
-// code) and that component. Returns the parent code, or -1 when a
-// directory on the way is missing or not a directory; -2 for an empty name.
-i32 split_path(char* path, char* out_name) {
+// code) and that component. Empty names and missing/non-directory parents
+// are returned as typed path errors.
+Result<i32, PathError> split_path(char* path, char* out_name) {
     out_name[0] = 0;
-    if (path == 0) { return -2; }
+    if (path == 0) { return Err(PathError::EmptyName); }
     i32 i = 0;
     if (path[0] == '/') { i = 1; }
     i32 parent_code = 0;
@@ -366,33 +367,36 @@ i32 split_path(char* path, char* out_name) {
         }
         out_name[n] = 0;
         if (path[i] == 0) {
-            if (n == 0) { return -2; }
-            return parent_code;
+            if (n == 0) { return Err(PathError::EmptyName); }
+            return Ok(parent_code);
         }
         // A directory on the way; skip the slash(es).
         while (path[i] == '/') { i++; }
         if (path[i] == 0) {
             // Trailing slash: the directory itself is the target.
-            if (n == 0) { return parent_code; }
-            return parent_code;
+            return Ok(parent_code);
         }
         if (n == 0) { continue; }
         i32 dir = case find_entry_in(parent_code, out_name) of {
             Some(v) -> v;
-            None -> ({ return -1; });
+            None -> ({ return Err(PathError::MissingDirectory); });
         };
         i32 off = dir * fs_config.ENTRY_SIZE;
-        if ((buf_word(off + 24) & FLAG_DIR) == 0) { return -1; }
+        if ((buf_word(off + 24) & FLAG_DIR) == 0) {
+            return Err(PathError::MissingDirectory);
+        }
         parent_code = dir + 1;
     }
-    return -1;
+    return Err(PathError::MissingDirectory);
 }
 
 // The entry a path names, or None.
 Option<i32> find_entry_by_path(char* path) {
     char name[16];
-    i32 parent_code = split_path(path, &name[0]);
-    if (parent_code < 0) { return None; }
+    i32 parent_code = case split_path(path, &name[0]) of {
+        Ok(v) -> v;
+        Err(_) -> ({ return None; });
+    };
     return find_entry_in(parent_code, &name[0]);
 }
 
@@ -545,13 +549,12 @@ Result<i32, FsError> make_entry(char* path, i32 flags) {
     }
 
     char clean_name[16];
-    i32 parent_code = split_path(path, &clean_name[0]);
-    if (parent_code == -2 || clean_name[0] == 0) {
-        return Err(FsError::InvalidName);
-    }
-    if (parent_code < 0) {
-        return Err(FsError::NotFound);
-    }
+    i32 parent_code = case split_path(path, &clean_name[0]) of {
+        Ok(v) -> v;
+        Err(PathError::EmptyName) -> ({ return Err(FsError::InvalidName); });
+        Err(PathError::MissingDirectory) -> ({ return Err(FsError::NotFound); });
+    };
+    if (clean_name[0] == 0) { return Err(FsError::InvalidName); }
 
     case find_entry_in(parent_code, &clean_name[0]) of {
         Some(_) -> ({ return Err(FsError::AlreadyExists); });
@@ -590,6 +593,11 @@ Result<i32, FsError> make_entry(char* path, i32 flags) {
     return Ok(idx);
 }
 
+/**
+ * Creates an empty file and opens it for use.
+ * @param path NUL-terminated path for the new file.
+ * @return Open file descriptor on success, or an FsError if creation/opening fails.
+ */
 export Result<i32, FsError> create(char* path) {
     Result<i32, FsError> made = make_entry(path, 0);
     case made of {
@@ -603,37 +611,54 @@ export Result<i32, FsError> create(char* path) {
     return r;
 }
 
-// A new directory; its entry index.
+/**
+ * Creates a directory at the requested path.
+ * @param path NUL-terminated path for the new directory.
+ * @return Directory entry index on success, or an FsError if creation fails.
+ */
 export Result<i32, FsError> mkdir(char* path) {
     Result<i32, FsError> made = make_entry(path, FLAG_DIR);
     return made;
 }
 
-// Whether entry `idx` is a directory.
-export bool is_dir(i32 idx) {
+/**
+ * Tests whether a directory-table entry names a directory.
+ * Invalid, missing, disabled, and unreadable entries are reported as errors,
+ * not as a successful false result.
+ * @param idx File or directory entry index.
+ * @return Ok(true) for a directory, Ok(false) for a file, or Err(FsError).
+ */
+export Result<bool, FsError> is_dir(i32 idx) {
+    if (g_enabled == 0) { return Err(FsError::Disabled); }
+    if (idx < 0 || idx >= fs_config.MAX_FILES) {
+        FsError cause = InvalidEntry(idx);
+        return Err(cause);
+    }
     i32 off = case load_entry(idx) of {
         Ok(v) -> v;
-        Err(_) -> ({ return false; });
+        Err(e) -> ({ return Err(e); });
     };
-    if (buf_word(off + 16) == 0) { return false; }
-    return (buf_word(off + 24) & FLAG_DIR) != 0;
+    if (buf_word(off + 16) == 0) { return Err(FsError::NotFound); }
+    return Ok((buf_word(off + 24) & FLAG_DIR) != 0);
 }
 
 // The entry index of the directory `path` names (root: "/" or ""), as a
-// parent code for dir_next_in: 0 for the root, index + 1 otherwise; -1
-// when there is no such directory.
-i32 dir_code_of(char* path) {
-    if (path == 0) { return 0; }
+// parent code for dir_next_in: 0 for the root, index + 1 otherwise.
+Result<i32, FsError> dir_code_of(char* path) {
+    if (path == 0) { return Ok(0); }
     i32 i = 0;
     while (path[i] == '/') { i++; }
-    if (path[i] == 0) { return 0; }
+    if (path[i] == 0) { return Ok(0); }
     i32 idx = case find_entry_by_path(path) of {
         Some(v) -> v;
-        None -> ({ return -1; });
+        None -> ({ return Err(FsError::NotFound); });
     };
     i32 off = idx * fs_config.ENTRY_SIZE;
-    if ((buf_word(off + 24) & FLAG_DIR) == 0) { return -1; }
-    return idx + 1;
+    if ((buf_word(off + 24) & FLAG_DIR) == 0) {
+        FsError cause = WrongType(idx);
+        return Err(cause);
+    }
+    return Ok(idx + 1);
 }
 
 /**
@@ -650,7 +675,13 @@ export Result<i32, FsError> open(char* path) {
         Some(v) -> v;
         None -> ({ return Err(FsError::NotFound); });
     };
-    if (is_dir(idx)) {
+    Result<bool, FsError> directory = is_dir(idx);
+    bool is_directory = false;
+    case directory of {
+        Ok(value) -> ({ is_directory = value; });
+        Err(e) -> ({ return Err(e); });
+    };
+    if (is_directory) {
         FsError cause = WrongType(idx);
         return Err(cause);
     }
@@ -694,10 +725,10 @@ export void close(i32 fd) {
  * Sets the file position cursor for an open file descriptor.
  * @param fd File descriptor.
  * @param offset Byte offset relative to whence.
- * @param whence Origin (SEEK_SET = 0, SEEK_CUR = 1, SEEK_END = 2).
+ * @param whence Origin (SeekWhence::Set, SeekWhence::Cur, SeekWhence::End).
  * @return Ok(new_offset) with updated file cursor, or Err(FsError).
  */
-export Result<i32, FsError> seek(i32 fd, i32 offset, i32 whence) {
+export Result<i32, FsError> seek(i32 fd, i32 offset, SeekWhence whence) {
     if (fd < 0 || fd >= fs_config.FD_MAX) {
         FsError cause = BadFd(fd);
         return Err(cause);
@@ -714,11 +745,11 @@ export Result<i32, FsError> seek(i32 fd, i32 offset, i32 whence) {
         });
         File(f) -> ({
             i32 target = f.offset;
-            if (whence == SEEK_SET) {
+            if (whence == SeekWhence::Set) {
                 target = offset;
-            } else if (whence == SEEK_CUR) {
+            } else if (whence == SeekWhence::Cur) {
                 target = target + offset;
-            } else if (whence == SEEK_END) {
+            } else if (whence == SeekWhence::End) {
                 target = f.file_size + offset;
             } else {
                 FsError cause = BadWhence(whence);
@@ -760,15 +791,15 @@ export Result<i32, FsError> read(i32 fd, i32 buf, i32 size) {
             i32 count = 0;
             while (count < size) {
                 Option<i32> opt_c = serial.read_input();
-                i32 has_c = case opt_c of {
+                bool has_c = case opt_c of {
                     Some(c) -> ({
                         set_ram_byte(buf + count, c);
                         count++;
-                        1;
+                        true;
                     });
-                    None -> 0;
+                    None -> false;
                 };
-                if (has_c == 0) { break; }
+                if (!has_c) { break; }
             }
             return Ok(count);
         });
@@ -841,21 +872,21 @@ export Result<i32, FsError> read(i32 fd, i32 buf, i32 size) {
  * @param new_size New file size in bytes.
  * @return Number of bytes appended to the file.
  */
-i32 finish_write(i32 fd, i32 new_size) {
+Result<i32, FsError> finish_write(i32 fd, i32 new_size) {
     case g_fd_table[fd] of {
-        Unused -> ({ return 0; });
-        Serial(s) -> ({ return 0; });
+        Unused -> ({ return Err(FsError::WrongType(fd)); });
+        Serial(s) -> ({ return Err(FsError::WrongType(fd)); });
         File(f) -> ({
             i32 written = new_size - f.file_size;
             i32 idx = f.entry_idx;
             i32 off = case load_entry(idx) of {
                 Ok(v) -> v;
-                Err(_) -> ({ return 0; });
+                Err(e) -> ({ return Err(e); });
             };
             set_buf_word(off + 20, new_size);
             case ssd.write_block(entry_block(idx), g_buf) of {
                 Ok(_) -> _;
-                Err(_) -> ({ return 0; });
+                Err(_) -> ({ return Err(FsError::IoError); });
             };
             
             i32 i = 3;
@@ -871,10 +902,10 @@ i32 finish_write(i32 fd, i32 new_size) {
                 };
                 i++;
             }
-            return written;
+            return Ok(written);
         });
     };
-    return 0;
+    return Err(FsError::WrongType(fd));
 }
 
 /**
@@ -958,7 +989,8 @@ export Result<i32, FsError> write(i32 fd, i32 buf, i32 size) {
                             Ok(_) -> _;
                             Err(_) -> ({ return Err(FsError::IoError); });
                         };
-                        return Ok(finish_write(fd, file_size + written));
+                        Result<i32, FsError> completed = finish_write(fd, file_size + written);
+                        return completed;
                     }
                     i32 c = ram_byte(buf + written);
                     set_buf_byte(4 + in_block, c);
@@ -974,7 +1006,8 @@ export Result<i32, FsError> write(i32 fd, i32 buf, i32 size) {
                                 Ok(_) -> _;
                                 Err(_) -> ({ return Err(FsError::IoError); });
                             };
-                            return Ok(finish_write(fd, file_size + written));
+                            Result<i32, FsError> completed = finish_write(fd, file_size + written);
+                            return completed;
                         });
                     };
                     set_buf_word(0, nb);
@@ -996,7 +1029,8 @@ export Result<i32, FsError> write(i32 fd, i32 buf, i32 size) {
                     };
                 }
             }
-            return Ok(finish_write(fd, file_size + written));
+            Result<i32, FsError> completed = finish_write(fd, file_size + written);
+            return completed;
         });
     };
     FsError fallback = WrongType(fd);
@@ -1014,15 +1048,21 @@ export Result<_, FsError> remove(char* path) {
         None -> ({ return Err(FsError::NotFound); });
     };
     // A directory goes only when empty.
-    if (is_dir(idx)) {
+    Result<bool, FsError> directory = is_dir(idx);
+    bool is_directory = false;
+    case directory of {
+        Ok(value) -> ({ is_directory = value; });
+        Err(e) -> ({ return Err(e); });
+    };
+    if (is_directory) {
         char child[16];
         Result<Option<i32>, FsError> any = dir_next_in(idx + 1, 0, &child[0], 16);
-        i32 has_child = 0;
+        bool has_child = false;
         case any of {
-            Ok(v) -> ({ has_child = case v of { Some(_) -> 1; None -> 0; }; });
+            Ok(v) -> ({ has_child = case v of { Some(_) -> true; None -> false; }; });
             Err(e) -> ({ return Err(e); });
         };
-        if (has_child != 0) {
+        if (has_child) {
             FsError cause = WrongType(idx);
             return Err(cause);
         }
@@ -1110,12 +1150,20 @@ export void list() {
 // 8. Directory enumeration (MYOS-015: file manager)
 // =========================================================================
 
-// The entries of the directory `path` names ("" or "/" for the root),
-// from entry index `start`: Some(index) with the name copied into `out`,
-// None past the last.
+/**
+ * Returns the next entry in a directory and copies its name to the output buffer.
+ * Use the returned entry index plus one as `start` for the next call.
+ * @param path Directory path; an empty string or "/" selects the root.
+ * @param start Entry index at which to begin searching.
+ * @param out Destination buffer for the NUL-terminated entry name.
+ * @param cap Capacity of `out` in bytes, including space for the terminator.
+ * @return Ok(Some(index)) when found, Ok(None) at end, or Err(FsError).
+ */
 export Result<Option<i32>, FsError> dir_next_at(char* path, i32 start, char* out, i32 cap) {
-    i32 code = dir_code_of(path);
-    if (code < 0) { return Err(FsError::NotFound); }
+    i32 code = case dir_code_of(path) of {
+        Ok(v) -> v;
+        Err(e) -> ({ return Err(e); });
+    };
     Result<Option<i32>, FsError> r = dir_next_in(code, start, out, cap);
     return r;
 }
@@ -1151,16 +1199,18 @@ Result<Option<i32>, FsError> dir_next_in(i32 parent_code, i32 start, char* out, 
 /**
  * Returns the size in bytes of the file at entry index `idx`.
  * @param idx File entry table index.
- * @return File size in bytes, or 0 if entry is free/invalid.
+ * @return Ok(file size), or Err when the filesystem or entry is unavailable.
  */
-export i32 entry_size(i32 idx) {
-    if (g_enabled == 0) { return 0; }
-    if (idx < 0 || idx >= fs_config.MAX_FILES) { return 0; }
-    case ssd.read_block(fs_config.ENTRY_BLOCK, g_buf) of {
-        Ok(_) -> _;
-        Err(_) -> ({ return 0; });
+export Result<i32, FsError> entry_size(i32 idx) {
+    if (g_enabled == 0) { return Err(FsError::Disabled); }
+    if (idx < 0 || idx >= fs_config.MAX_FILES) {
+        FsError cause = InvalidEntry(idx);
+        return Err(cause);
+    }
+    i32 off = case load_entry(idx) of {
+        Ok(v) -> v;
+        Err(e) -> ({ return Err(e); });
     };
-    i32 off = idx * fs_config.ENTRY_SIZE;
-    if (buf_word(off + 16) == 0) { return 0; }
-    return buf_word(off + 20);
+    if (buf_word(off + 16) == 0) { return Err(FsError::NotFound); }
+    return Ok(buf_word(off + 20));
 }

@@ -1,7 +1,7 @@
 import assert from "../../../../toolchain/MyStdLib/assert.mln";
 import mock from "../../../../toolchain/MyLangTestKit/runtime/facade.mln";
 import fs from "../../src/fs/fs.mln";
-import { FsError } from "../../src/fs/fs.mln";
+import { FsError } from "../../../../contracts/io/fs.contract.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 
 // This has the same aggregate return type as fs.create. It proves that the

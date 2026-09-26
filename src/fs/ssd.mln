@@ -15,16 +15,19 @@ i32 SSD_BLOCK_ADDR  = 0x24000014; // W: block number
 i32 SSD_ADDR_ADDR   = 0x24000018; // W: RAM buffer address
 i32 SSD_STATUS_ADDR = 0x2400001C; // R: 0=idle, 1=busy, 2=done, 0xFF=error
 
+/** Hardware command values accepted by the SSD command register. */
 enum SsdCommand {
-    SSD_CMD_READ    = 1,
-    SSD_CMD_WRITE   = 2
+    SSD_CMD_READ,
+    SSD_CMD_WRITE
 }
 
+/** Non-error status values returned by the SSD status register. */
 enum SsdStatus {
-    SSD_STATUS_BUSY = 1,
-    SSD_STATUS_DONE = 2
+    SSD_STATUS_BUSY,
+    SSD_STATUS_DONE
 }
 
+/** Failure values returned when a storage-device transfer does not complete successfully. */
 export enum SsdError {
     DeviceError,
 }

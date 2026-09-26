@@ -1,12 +1,9 @@
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import fs from "../../src/fs/fs.mln";
-import { FsError } from "../../src/fs/fs.mln";
+import { FsError, SeekWhence } from "../../../../contracts/io/fs.contract.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { assert_eq } from "../../../../toolchain/MyStdLib/assert.mln";
 
-i32 SEEK_SET = 0;
-i32 SEEK_CUR = 1;
-i32 SEEK_END = 2;
 
 void set_byte(i32 addr, i32 value) {
     char *p = (char *)addr;
@@ -90,8 +87,8 @@ void minode_and_file_descriptors() {
     assert_eq<i32>(get_byte(rbuf1 + 0), 'A', "h1 byte 0");
     assert_eq<i32>(get_byte(rbuf1 + 3), 'D', "h1 byte 3");
 
-    // Seek h2 to offset 4 (SEEK_SET) and read 4 bytes -> "EFGH"
-    Result<i32, FsError> seek_res = fs.seek(h2, 4, SEEK_SET);
+    // Seek h2 to offset 4 (SeekWhence::Set) and read 4 bytes -> "EFGH"
+    Result<i32, FsError> seek_res = fs.seek(h2, 4, SeekWhence::Set);
     i32 seeked = case seek_res of { Ok(v) -> 1; Err(e) -> 0; };
     assert_eq<i32>(seeked, 1, "seek h2");
     i32 rbuf2 = heap.alloc(16);
@@ -132,6 +129,7 @@ void minode_and_file_descriptors() {
         Err(Closed(fd)) -> 2;
         Err(InvalidSize(s)) -> 2;
         Err(IoError) -> 2;
+        Err(InvalidEntry(entry)) -> 2;
     };
     assert_eq<i32>(h3_ok, 0, "removed file returns NotFound");
 
@@ -155,6 +153,7 @@ void minode_and_file_descriptors() {
         Err(BadWhence(w)) -> -2;
         Err(InvalidSize(s)) -> -2;
         Err(IoError) -> -2;
+        Err(InvalidEntry(entry)) -> -2;
     };
     assert_eq<i32>(closed_fd, h1, "closed descriptor reports its original fd");
 }
