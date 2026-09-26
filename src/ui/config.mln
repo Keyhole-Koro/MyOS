@@ -6,21 +6,31 @@ package ui_config;
 
 // --- Display Geometry ---
 // Default fallback geometry. Device geometry is reported by display registers.
+/** Fallback display width in logical pixels when no device geometry is available. */
 export i32 BASE_DISPLAY_WIDTH  = 1024;
+/** Fallback display height in logical pixels when no device geometry is available. */
 export i32 BASE_DISPLAY_HEIGHT = 768;
 
 // --- Window Manager & Interaction ---
+/** Width and height of the window resize grip in logical pixels. */
 export i32 GRIP_SIZE          = 16; // Logical pixel size for window resize grip
+/** Maximum number of DOM widgets tracked by keyboard focus management. */
 export i32 FOCUS_MAX          = 64; // Maximum focusable UI widgets
 
 // --- Rendering & Compositor Limits ---
+/** Maximum number of independent damaged screen rectangles retained per frame. */
 export i32 DAMAGE_MAX         = 8;  // Maximum damage rectangles tracked per frame
+/** Maximum nesting depth of the rendering clip/scissor stack. */
 export i32 CLIP_DEPTH         = 16; // Maximum clipping (scissor) stack depth
 
 // --- DOM Tree & Subsystem Limits ---
+/** Maximum number of concurrent DOM timers. */
 export i32 TIMER_MAX          = 16;   // Maximum concurrent registered DOM timers
+/** Storage size in bytes of one fixed-size DOM node record. */
 export i32 NODE_SIZE          = 96;   // Fixed byte size per DOM node record
+/** Maximum number of DOM node records in the node table. */
 export i32 NODE_TABLE_CAP     = 256;  // Maximum DOM nodes in table (g_node_table)
 
 // --- Application Editor Capacity ---
+/** Maximum text-buffer capacity used by editor and text-input controls. */
 export i32 EDITOR_CAP         = 4096; // Text editor / TextInput buffer capacity

@@ -60,14 +60,14 @@ export void run() {
         }
 
         if (len > 0) {
-            if (str.eq(&buf[0], "help") != 0) {
+            if (str.eq(&buf[0], "help")) {
                 debug.println("Commands:");
                 debug.println("  help  - Show this help");
                 debug.println("  ls    - List files");
                 debug.println("  hello - Print a greeting");
-            } else if (str.eq(&buf[0], "ls") != 0) {
+            } else if (str.eq(&buf[0], "ls")) {
                 fs.list();
-            } else if (str.eq(&buf[0], "hello") != 0) {
+            } else if (str.eq(&buf[0], "hello")) {
                 debug.println("Hello from MyOS Shell!");
             } else {
                 debug.print("Unknown command: ");

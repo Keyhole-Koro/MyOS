@@ -1,0 +1,89 @@
+/**
+ * Process-control syscall boundary.
+ *
+ * Exposes process lifecycle, console/TextArea binding, status query, and stdin
+ * feed operations to user-space processes via OS_CALL.
+ */
+package process_syscall;
+
+import { OsService, OsServiceError } from "../../../../contracts/myos/services.contract.mln";
+import {
+    ProcSpawnArgs, ProcExitedArgs, ProcReapArgs, ProcFeedArgs,
+    ProcBindArgs, ProcUnbindArgs
+} from "../../../../contracts/myos/process-args.contract.mln";
+import console from "console.mln";
+import user_memory from "../syscall/user_memory.mln";
+import { Result, result_take_ok } from "../../../../toolchain/MyStdLib/result.mln";
+import { SpawnError } from "../../../../contracts/process/spawn.contract.mln";
+import { ProcessControlError, ProcessExitStatus } from "../../../../contracts/process/control.contract.mln";
+
+char g_path[64];
+char g_line[128];
+
+/**
+ * Dispatches a process OS_CALL request and performs user-memory copies where needed.
+ *
+ * @param service Service code (PROC_SPAWN, PROC_BIND, PROC_UNBIND, PROC_EXITED, PROC_REAP, PROC_FEED).
+ * @param args Virtual address of argument structure in caller's memory.
+ * @return Ok(transport status), or Err(UnknownService).
+ */
+export Result<i32, OsServiceError> handle(i32 service, i32 args) {
+    if (service == OsService::PROC_SPAWN) {
+        ProcSpawnArgs<Result<i32, SpawnError>> request;
+        user_memory.copy_in(args, (char*)(&request), sizeof(request));
+        user_memory.copy_in_string((i32)request.path, &g_path[0], 64);
+        Result<i32, SpawnError> result = console.spawn_file(&g_path[0]);
+        i32 pid = 0;
+        if (request.stdout_node != 0 && result_take_ok<i32, SpawnError>(&result, &pid)) {
+            console.bind(pid, request.stdout_node);
+        }
+        user_memory.copy_out(
+            (i32)request.result_out,
+            (char*)(&result),
+            sizeof(Result<i32, SpawnError>)
+        );
+        return Ok(0);
+    }
+    if (service == OsService::PROC_BIND) {
+        ProcBindArgs request;
+        user_memory.copy_in(args, (char*)(&request), sizeof(request));
+        console.bind(request.pid, request.output_node);
+        return Ok(0);
+    }
+    if (service == OsService::PROC_UNBIND) {
+        ProcUnbindArgs request;
+        user_memory.copy_in(args, (char*)(&request), sizeof(request));
+        console.unbind(request.pid);
+        return Ok(0);
+    }
+    if (service == OsService::PROC_EXITED) {
+        ProcExitedArgs<Result<bool, ProcessControlError>> request;
+        user_memory.copy_in(args, (char*)(&request), sizeof(request));
+        Result<bool, ProcessControlError> result = console.has_exited(request.pid);
+        user_memory.copy_out(
+            (i32)request.result_out,
+            (char*)(&result),
+            sizeof(Result<bool, ProcessControlError>)
+        );
+        return Ok(0);
+    }
+    if (service == OsService::PROC_REAP) {
+        ProcReapArgs<Result<ProcessExitStatus, ProcessControlError>> request;
+        user_memory.copy_in(args, (char*)(&request), sizeof(request));
+        Result<ProcessExitStatus, ProcessControlError> result = console.reap(request.pid);
+        user_memory.copy_out(
+            (i32)request.result_out,
+            (char*)(&result),
+            sizeof(Result<ProcessExitStatus, ProcessControlError>)
+        );
+        return Ok(0);
+    }
+    if (service == OsService::PROC_FEED) {
+        ProcFeedArgs request;
+        user_memory.copy_in(args, (char*)(&request), sizeof(request));
+        user_memory.copy_in_string((i32)request.line, &g_line[0], 128);
+        console.feed_line(request.pid, &g_line[0]);
+        return Ok(0);
+    }
+    return Err(OsServiceError::UnknownService(service));
+}

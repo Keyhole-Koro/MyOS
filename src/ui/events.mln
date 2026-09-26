@@ -1,0 +1,33 @@
+package ui_event;
+
+// UI-domain events. The UI knows that an owned node was clicked or changed,
+// but does not know how an application process receives that notification.
+// The outer IPC endpoint installs the sink during boot.
+
+/** Event kinds emitted by UI-owned nodes before OS wire-protocol translation. */
+export enum UiEventKind {
+    NONE,
+    CLICK,
+    CHANGE,
+    ACTIVATE,
+    TIMER,
+}
+
+i32 g_sink = 0;
+
+/**
+ * Installs the callback that receives events produced by UI nodes.
+ * @param sink Callback with signature (owner, node_id, kind, argument), or 0 to disable delivery.
+ */
+export void set_sink(i32 sink) { g_sink = sink; }
+
+/**
+ * Sends a UI event to the currently installed event callback.
+ * @param owner Process ID that owns the target node.
+ * @param id DOM node ID that produced the event.
+ * @param kind UiEventKind value describing the event.
+ * @param arg Event-specific integer payload.
+ */
+export void emit(i32 owner, i32 id, i32 kind, i32 arg) {
+    if (g_sink != 0) { g_sink(owner, id, kind, arg); }
+}

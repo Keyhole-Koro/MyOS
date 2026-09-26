@@ -1,0 +1,301 @@
+/**
+ * The UI server's request-side handler of the UI protocol.
+ *
+ * Executes application UI requests against the desktop DOM.
+ * Automatically sets the DOM current owner to the requesting process so that
+ * any newly created nodes, windows, or dialogs belong to that application.
+ */
+package ui_protocol;
+
+import str from "../../../../toolchain/MyStdLib/str.mln";
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { UiError } from "../../../../contracts/ui/widget.contract.mln";
+import dom from "dom/dom.mln";
+import dom_widgets from "dom/dom_widgets.mln";
+import graphics from "graphics.mln";
+import irq from "../../../MyKernel/src/arch/irq.mln";
+import protocol_elements from "protocol_elements.mln";
+import { Request } from "../../../../contracts/myapp/message.contract.mln";
+import { UiOp } from "../../../../contracts/myapp/ui.contract.mln";
+
+/**
+ * Executes a single UI protocol request within the caller's owner scope.
+ *
+ * Temporarily switches the active DOM owner to `m->owner` during execution,
+ * ensuring proper resource ownership for windows and child elements.
+ *
+ * @param m Pointer to Request structure.
+ * @return Legacy scalar result for scalar operations; typed operations write
+ *         their Result through Request.result_out.
+ */
+export i32 handle(Request *m) {
+    i32 outer = dom.current_owner();
+    dom.set_current_owner(m->owner);
+    i32 r = run_request(m);
+    dom.set_current_owner(outer);
+    return r;
+}
+
+/**
+ * Dispatches an unpacked UI request to the corresponding internal handler.
+ *
+ * @param m Pointer to Request structure.
+ * @return Operation result code.
+ */
+i32 run_request(Request *m) {
+    i32 op = m->op;
+    i32 id = m->a0;
+    if (op == UiOp::SET_TEXT)       { set_text(id, m->s0); return 0; }
+    if (op == UiOp::TEXT_COPY)      { return text_copy(id, (char*)m->a1, m->a2); }
+    if (op == UiOp::IS_CHECKED)     { if (is_checked(id)) { return 1; } return 0; }
+    if (op == UiOp::SET_CHECKED)    { set_checked(id, m->a1); return 0; }
+    if (op == UiOp::INPUT_SET)      { input_set(id, m->s0); return 0; }
+    if (op == UiOp::AREA_APPEND)    { area_append(id, m->s0); return 0; }
+    if (op == UiOp::AREA_CLEAR)     { area_clear(id); return 0; }
+    if (op == UiOp::AREA_LINES)     { return area_lines(id); }
+    if (op == UiOp::LIST_SET_ITEMS) { list_set_items(id, m->s0); return 0; }
+    if (op == UiOp::LIST_COUNT)     { return list_count(id); }
+    if (op == UiOp::LIST_SELECTED) {
+        Result<Option<i32>, UiError> *out = (Result<Option<i32>, UiError>*)m->result_out;
+        *out = dom_widgets.list_selected(id);
+        return 0;
+    }
+    if (op == UiOp::LIST_ITEM) {
+        Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
+        *out = dom_widgets.list_item(id, m->a1, (char*)m->a2, m->a3);
+        return 0;
+    }
+    if (op == UiOp::FOCUS)          { focus(id); return 0; }
+    if (op == UiOp::FOCUS_WINDOW)   { focus_window(id); return 0; }
+    if (op == UiOp::CLOSE)          { close(id); return 0; }
+    if (op == UiOp::WINDOW_OF) {
+        Result<Option<i32>, UiError> *out = (Result<Option<i32>, UiError>*)m->result_out;
+        *out = window_of(id);
+        return 0;
+    }
+    if (op == UiOp::WINDOW_X) {
+        Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
+        *out = window_x(id);
+        return 0;
+    }
+    if (op == UiOp::WINDOW_Y) {
+        Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
+        *out = window_y(id);
+        return 0;
+    }
+    if (op == UiOp::SHOW)           { show(id); return 0; }
+    if (op == UiOp::TEST_ID)        { test_id(id, m->s0); return 0; }
+    if (op == UiOp::SEND_KEY)       { send_key(m->a0, m->a1, m->a2); return 0; }
+    if (op == UiOp::RGB)            { return rgb(m->a0, m->a1, m->a2); }
+    if (op >= UiOp::CREATE_WINDOW) {
+        if (op <= UiOp::APPEND_CHILD) {
+            Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
+            *out = protocol_elements.create(m);
+            return 0;
+        }
+    }
+    return 0;
+}
+
+// --- text -------------------------------------------------------------------------------------
+
+/**
+ * Sets the displayed text of a node.
+ *
+ * @param id UI node ID.
+ * @param s Text string to set.
+ */
+void set_text(i32 id, char *s) { dom.set_text_copy(id, s); }
+
+/**
+ * Copies a node's text content into the caller's buffer.
+ *
+ * @param id UI node ID.
+ * @param out Destination buffer.
+ * @param cap Maximum capacity of buffer in bytes (including null terminator).
+ * @return Number of bytes copied.
+ */
+i32 text_copy(i32 id, char *out, i32 cap) {
+    char *t = dom.text_of(id);
+    if (t == 0) { out[0] = (char)0; return 0; }
+    return str.ncopy(out, t, cap);
+}
+
+// --- widgets --------------------------------------------------------------------------------
+
+/**
+ * Checks whether a checkbox node is checked.
+ *
+ * @param id UI node ID.
+ * @return True if checked, false otherwise.
+ */
+bool is_checked(i32 id) { return dom.is_checked(id); }
+
+/**
+ * Sets the checked state of a checkbox node.
+ *
+ * @param id UI node ID.
+ * @param on 1 to check, 0 to uncheck.
+ */
+void set_checked(i32 id, i32 on) { dom.set_checked(id, on); }
+
+/**
+ * Sets the value of a single-line text input widget.
+ *
+ * @param id UI node ID.
+ * @param s Input text.
+ */
+void input_set(i32 id, char *s) { dom_widgets.set_input_text(id, s); }
+
+/**
+ * Appends text to a multi-line text area with IRQ protection.
+ *
+ * Temporarily disables interrupts to prevent race conditions with user-process
+ * stdout syscall writes into the same text area buffer.
+ *
+ * @param id UI node ID.
+ * @param s Text to append.
+ */
+void area_append(i32 id, char *s) {
+    i32 was = irq.save_disable();
+    dom_widgets.append_text(id, s);
+    irq.restore(was);
+}
+
+/**
+ * Clears all content from a multi-line text area.
+ *
+ * @param id UI node ID.
+ */
+void area_clear(i32 id) { dom_widgets.clear_text_area(id); }
+
+/**
+ * Returns the line count of a multi-line text area.
+ *
+ * @param id UI node ID.
+ * @return Number of lines.
+ */
+i32 area_lines(i32 id) { return dom_widgets.text_area_line_count(id); }
+
+/**
+ * Replaces the item list of a list widget with newline-separated strings.
+ *
+ * @param id UI node ID.
+ * @param items Newline-separated item string.
+ */
+void list_set_items(i32 id, char *items) { dom_widgets.list_set_items(id, items); }
+
+/**
+ * Returns the number of items in a list widget.
+ *
+ * @param id UI node ID.
+ * @return Item count.
+ */
+i32 list_count(i32 id) { return dom_widgets.list_count(id); }
+
+// --- focus and windows ------------------------------------------------------------------------
+
+/**
+ * Sets input focus to a specific control node.
+ *
+ * @param id UI node ID.
+ */
+void focus(i32 id) { dom_widgets.set_focus(id); }
+
+/**
+ * Sets focus to an entire window and activates it.
+ *
+ * @param win Window node ID.
+ */
+void focus_window(i32 win) { dom_widgets.focus_window(win); }
+
+/**
+ * Closes an application-opened window or dialog.
+ *
+ * Removes the node from the DOM and activates the topmost remaining window.
+ *
+ * @param win Window node ID.
+ */
+void close(i32 win) {
+    dom.remove_node(win);
+    dom_widgets.activate_topmost();
+}
+
+/**
+ * Resolves the enclosing window node ID for a given descendant control node.
+ *
+ * @param id UI node ID.
+ * @return Enclosing window node ID, or 0 if none found.
+ */
+Result<Option<i32>, UiError> window_of(i32 id) {
+    if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
+    i32 win = dom.window_of(id);
+    if (win == 0) { return Ok(None); }
+    return Ok(Some(win));
+}
+
+/**
+ * Returns the X position of a window in logical coordinates.
+ *
+ * @param win Window node ID.
+ * @return X coordinate adjusted for UI scaling.
+ */
+Result<i32, UiError> window_x(i32 win) {
+    if (!dom.node_exists(win)) { return Err(UiError::NodeNotFound(win)); }
+    if (dom.window_of(win) != win) { return Err(UiError::WrongNodeKind(win)); }
+    return Ok(dom.node_x(win) / dom.ui_scale());
+}
+
+/**
+ * Returns the Y position of a window in logical coordinates.
+ *
+ * @param win Window node ID.
+ * @return Y coordinate adjusted for UI scaling.
+ */
+Result<i32, UiError> window_y(i32 win) {
+    if (!dom.node_exists(win)) { return Err(UiError::NodeNotFound(win)); }
+    if (dom.window_of(win) != win) { return Err(UiError::WrongNodeKind(win)); }
+    return Ok(dom.node_y(win) / dom.ui_scale());
+}
+
+/**
+ * Mounts a window tree onto the desktop and focuses it.
+ *
+ * @param win Window node ID.
+ */
+void show(i32 win) {
+    case dom.append_child(dom.desktop_id(), win) of { Ok(_) -> _; Err(_) -> ({ return; }); };
+    dom_widgets.focus_window(win);
+}
+
+/**
+ * Assigns an automation test identifier to a node.
+ *
+ * @param id UI node ID.
+ * @param name Test identifier name.
+ */
+void test_id(i32 id, char *name) { dom.set_test_id(id, name); }
+
+// --- keys ---------------------------------------------------------------------------------------
+
+/**
+ * Dispatches a simulated key event to the focused widget.
+ *
+ * @param type Event type (1 = key down, 3 = character input).
+ * @param code Key code or character code.
+ * @param mods Active modifier keys (shift, ctrl, alt).
+ */
+void send_key(i32 type, i32 code, i32 mods) { dom_widgets.dispatch_key_event(type, code, mods); }
+
+// --- colours -----------------------------------------------------------------------------------
+
+/**
+ * Packs 8-bit RGB components into a 32-bit color value.
+ *
+ * @param r Red component (0..255).
+ * @param g Green component (0..255).
+ * @param b Blue component (0..255).
+ * @return 32-bit packed color value.
+ */
+i32 rgb(i32 r, i32 g, i32 b) { return graphics.rgb(r, g, b); }

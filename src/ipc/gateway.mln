@@ -1,0 +1,307 @@
+/**
+ * User/kernel boundary gateway for application request/event transport.
+ *
+ * Copies pointers, strings, and output buffers across page tables into kernel-owned
+ * memory. Ensures the service task sees only validated, kernel-resident data.
+ */
+package request_gateway;
+
+import mem from "../../../MyKernel/src/mm/mem.mln";
+import ipc from "../../../MyKernel/src/kernel/ipc.mln";
+import debug from "../../../MyKernel/src/debug/debug.mln";
+import str from "../../../../toolchain/MyStdLib/str.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+import user_memory from "../syscall/user_memory.mln";
+import request_channel from "channel.mln";
+import app_events from "events.mln";
+import { Request, RequestDomain, TransportSignal } from "../../../../contracts/myapp/message.contract.mln";
+import { UiOp } from "../../../../contracts/myapp/ui.contract.mln";
+import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+
+i32 PROCS = 16;
+i32 S0_CAP = 1024;
+i32 S1_CAP = 128;
+i32 OUT_CAP = 4096;
+i32 RESULT_CAP = 32;
+
+// Keep the transport state for one process together. The old parallel
+// arrays made it easy to update one table and forget its companion table.
+/**
+ * Per-process channels and kernel staging buffers for the request gateway.
+ * @property reply_ch IPC channel for replies sent to this process.
+ * @property event_ch IPC channel for events sent to this process.
+ * @property s0 Kernel copy of the first request string argument.
+ * @property s1 Kernel copy of the second request string argument.
+ * @property out Kernel staging buffer for request output bytes.
+ * @property out_user User-space address that receives staged output.
+ * @property out_cap Capacity of the output staging buffer in bytes.
+ * @property result Kernel address of the typed Result value returned to the user.
+ * @property result_user User-space address that receives the typed Result value.
+ * @property result_size Size in bytes of the staged typed Result value.
+ */
+struct GatewaySlot {
+    i32 reply_ch;
+    i32 event_ch;
+    i32 s0;
+    i32 s1;
+    i32 out;
+    i32 out_user;
+    i32 out_cap;
+    i32 result;
+    i32 result_user;
+    i32 result_size;
+};
+
+GatewaySlot gateway_slots[16];
+
+/**
+ * Maps a process ID to an internal slot index (0..15).
+ *
+ * @param pid Process ID (1..16).
+ * @return Slot index (0..15), or None for an invalid process ID.
+ */
+Option<i32> slot(i32 pid) {
+    if (pid <= 0 || pid > PROCS) { return None; }
+    return Some(pid - 1);
+}
+
+/**
+ * Allocates kernel heap memory or panics if allocation fails.
+ *
+ * @param n Number of bytes to allocate.
+ * @return Memory address of allocated block.
+ */
+i32 alloc_or_panic(i32 n) {
+    i32 p = heap.alloc(n);
+    if (p == 0) { debug.panic("request_gateway: out of memory"); }
+    return p;
+}
+
+/**
+ * Reads the fixed-width Request wire record and decodes it into named fields.
+ * @param user_request User-space address of a 13-word Request.
+ * @param request Destination Request structure.
+ */
+void read_user_request(i32 user_request, Request *request) {
+    i32 words[13];
+    i32 word = 0;
+    while (word < request_channel.REQUEST_WORD_COUNT) {
+        words[word] = mem.read_word(user_request + word * 4);
+        word++;
+    }
+    request_channel.decode_request_words(&words[0], request);
+}
+
+/**
+ * Copies user-owned string arguments into this process's kernel staging buffers.
+ * @param slot_index Gateway slot belonging to the caller.
+ * @param request Request whose s0/s1 currently contain user addresses.
+ */
+void copy_request_strings(i32 slot_index, Request *request) {
+    char *s0 = (char*)gateway_slots[slot_index].s0;
+    char *s1 = (char*)gateway_slots[slot_index].s1;
+    user_memory.copy_in_string((i32)request->s0, s0, S0_CAP);
+    user_memory.copy_in_string((i32)request->s1, s1, S1_CAP);
+    request->s0 = s0;
+    request->s1 = s1;
+}
+
+/**
+ * Redirects operation output pointers to kernel staging buffers and remembers
+ * the original user destinations for the reply path.
+ * @param slot_index Gateway slot belonging to the caller.
+ * @param request Request to update before it crosses into the server task.
+ */
+void stage_request_outputs(i32 slot_index, Request *request) {
+    gateway_slots[slot_index].out_user = 0;
+    gateway_slots[slot_index].result_user = 0;
+
+    if (request->domain == RequestDomain::UI && request->op == UiOp::TEXT_COPY) {
+        gateway_slots[slot_index].out_user = request->a1;
+        gateway_slots[slot_index].out_cap = request->a2;
+        if (gateway_slots[slot_index].out_cap > OUT_CAP) {
+            gateway_slots[slot_index].out_cap = OUT_CAP;
+        }
+        request->a1 = gateway_slots[slot_index].out;
+        request->a2 = gateway_slots[slot_index].out_cap;
+    } else if (request->domain == RequestDomain::UI && request->op == UiOp::LIST_ITEM) {
+        gateway_slots[slot_index].out_user = request->a2;
+        gateway_slots[slot_index].out_cap = request->a3;
+        if (gateway_slots[slot_index].out_cap < 0) {
+            gateway_slots[slot_index].out_cap = 0;
+        }
+        if (gateway_slots[slot_index].out_cap > OUT_CAP) {
+            gateway_slots[slot_index].out_cap = OUT_CAP;
+        }
+        char *out = (char*)gateway_slots[slot_index].out;
+        out[0] = (char)0;
+        request->a2 = gateway_slots[slot_index].out;
+        request->a3 = gateway_slots[slot_index].out_cap;
+    }
+
+    if (request->result_out != 0 && request->result_size > 0) {
+        gateway_slots[slot_index].result_user = request->result_out;
+        gateway_slots[slot_index].result_size = request->result_size;
+        if (gateway_slots[slot_index].result_size < 0) {
+            gateway_slots[slot_index].result_size = 0;
+        }
+        if (gateway_slots[slot_index].result_size > RESULT_CAP) {
+            gateway_slots[slot_index].result_size = RESULT_CAP;
+        }
+        request->result_out = gateway_slots[slot_index].result;
+        request->result_size = gateway_slots[slot_index].result_size;
+    }
+}
+
+/**
+ * Lazily initializes per-process IPC reply/event channels and staging buffers.
+ *
+ * Binds the newly created event channel to the process in `app_events`.
+ *
+ * @param pid Process ID.
+ * @return `true` when the PID has a gateway slot; `false` when it is invalid.
+ */
+bool ready(i32 pid) {
+    i32 i = case slot(pid) of {
+        Some(v) -> v;
+        None -> ({ return false; });
+    };
+    if (gateway_slots[i].reply_ch == 0) {
+        Option<i32> reply_channel = ipc.create();
+        Option<i32> event_channel = ipc.create();
+        case reply_channel of {
+            Some(value) -> ({ gateway_slots[i].reply_ch = value; });
+            None -> ({ debug.panic("request_gateway: IPC reply channel table exhausted"); });
+        };
+        case event_channel of {
+            Some(value) -> ({ gateway_slots[i].event_ch = value; });
+            None -> ({ debug.panic("request_gateway: IPC event channel table exhausted"); });
+        };
+        gateway_slots[i].s0 = alloc_or_panic(S0_CAP);
+        gateway_slots[i].s1 = alloc_or_panic(S1_CAP);
+        gateway_slots[i].out = alloc_or_panic(OUT_CAP);
+        gateway_slots[i].result = alloc_or_panic(RESULT_CAP);
+        app_events.bind(pid, gateway_slots[i].event_ch);
+    }
+    return true;
+}
+
+/**
+ * Handles OS_CALL REQUEST: validates and submits a UI/App request from a user process.
+ *
+ * Decodes the user Request into its named fields, copies string arguments to
+ * kernel staging buffers, redirects output buffers, and queues it to
+ * `request_channel`.
+ *
+ * @param pid Process ID of the caller.
+ * @param user_request Virtual address of user Request structure (13 words).
+ * @return true when queued; false when the shared request channel is full.
+ *         A full channel is transient and may be retried. The PID comes from
+ *         the current-process syscall context and must be valid.
+ */
+export bool request(i32 pid, i32 user_request) {
+    if (!ready(pid)) { debug.panic("request_gateway: invalid caller PID"); }
+    i32 i = case slot(pid) of {
+        Some(v) -> v;
+        None -> ({ debug.panic("request_gateway: PID slot disappeared"); return false; });
+    };
+    Request request;
+    read_user_request(user_request, &request);
+    request.owner = pid;
+    copy_request_strings(i, &request);
+    stage_request_outputs(i, &request);
+    if (!request_channel.submit(&request, gateway_slots[i].reply_ch)) {
+        scheduler.arm_notification(TransportSignal::REQUEST_SPACE);
+        return false;
+    }
+    scheduler.disarm_notification(TransportSignal::REQUEST_SPACE);
+    return true;
+}
+
+/**
+ * Handles OS_CALL REPLY: retrieves a response to a previously submitted request.
+ *
+ * Checks the process's reply channel, copies any buffered string results back
+ * to user memory space, and writes the return scalar into `user_out`.
+ *
+ * @param pid Process ID.
+ * @param user_out Destination virtual address in user space for the return scalar.
+ * @return 1 if a reply was received, 0 if no reply is available.
+ */
+export bool reply(i32 pid, i32 user_out) {
+    i32 i = case slot(pid) of {
+        Some(v) -> v;
+        None -> ({ debug.panic("request_gateway: invalid reply PID"); return false; });
+    };
+    if (gateway_slots[i].reply_ch == 0) { return false; }
+    i32 r[24];
+    if (!ipc.recv(gateway_slots[i].reply_ch, &r[0])) {
+        scheduler.arm_notification(TransportSignal::REPLY);
+        return false;
+    }
+    scheduler.disarm_notification(TransportSignal::REPLY);
+    if (gateway_slots[i].out_user != 0) {
+        i32 n = str.len((char*)gateway_slots[i].out) + 1;
+        if (n > gateway_slots[i].out_cap) { n = gateway_slots[i].out_cap; }
+        user_memory.copy_out(gateway_slots[i].out_user, (char*)gateway_slots[i].out, n);
+        gateway_slots[i].out_user = 0;
+    }
+    if (gateway_slots[i].result_user != 0 && gateway_slots[i].result_size > 0) {
+        user_memory.copy_out(gateway_slots[i].result_user, (char*)gateway_slots[i].result, gateway_slots[i].result_size);
+    }
+    gateway_slots[i].result_user = 0;
+    gateway_slots[i].result_size = 0;
+    mem.write_word(user_out, r[0]);
+    return true;
+}
+
+/**
+ * Handles OS_CALL POLL: polls for queued events addressed to this process.
+ *
+ * If an event is pending, populates the user Event struct and copies any
+ * associated text payload into user memory.
+ *
+ * @param pid Process ID.
+ * @param user_event Pointer to an Event with its own inline text storage.
+ * @return 1 if an event was dequeued, 0 if no events are pending.
+ */
+export bool poll(i32 pid, i32 user_event) {
+    if (!ready(pid)) { debug.panic("request_gateway: invalid poll PID"); }
+    i32 i = case slot(pid) of {
+        Some(v) -> v;
+        None -> ({ debug.panic("request_gateway: PID slot disappeared"); return false; });
+    };
+    i32 w[24];
+    if (!ipc.recv(gateway_slots[i].event_ch, &w[0])) {
+        scheduler.arm_notification(TransportSignal::EVENT);
+        return false;
+    }
+    scheduler.disarm_notification(TransportSignal::EVENT);
+    mem.write_word(user_event, w[0]);
+    mem.write_word(user_event + 4, w[1]);
+    mem.write_word(user_event + 8, w[2]);
+    mem.write_word(user_event + 12, w[3]);
+    mem.write_word(user_event + 16, w[4]);
+    // Words 5..20 contain the event-owned, NUL-terminated 64-byte payload.
+    user_memory.copy_out(user_event + 20, (char*)(&w[5]), 64);
+    mem.write_byte(user_event + 83, 0);
+    return true;
+}
+
+/**
+ * Cleans up transport channels and staging buffers when a process exits.
+ *
+ * Drains any pending replies and events for the specified process.
+ *
+ * @param pid Process ID of terminated process.
+ */
+export void process_gone(i32 pid) {
+    i32 i = case slot(pid) of { Some(v) -> v; None -> ({ return; }); };
+    i32 w[24];
+    if (gateway_slots[i].reply_ch != 0) { while (ipc.recv(gateway_slots[i].reply_ch, &w[0])) { } }
+    if (gateway_slots[i].event_ch != 0) { while (ipc.recv(gateway_slots[i].event_ch, &w[0])) { } }
+    gateway_slots[i].out_user = 0;
+    gateway_slots[i].result_user = 0;
+    gateway_slots[i].result_size = 0;
+}

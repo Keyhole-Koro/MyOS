@@ -1,0 +1,66 @@
+/**
+ * Memory copy helpers between user process address space and kernel address space.
+ *
+ * Provides safe buffer copy routines across active user-process page tables.
+ * Syscall endpoints must copy data into kernel buffers before passing it across tasks.
+ */
+package user_memory;
+
+import mem from "../../../MyKernel/src/mm/mem.mln";
+
+/**
+ * Copies a fixed-size argument record from the active user address space.
+ * Pointer values inside the record remain user addresses and require their
+ * own copy_in_string()/copy_out() operation before dereferencing.
+ *
+ * @param user Source address in user virtual memory.
+ * @param dst Destination buffer in kernel memory.
+ * @param n Number of bytes to copy.
+ */
+export void copy_in(i32 user, char *dst, i32 n) {
+    i32 k = 0;
+    while (k < n) {
+        dst[k] = (char)mem.read_byte(user + k);
+        k++;
+    }
+}
+
+/**
+ * Copies a null-terminated string from the user process address space into a kernel buffer.
+ *
+ * Reads byte-by-byte from `user` virtual address until a null terminator (0) is
+ * encountered or `cap - 1` bytes have been copied. Ensures null-termination of `dst`.
+ *
+ * @param user Virtual memory address of the string in user process space (0 for no-op).
+ * @param dst Destination buffer in kernel address space.
+ * @param cap Maximum capacity of destination buffer in bytes (including null terminator).
+ */
+export void copy_in_string(i32 user, char *dst, i32 cap) {
+    i32 k = 0;
+    if (user != 0) {
+        while (k + 1 < cap) {
+            i32 c = mem.read_byte(user + k);
+            if (c == 0) { break; }
+            dst[k] = (char)c;
+            k++;
+        }
+    }
+    dst[k] = (char)0;
+}
+
+/**
+ * Copies a byte buffer from kernel address space to user process address space.
+ *
+ * Writes `n` bytes from `src` into the user virtual address `user`.
+ *
+ * @param user Destination virtual memory address in user process space.
+ * @param src Source buffer in kernel address space.
+ * @param n Number of bytes to copy.
+ */
+export void copy_out(i32 user, char *src, i32 n) {
+    i32 k = 0;
+    while (k < n) {
+        mem.write_byte(user + k, src[k] & 0xFF);
+        k++;
+    }
+}

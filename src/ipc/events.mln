@@ -1,0 +1,168 @@
+/**
+ * The server's outbound side of the UI protocol: events for applications.
+ *
+ * Dispatches UI events (Event contract) to per-process kernel IPC channels.
+ * The DOM, widgets, and shell push events here on the UI server task whenever
+ * an owned node is modified or triggered; applications retrieve them via POLL.
+ *
+ * An owner is a PID. Events for an owner without an active channel binding are dropped.
+ */
+package app_events;
+
+import ipc from "../../../MyKernel/src/kernel/ipc.mln";
+import { EventKind, TransportSignal } from "../../../../contracts/myapp/message.contract.mln";
+import ui_event from "../ui/events.mln";
+import { UiEventKind } from "../ui/events.mln";
+import { ShellEventKind } from "../shell/events.mln";
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+import str from "../../../../toolchain/MyStdLib/str.mln";
+import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+
+i32 OWNERS_MAX = 16;
+/**
+ * Event-routing binding between one app process and its kernel IPC channel.
+ * @property owner PID using this binding; zero means the record is free.
+ * @property channel Channel ID to which this owner's outgoing events are queued.
+ */
+struct EventBinding {
+    i32 owner;        // pid, 0 = free
+    i32 channel;
+};
+EventBinding event_bindings[16];
+
+/**
+ * Queues a UI-domain event for its owning application.
+ *
+ * The UI and wire enums use the same values for these event kinds. Keep them
+ * aligned; NONE and all other values are dropped.
+ *
+ * @param owner Process ID owning the target UI node.
+ * @param id UI node ID.
+ * @param kind Event type (UiEventKind enum).
+ * @param arg Event-specific numeric argument (e.g. checkbox state, timer ticks).
+ */
+void forward_ui_event(i32 owner, i32 id, i32 kind, i32 arg) {
+    if (kind == UiEventKind::CLICK ||
+        kind == UiEventKind::CHANGE ||
+        kind == UiEventKind::ACTIVATE ||
+        kind == UiEventKind::TIMER) {
+        push(owner, id, kind, arg, 0, (char*)0);
+    }
+}
+
+/**
+ * Initializes the application event dispatcher.
+ *
+ * Registers `forward_ui_event` as the sink for low-level UI events.
+ */
+export void init() { ui_event.set_sink(forward_ui_event); }
+
+/**
+ * Adapts and enqueues a shell policy notification to the application wire contract.
+ *
+ * Translates ShellEventKind (KEY, CLOSE, OPEN) into wire EventKind and pushes
+ * to the channel. Their numeric values differ because the wire enum also
+ * contains UI events, so each shell variant must be mapped explicitly.
+ *
+ * @param owner Process ID owning the target window.
+ * @param id Window or control node ID.
+ * @param kind Shell event type (ShellEventKind enum).
+ * @param arg Numeric argument (e.g. key code or modifiers).
+ * @param token Correlation token or modifier flags.
+ * @param text Optional text payload (e.g. file path on OPEN).
+ */
+export void push_shell(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) {
+    if (kind == ShellEventKind::KEY) {
+        push(owner, id, EventKind::KEY, arg, token, text);
+    } else if (kind == ShellEventKind::CLOSE) {
+        push(owner, id, EventKind::CLOSE, arg, token, text);
+    } else if (kind == ShellEventKind::OPEN) {
+        push(owner, id, EventKind::OPEN, arg, token, text);
+    }
+}
+
+/**
+ * Binds an IPC channel to a process owner ID for routing outbound events.
+ *
+ * @param owner Process ID.
+ * @param channel Kernel IPC channel handle.
+ */
+export void bind(i32 owner, i32 channel) {
+    i32 free = -1;
+    i32 i = 0;
+    while (i < OWNERS_MAX) {
+        if (event_bindings[i].owner == owner) { event_bindings[i].channel = channel; return; }
+        if (event_bindings[i].owner == 0 && free < 0) { free = i; }
+        i++;
+    }
+    if (free < 0) { return; }
+    event_bindings[free].owner = owner;
+    event_bindings[free].channel = channel;
+}
+
+/**
+ * Retrieves the bound IPC channel handle for a given process owner.
+ *
+ * @param owner Process ID.
+ * @return Some(channel) if bound, or None if this owner has no event channel.
+ */
+Option<i32> channel_of(i32 owner) {
+    i32 i = 0;
+    while (i < OWNERS_MAX) {
+        if (event_bindings[i].owner == owner) { return Some(event_bindings[i].channel); }
+        i++;
+    }
+    return None;
+}
+
+i32 dropped_count = 0;   // events lost to a full channel (an app that stopped polling)
+
+/**
+ * Returns the total number of events dropped due to full IPC channels.
+ *
+ * @return Cumulative dropped event count.
+ */
+export i32 dropped() { return dropped_count; }
+
+/**
+ * Queues an event for a process owner.
+ *
+ * For TIMER events, suppresses redundant ticks if an earlier tick is already pending
+ * in the channel (ensuring slow apps do not build up unbound backlogs).
+ * Drops and counts the event if the destination channel ring is full.
+ *
+ * @param owner Process ID of recipient.
+ * @param id UI node ID.
+ * @param kind EventKind enum.
+ * @param arg Numeric argument.
+ * @param token Correlation token or secondary argument.
+ * @param text Optional text copied into the queued event's inline payload.
+ */
+export void push(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) {
+    Option<i32> bound = channel_of(owner);
+    i32 ch = case bound of {
+        Some(value) -> value;
+        None -> ({ return; });
+    };
+    if (kind == EventKind::TIMER) {
+        if (ipc.has(ch, id, kind)) { return; }
+    }
+    i32 w[24];
+    w[0] = owner;
+    w[1] = id;
+    w[2] = kind;
+    w[3] = arg;
+    w[4] = token;
+    char *inline_text = (char*)(&w[5]);
+    i32 text_i = 0;
+    while (text_i < 64) {
+        inline_text[text_i] = (char)0;
+        text_i++;
+    }
+    if (text != 0) { str.ncopy(inline_text, text, 64); }
+    if (!ipc.send(ch, &w[0])) {
+        dropped_count++;
+        return;
+    }
+    scheduler.notify_pid(owner, TransportSignal::EVENT);
+}

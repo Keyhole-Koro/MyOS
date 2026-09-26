@@ -1,0 +1,162 @@
+/**
+ * The UI server's inbound side of the UI protocol.
+ *
+ * Receives application requests across a shared kernel IPC channel.
+ * Each request carries the sender's reply channel handle; `serve()` processes
+ * all queued requests on the compositor task pass and sends replies back.
+ * Requests enter this channel via the OS_CALL gateway, which copies user-space
+ * memory into kernel-owned buffers.
+ */
+package request_channel;
+
+import ipc from "../../../MyKernel/src/kernel/ipc.mln";
+import { Request, RequestDomain, TransportSignal } from "../../../../contracts/myapp/message.contract.mln";
+import ui_protocol from "../ui/protocol.mln";
+import shell_protocol from "../shell/protocol.mln";
+import app_events from "events.mln";
+import debug from "../../../MyKernel/src/debug/debug.mln";
+import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+
+i32 g_requests = 0;   // apps -> server
+
+// Request's wire order is intentionally isolated here. Gateway and protocol
+// code should use the named Request fields, not positional word offsets.
+enum RequestWord {
+    DOMAIN = 0,
+    OP,
+    OWNER,
+    A0,
+    A1,
+    A2,
+    A3,
+    A4,
+    A5,
+    S0,
+    S1,
+    RESULT_OUT,
+    RESULT_SIZE,
+    REPLY_CHANNEL,
+}
+
+export i32 REQUEST_WORD_COUNT = RequestWord::REPLY_CHANNEL;
+
+/**
+ * Clears a full IPC message before populating its meaningful words.
+ * @param words Destination message buffer with at least MSG_WORDS entries.
+ */
+void clear_message(i32 *words) {
+    i32 word = 0;
+    while (word < ipc.MSG_WORDS) {
+        words[word] = 0;
+        word++;
+    }
+}
+
+/**
+ * Decodes the 13-word Request prefix of an IPC message into named fields.
+ * @param words Source wire words.
+ * @param request Destination Request structure.
+ */
+export void decode_request_words(i32 *words, Request *request) {
+    request->domain = words[RequestWord::DOMAIN];
+    request->op = words[RequestWord::OP];
+    request->owner = words[RequestWord::OWNER];
+    request->a0 = words[RequestWord::A0];
+    request->a1 = words[RequestWord::A1];
+    request->a2 = words[RequestWord::A2];
+    request->a3 = words[RequestWord::A3];
+    request->a4 = words[RequestWord::A4];
+    request->a5 = words[RequestWord::A5];
+    request->s0 = (char*)words[RequestWord::S0];
+    request->s1 = (char*)words[RequestWord::S1];
+    request->result_out = words[RequestWord::RESULT_OUT];
+    request->result_size = words[RequestWord::RESULT_SIZE];
+}
+
+/**
+ * Encodes a Request into the fixed-size IPC message and appends its reply channel.
+ * @param request Request to encode.
+ * @param reply_channel Channel that should receive the response.
+ * @param words Destination message buffer with at least MSG_WORDS entries.
+ */
+void encode_request_words(Request *request, i32 reply_channel, i32 *words) {
+    clear_message(words);
+    words[RequestWord::DOMAIN] = request->domain;
+    words[RequestWord::OP] = request->op;
+    words[RequestWord::OWNER] = request->owner;
+    words[RequestWord::A0] = request->a0;
+    words[RequestWord::A1] = request->a1;
+    words[RequestWord::A2] = request->a2;
+    words[RequestWord::A3] = request->a3;
+    words[RequestWord::A4] = request->a4;
+    words[RequestWord::A5] = request->a5;
+    words[RequestWord::S0] = (i32)request->s0;
+    words[RequestWord::S1] = (i32)request->s1;
+    words[RequestWord::RESULT_OUT] = request->result_out;
+    words[RequestWord::RESULT_SIZE] = request->result_size;
+    words[RequestWord::REPLY_CHANNEL] = reply_channel;
+}
+
+/**
+ * Initializes the server-side request receiving channel and outbound event system.
+ */
+export void init() {
+    if (g_requests == 0) {
+        Option<i32> channel = ipc.create();
+        case channel of {
+            Some(value) -> ({ g_requests = value; });
+            None -> ({ debug.panic("request_channel: IPC channel table exhausted"); });
+        };
+    }
+    app_events.init();
+}
+
+/**
+ * Enqueues a request into the global UI server request channel.
+ *
+ * Encodes a Request into the 24-word IPC message. Words 0..12 carry the
+ * Request and word 13 carries the caller's reply channel handle.
+ *
+ * @param request Request to enqueue.
+ * @param reply_channel Channel that should receive the response.
+ * @return True if successfully queued, false if request ring is full.
+ */
+export bool submit(Request *request, i32 reply_channel) {
+    i32 words[24];
+    encode_request_words(request, reply_channel, &words[0]);
+    return ipc.send(g_requests, &words[0]);
+}
+
+/**
+ * Processes and answers all queued UI and application requests.
+ *
+ * Runs on the UI server / compositor task. Dispatches requests to `ui_protocol`
+ * or `shell_protocol` based on `domain`, and sends the result word to the caller's
+ * reply channel.
+ *
+ * @return Number of requests processed and answered during this pass.
+ */
+export i32 serve() {
+    i32 served = 0;
+    i32 w[24];
+    while (ipc.recv(g_requests, &w[0])) {
+        // A successful receive makes at least one slot available. Failed
+        // submitters armed this bit before returning to user space.
+        scheduler.notify_armed(TransportSignal::REQUEST_SPACE);
+        served++;
+        Request m;
+        decode_request_words(&w[0], &m);
+        i32 r[24];
+        clear_message(&r[0]);
+        r[0] = 0;
+        if (m.domain == RequestDomain::UI) { r[0] = ui_protocol.handle(&m); }
+        if (m.domain == RequestDomain::APP) { r[0] = shell_protocol.handle(&m); }
+        i32 reply_channel = w[RequestWord::REPLY_CHANNEL];
+        if (!ipc.send(reply_channel, &r[0])) {
+            debug.panic("request_channel: reply channel full");
+        }
+        scheduler.notify_pid(m.owner, TransportSignal::REPLY);
+    }
+    return served;
+}

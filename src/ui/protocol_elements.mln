@@ -1,0 +1,134 @@
+/**
+ * UI server node creation factory for the UI protocol.
+ *
+ * Handles CREATE_* requests, creating nodes in the DOM owned by the requesting instance.
+ * String arguments from applications are kernel copies that last only for the request,
+ * so persistent strings (node text, name, test ID) are allocated onto the kernel heap.
+ *
+ * Applications retain event handlers (onClick, onChange) in their own processes;
+ * the DOM emits events back through the transport system rather than holding function pointers.
+ */
+package protocol_elements;
+
+import dom from "dom/dom.mln";
+import dom_widgets from "dom/dom_widgets.mln";
+import dom_elements from "dom/dom_elements.mln";
+import heap from "../../../MyKernel/src/mm/heap.mln";
+import { NodeStyle } from "dom/dom.mln";
+import { Request } from "../../../../contracts/myapp/message.contract.mln";
+import { UiOp } from "../../../../contracts/myapp/ui.contract.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { UiError } from "../../../../contracts/ui/widget.contract.mln";
+
+/**
+ * Assigns an automation test identifier to a node if specified.
+ *
+ * @param id UI node ID.
+ * @param testId Test identifier string (empty string for none).
+ */
+Result<_, UiError> tag(i32 id, char *testId) {
+    if (testId[0] != 0) {
+        char *copy = case dup_string(testId) of {
+            Ok(value) -> value;
+            Err(e) -> ({ return Err(e); });
+        };
+        dom.set_test_id(id, copy);
+    }
+    return Ok(_);
+}
+
+/**
+ * Duplicates a null-terminated string into newly allocated kernel heap memory.
+ *
+ * @param s Source string.
+ * @return Pointer to newly allocated string copy on heap, or empty string on allocation failure.
+ */
+Result<char*, UiError> dup_string(char *s) {
+    i32 len = 0;
+    while (s[len] != 0) { len++; }
+    char *copy = (char*)heap.alloc(len + 1);
+    if (copy == 0) { return Err(UiError::AllocationFailed(len + 1)); }
+    i32 k = 0;
+    while (k <= len) { copy[k] = s[k]; k++; }
+    return Ok(copy);
+}
+
+/**
+ * Creates a DOM node or widget based on a UI protocol creation request.
+ *
+ * Supports creating windows, buttons, primary buttons, text, labels, boxes,
+ * panels, columns, rows, text inputs, checkboxes, separators, timers, text areas,
+ * and lists, as well as appending child nodes.
+ *
+ * @param m Pointer to Request descriptor with layout bounds, styles, and text.
+ * @return Ok(node ID), or a typed UiError preserving the failure cause.
+ */
+export Result<i32, UiError> create(Request *m) {
+    i32 op = m->op;
+    i32 x = m->a0;
+    i32 y = m->a1;
+    i32 w = m->a2;
+    i32 h = m->a3;
+    i32 id = 0;
+    if (op == UiOp::APPEND_CHILD) {
+        return case dom.append_child(m->a0, m->a1) of {
+            Ok(_) -> Ok(0);
+            Err(e) -> Err(e);
+        };
+    }
+    if (op == UiOp::CREATE_TIMER) {
+        return dom_widgets.create_timer(m->a0, 0); // ticks become TIMER events (owner != 0)
+    }
+    char *s0 = case dup_string(m->s0) of {
+        Ok(copy) -> copy;
+        Err(e) -> ({ return Err(e); });
+    }; // the node's name is kept for its lifetime
+    if (op == UiOp::CREATE_WINDOW) {
+        id = case dom_elements.create_window(s0, x, y, w, h) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        dom.set_text_copy(id, m->s0);
+    } else if (op == UiOp::CREATE_BUTTON) {
+        id = case dom_elements.create_button(s0, x, y, w, h) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        dom.set_text_copy(id, m->s0);
+    } else if (op == UiOp::CREATE_PRIMARY_BUTTON) {
+        id = case dom_elements.create_button(s0, x, y, w, h) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        dom.set_text_copy(id, m->s0);
+        dom.set_style(id, NodeStyle::PRIMARY);
+    } else if (op == UiOp::CREATE_TEXT) {
+        id = case dom_elements.create_text(s0, x, y) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        dom.set_text_copy(id, m->s0);
+    } else if (op == UiOp::CREATE_LABEL) {
+        id = case dom_elements.create_text(s0, x, y) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        dom.set_text_copy(id, m->s0);
+        if (m->a3) { dom.set_style(id, NodeStyle::BOLD); }
+        dom.set_color(id, m->a2);
+    } else if (op == UiOp::CREATE_BOX) {
+        id = case dom_elements.create_box(x, y, w, h, m->a4, m->a5) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+    } else if (op == UiOp::CREATE_PANEL) {
+        id = case dom_elements.create_panel(x, y, w, h, m->a4) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+    } else if (op == UiOp::CREATE_COLUMN) {
+        id = case dom_elements.create_column(x, y, w, h, m->a4, m->a5) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+    } else if (op == UiOp::CREATE_ROW) {
+        id = case dom_elements.create_row(x, y, w, h, m->a4, m->a5) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+    } else if (op == UiOp::CREATE_TEXT_INPUT) {
+        id = case dom_elements.create_text_input(s0, x, y, w, h, m->a4) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+    } else if (op == UiOp::CREATE_CHECKBOX) {
+        id = case dom_elements.create_checkbox(s0, x, y, m->a2) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        dom.set_text_copy(id, m->s0);
+        dom.set_hit_testable(id, 1); // toggles on click even with no handler
+    } else if (op == UiOp::CREATE_SEPARATOR) {
+        id = case dom_elements.create_separator(x, y, w) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+    } else if (op == UiOp::CREATE_TEXT_AREA) {
+        id = case dom_elements.create_text_area(s0, x, y, w, h, m->a4, m->a5) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+    } else if (op == UiOp::CREATE_LIST) {
+        id = case dom_elements.create_list(s0, x, y, w, h, m->a4) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        dom.set_hit_testable(id, 1); // rows select on click even with no handler
+    } else {
+        heap.free((i32)s0);
+        return Err(UiError::UnknownOperation(op));
+    }
+    case tag(id, m->s1) of {
+        Ok(_) -> _;
+        Err(e) -> ({ dom.remove_node(id); return Err(e); });
+    };
+    return Ok(id);
+}

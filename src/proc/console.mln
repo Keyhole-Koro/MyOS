@@ -1,18 +1,19 @@
 package console;
 
-import debug from "../../../MyKernel/src/debug/debug.mln";
 import serial from "../../../MyKernel/src/io/serial.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import mem from "../../../MyKernel/src/mm/mem.mln";
 import syscall from "../../../MyKernel/src/kernel/syscall.mln";
+import debug from "../../../MyKernel/src/debug/debug.mln";
 import loader from "../../../MyKernel/src/kernel/loader.mln";
 import process from "../../../MyKernel/src/kernel/process.mln";
 import { ProcessState, ProcessError } from "../../../MyKernel/src/kernel/process.mln";
-import { LoaderError } from "../../../MyKernel/src/kernel/loader.mln";
-import { MmuError } from "../../../MyKernel/src/mm/mmu.mln";
-import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { LoaderError } from "../../../../contracts/process/loader.contract.mln";
+import { Result, result_take_ok } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
-import { FsError } from "../fs/fs.mln";
+import { SpawnError, SpawnFsOperation, SpawnFilesystemError, SpawnReadMismatch } from "../../../../contracts/process/spawn.contract.mln";
+import { ProcessControlError, ProcessExitStatus } from "../../../../contracts/process/control.contract.mln";
+import { FsError, SeekWhence } from "../../../../contracts/io/fs.contract.mln";
 import fs from "../fs/fs.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
 import dom_widgets from "../ui/dom/dom_widgets.mln";
@@ -33,13 +34,24 @@ import dom from "../ui/dom/dom.mln";
 i32 SLOTS = 8;
 i32 STDIN_CAP = 256;
 
-i32 g_pid[8];        // 0 = free slot
-i32 g_output[8];     // TextArea node id receiving stdout
-i32 g_stdin[8];      // heap ring buffer of STDIN_CAP bytes
-i32 g_in_head[8];
-i32 g_in_tail[8];
+/**
+ * Standard-I/O routing state associated with one user process.
+ * @property pid Bound process ID; zero means this console slot is unused.
+ * @property output DOM TextArea node receiving bytes written to stdout/stderr.
+ * @property stdin Heap buffer holding queued input characters.
+ * @property in_head Index of the next queued input byte to read.
+ * @property in_tail Index where the next input byte will be appended.
+ */
+struct ConsoleSlot {
+    i32 pid;          // 0 = free slot
+    i32 output;       // TextArea node id receiving stdout
+    i32 stdin;        // heap ring buffer of STDIN_CAP bytes
+    i32 in_head;
+    i32 in_tail;
+};
+ConsoleSlot consoles[8];
 
-i32 g_ready = 0;
+i32 ready = 0;
 
 /**
  * Looks up the console slot index for a given process ID.
@@ -50,7 +62,7 @@ Option<i32> slot_of(i32 pid) {
     if (pid <= 0) { return None; }
     i32 i = 0;
     while (i < SLOTS) {
-        if (g_pid[i] == pid) { return Some(i); }
+        if (consoles[i].pid == pid) { return Some(i); }
         i++;
     }
     return None;
@@ -60,22 +72,22 @@ Option<i32> slot_of(i32 pid) {
  * Attaches a process's stdio to a DOM TextArea node.
  * @param pid Target process ID.
  * @param output_id DOM node ID of the TextArea for stdout.
- * @return 1 on success, 0 if all console slots are in use.
+ * @return `true` when bound, or `false` if all console slots are in use.
  */
-export i32 bind(i32 pid, i32 output_id) {
+export bool bind(i32 pid, i32 output_id) {
     i32 i = 0;
     while (i < SLOTS) {
-        if (g_pid[i] == 0) {
-            g_pid[i] = pid;
-            g_output[i] = output_id;
-            if (g_stdin[i] == 0) { g_stdin[i] = heap.alloc(STDIN_CAP); }
-            g_in_head[i] = 0;
-            g_in_tail[i] = 0;
-            return 1;
+        if (consoles[i].pid == 0) {
+            consoles[i].pid = pid;
+            consoles[i].output = output_id;
+            if (consoles[i].stdin == 0) { consoles[i].stdin = heap.alloc(STDIN_CAP); }
+            consoles[i].in_head = 0;
+            consoles[i].in_tail = 0;
+            return true;
         }
         i++;
     }
-    return 0;
+    return false;
 }
 
 /**
@@ -85,8 +97,8 @@ export i32 bind(i32 pid, i32 output_id) {
 export void unbind(i32 pid) {
     case slot_of(pid) of {
         Some(i) -> ({
-            g_pid[i] = 0;
-            g_output[i] = 0;
+            consoles[i].pid = 0;
+            consoles[i].output = 0;
         });
         None -> _;
     };
@@ -95,13 +107,15 @@ export void unbind(i32 pid) {
 /**
  * Looks up the TextArea DOM node ID associated with a process's stdout.
  * @param pid Process ID.
- * @return DOM node ID, or 0 if unattached.
+ * @return `Some(node_id)` when attached, or `None` when unattached.
  */
-export i32 output_of(i32 pid) {
-    return case slot_of(pid) of {
-        Some(i) -> g_output[i];
-        None -> 0;
+export Option<i32> output_of(i32 pid) {
+    Option<i32> output = None;
+    case slot_of(pid) of {
+        Some(i) -> ({ output = Some(consoles[i].output); });
+        None -> _;
     };
+    return output;
 }
 
 /**
@@ -114,15 +128,15 @@ export void feed_line(i32 pid, char *line) {
         Some(v) -> v;
         None -> ({ return; });
     };
-    i32 base = g_stdin[i];
+    i32 base = consoles[i].stdin;
     i32 k = 0;
     while (1) {
         i32 c = 10;
         if (line[k] != 0) { c = (i32)line[k] & 0xFF; }
-        i32 next = (g_in_tail[i] + 1) % STDIN_CAP;
-        if (next == g_in_head[i]) { return; } // full
-        mem.write_byte(base + g_in_tail[i], c);
-        g_in_tail[i] = next;
+        i32 next = (consoles[i].in_tail + 1) % STDIN_CAP;
+        if (next == consoles[i].in_head) { return; } // full
+        mem.write_byte(base + consoles[i].in_tail, c);
+        consoles[i].in_tail = next;
         if (line[k] == 0) { return; }
         k++;
     }
@@ -138,8 +152,14 @@ export void feed_line(i32 pid, char *line) {
  * @return Number of bytes written.
  */
 i32 on_write(i32 pid, i32 buf, i32 count) {
-    i32 out = output_of(pid);
-    if (out == 0) {
+    Option<i32> output = output_of(pid);
+    i32 out = 0;
+    bool has_output = false;
+    case output of {
+        Some(node) -> ({ out = node; has_output = true; });
+        None -> _;
+    };
+    if (!has_output) {
         // No console: fall back to the serial log so nothing is lost.
         i32 k = 0;
         while (k < count) {
@@ -165,12 +185,12 @@ i32 on_read(i32 pid, i32 buf, i32 count) {
         Some(v) -> v;
         None -> ({ return 0; });
     };
-    i32 base = g_stdin[i];
+    i32 base = consoles[i].stdin;
     i32 got = 0;
     while (got < count) {
-        if (g_in_head[i] == g_in_tail[i]) { break; }
-        i32 c = mem.read_byte(base + g_in_head[i]);
-        g_in_head[i] = (g_in_head[i] + 1) % STDIN_CAP;
+        if (consoles[i].in_head == consoles[i].in_tail) { break; }
+        i32 c = mem.read_byte(base + consoles[i].in_head);
+        consoles[i].in_head = (consoles[i].in_head + 1) % STDIN_CAP;
         mem.write_byte(buf + got, c);
         got++;
     }
@@ -180,65 +200,113 @@ i32 on_read(i32 pid, i32 buf, i32 count) {
 /**
  * Loads an executable file from the filesystem and starts it as a new process.
  * @param path Pointer to null-terminated file path.
- * @return PID of spawned process on success, or 0 on failure.
+ * @return Ok(PID) on success, or Err(SpawnError) when the executable cannot
+ *         be opened, loaded, or scheduled.
  */
-char g_spawn_path[80];
+char spawn_path[80];
 
 // The file for an executable name: a path as given, or a bare name looked
 // up in /bin then /apps (the search path).
-i32 open_executable(char *path) {
+Result<Option<i32>, SpawnError> try_open(char *path) {
+    Result<i32, FsError> opened = fs.open(path);
+    return case opened of {
+        Ok(fd) -> Ok(Some(fd));
+        Err(NotFound) -> Ok(None);
+        Err(e) -> Err(SpawnError::Filesystem(SpawnFilesystemError {
+            operation: SpawnFsOperation::Open,
+            cause: e,
+        }));
+    };
+}
+
+Result<i32, SpawnError> open_executable(char *path) {
     i32 has_slash = 0;
     i32 i = 0;
     while (path[i] != 0) { if (path[i] == '/') { has_slash = 1; } i++; }
     if (has_slash == 0) {
-        i32 k = strbuf.reset(&g_spawn_path[0]);
-        k = strbuf.append(&g_spawn_path[0], 80, k, "bin/");
-        k = strbuf.append(&g_spawn_path[0], 80, k, path);
-        i32 fd = case fs.open(&g_spawn_path[0]) of { Ok(v) -> v; Err(_) -> -1; };
-        if (fd >= 0) { return fd; }
-        k = strbuf.reset(&g_spawn_path[0]);
-        k = strbuf.append(&g_spawn_path[0], 80, k, "apps/");
-        k = strbuf.append(&g_spawn_path[0], 80, k, path);
-        fd = case fs.open(&g_spawn_path[0]) of { Ok(v) -> v; Err(_) -> -1; };
-        if (fd >= 0) { return fd; }
+        i32 k = strbuf.reset(&spawn_path[0]);
+        k = strbuf.append(&spawn_path[0], 80, k, "bin/");
+        k = strbuf.append(&spawn_path[0], 80, k, path);
+        Option<i32> bin = try_open(&spawn_path[0])?;
+        case bin of { Some(fd) -> ({ return Ok(fd); }); None -> _; };
+        k = strbuf.reset(&spawn_path[0]);
+        k = strbuf.append(&spawn_path[0], 80, k, "apps/");
+        k = strbuf.append(&spawn_path[0], 80, k, path);
+        Option<i32> apps = try_open(&spawn_path[0])?;
+        case apps of { Some(fd) -> ({ return Ok(fd); }); None -> _; };
     }
-    return case fs.open(path) of { Ok(v) -> v; Err(_) -> -1; };
+    Option<i32> direct = try_open(path)?;
+    case direct of { Some(fd) -> ({ return Ok(fd); }); None -> _; };
+    return Err(SpawnError::NotFound);
 }
 
-export i32 spawn_file(char *path) {
-    i32 fd = open_executable(path);
-    if (fd < 0) { return 0; }
-    i32 size = case fs.seek(fd, 0, 2) of {
+/**
+ * Opens an executable image, loads it as a user process, and releases the image buffer.
+ * @param path NUL-terminated path searched as supplied, under bin/, and under apps/.
+ * @return Ok(pid) when the process starts, or Err(SpawnError) with the launch failure.
+ */
+export Result<i32, SpawnError> spawn_file(char *path) {
+    i32 fd = open_executable(path)?;
+    i32 size = case fs.seek(fd, 0, SeekWhence::End) of {
         Ok(v) -> v;
-        Err(e) -> ({ fs.close(fd); return 0; });
+        Err(e) -> ({
+            fs.close(fd);
+            return Err(SpawnError::Filesystem(SpawnFilesystemError {
+                operation: SpawnFsOperation::Measure,
+                cause: e,
+            }));
+        });
     };
-    if (size <= 0) { fs.close(fd); return 0; }
-    case fs.seek(fd, 0, 0) of { Ok(_) -> _; Err(_) -> _; };
+    if (size <= 0) { fs.close(fd); return Err(SpawnError::EmptyExecutable); }
+    case fs.seek(fd, 0, SeekWhence::Set) of {
+        Ok(_) -> _;
+        Err(e) -> ({
+            fs.close(fd);
+            return Err(SpawnError::Filesystem(SpawnFilesystemError {
+                operation: SpawnFsOperation::Rewind,
+                cause: e,
+            }));
+        });
+    };
     i32 buf = heap.alloc(size);
-    if (buf == 0) { fs.close(fd); return 0; }
+    if (buf == 0) {
+        fs.close(fd);
+        return Err(SpawnError::BufferAllocationFailed(size));
+    }
     i32 got = case fs.read(fd, buf, size) of {
         Ok(v) -> v;
-        Err(e) -> 0;
+        Err(e) -> ({
+            fs.close(fd);
+            heap.free(buf);
+            return Err(SpawnError::Filesystem(SpawnFilesystemError {
+                operation: SpawnFsOperation::Read,
+                cause: e,
+            }));
+        });
     };
     fs.close(fd);
     if (got != size) {
         heap.free(buf);
-        return 0;
+        return Err(SpawnError::ShortRead(SpawnReadMismatch {
+            expected: size,
+            actual: got,
+        }));
     }
-    i32 pid = case loader.spawn_from_buffer(buf, size) of {
+    Result<i32, LoaderError> spawned = loader.spawn_from_buffer(buf, size);
+    i32 pid = case spawned of {
         Ok(p) -> p;
-        Err(e) -> ({ debug.println("console: loader rejected the image"); 0; });
+        Err(e) -> ({ heap.free(buf); return Err(SpawnError::Loader(e)); });
     };
     heap.free(buf); // the loader copied the segments into fresh frames
-    return pid;
+    return Ok(pid);
 }
 
 /**
- * Syscall handler for SYS_SPAWN: spawns a process from a user-space path and binds it to the parent console.
+ * SYS_SPAWN hook: writes a typed launch result and binds successful children to the parent console.
  * @param user_path Virtual memory address of null-terminated path string in user space.
- * @return Spawned process ID on success, or negative error code.
+ * @param result_out Kernel address of Result<i32, SpawnError> output.
  */
-i32 on_spawn(i32 user_path) {
+void on_spawn(i32 user_path, Result<i32, SpawnError> *result_out) {
     char path[32];
     i32 k = 0;
     while (k < 31) {
@@ -248,59 +316,79 @@ i32 on_spawn(i32 user_path) {
         k++;
     }
     path[31] = (char)0;
-    i32 parent = case process.get_current_pid() of {
-        Some(v) -> v;
-        None -> 0;
-    };
-    i32 pid = spawn_file(&path[0]);
-    if (pid > 0) {
-        i32 out = output_of(parent);
-        if (out != 0) { bind(pid, out); }
+    Result<i32, SpawnError> result = spawn_file(&path[0]);
+    i32 pid = 0;
+    if (result_take_ok<i32, SpawnError>(&result, &pid)) {
+        i32 parent = case process.get_current_pid() of {
+            Some(value) -> value;
+            None -> ({ debug.panic("SYS_SPAWN hook called without a current process"); });
+        };
+        Option<i32> output = output_of(parent);
+        case output of {
+            Some(node) -> ({ bind(pid, node); });
+            None -> _;
+        };
     }
-    return pid;
+    *result_out = result;
 }
 
 /**
  * Checks whether a process has terminated.
  * @param pid Process ID.
- * @return True if process has exited (or does not exist), false if still running.
+ * @return Ok(true) if exited, Ok(false) if live, or Err(InvalidPid).
  */
-export bool has_exited(i32 pid) {
+export Result<bool, ProcessControlError> has_exited(i32 pid) {
     Option<ProcessState> state = process.get_state(pid);
-    return case state of {
-        Some(s) -> case s of { Zombie(_) -> true; _ -> false; };
-        None -> true;
+    Result<bool, ProcessControlError> result;
+    case state of {
+        Some(s) -> ({
+            bool exited = case s of { Zombie(_) -> true; _ -> false; };
+            result = Ok(exited);
+        });
+        None -> ({ result = Err(ProcessControlError::InvalidPid(pid)); });
     };
+    return result;
 }
 
 /**
- * Reaps an exited Zombie process, retrieves its exit code, and frees its slot.
+ * Reaps an exited Zombie process, retrieves its typed exit status, and frees its slot.
  * @param pid Process ID.
- * @return Process exit code.
+ * @return Ok(exit_status), Err(NotExited), or Err(InvalidPid).
  */
-export i32 reap(i32 pid) {
-    i32 code = case process.get_exit_code(pid) of {
-        Some(v) -> v;
-        None -> 0;
+export Result<ProcessExitStatus, ProcessControlError> reap(i32 pid) {
+    Option<ProcessState> state = process.get_state(pid);
+    Result<ProcessExitStatus, ProcessControlError> result;
+    case state of {
+        Some(s) -> ({
+            case s of {
+                Zombie(status) -> ({
+                    Result<_, ProcessError> freed = process.free_proc(pid);
+                    case freed of {
+                        Ok(_) -> ({ unbind(pid); result = Ok(status); });
+                        Err(_) -> ({ result = Err(ProcessControlError::InvalidPid(pid)); });
+                    };
+                });
+                _ -> ({ result = Err(ProcessControlError::NotExited(pid)); });
+            };
+        });
+        None -> ({ result = Err(ProcessControlError::InvalidPid(pid)); });
     };
-    case process.free_proc(pid) of { Ok(_) -> _; Err(_) -> _; };
-    unbind(pid);
-    return code;
+    return result;
 }
 
 /**
  * Initializes console subsystem and registers console and spawn hooks with the kernel.
  */
 export void init() {
-    if (g_ready != 0) { return; }
+    if (ready) { return; }
     i32 i = 0;
     while (i < SLOTS) {
-        g_pid[i] = 0;
-        g_output[i] = 0;
-        g_stdin[i] = 0;
+        consoles[i].pid = 0;
+        consoles[i].output = 0;
+        consoles[i].stdin = 0;
         i++;
     }
     syscall.set_console(on_write, on_read);
     syscall.set_spawn_handler(on_spawn);
-    g_ready = 1;
+    ready = 1;
 }

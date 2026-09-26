@@ -1,0 +1,80 @@
+/**
+ * Single registration point and dispatcher for OS_CALL system calls.
+ *
+ * Domain syscall endpoints and the UI request gateway handle user-memory
+ * copying before invoking MyOS implementations.
+ */
+package os_call_router;
+
+import syscall from "../../../MyKernel/src/kernel/syscall.mln";
+import debug from "../../../MyKernel/src/debug/debug.mln";
+import { OsService, OsServiceError } from "../../../../contracts/myos/services.contract.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import user_memory from "user_memory.mln";
+import request_gateway from "../ipc/gateway.mln";
+import fs_syscall from "../fs/syscall.mln";
+import process_syscall from "../proc/syscall.mln";
+import app_events from "../ipc/events.mln";
+import app from "../shell/app.mln";
+
+char g_log_line[128];
+
+/**
+ * Dispatches an OS_CALL request to the corresponding boundary endpoint.
+ *
+ * Routes IPC requests, filesystem calls, process lifecycle calls, and debug
+ * logging based on the service identifier.
+ *
+ * @param pid Process ID of the caller.
+ * @param service Service code identifying the requested operation (OsService enum).
+ * @param args Virtual address of argument struct or scalar argument in caller's memory space.
+ * @return Ok(service status/result), or Err(UnknownService).
+ */
+Result<i32, OsServiceError> handle(i32 pid, i32 service, i32 args) {
+    if (service == OsService::REQUEST) {
+        if (request_gateway.request(pid, args)) { return Ok(1); }
+        return Ok(0);
+    }
+    if (service == OsService::REPLY) {
+        if (request_gateway.reply(pid, args)) { return Ok(1); }
+        return Ok(0);
+    }
+    if (service == OsService::POLL) {
+        if (request_gateway.poll(pid, args)) { return Ok(1); }
+        return Ok(0);
+    }
+    if (service >= OsService::FS_OPEN && service <= OsService::FS_IS_DIR) {
+        return fs_syscall.handle(service, args);
+    }
+    if (service >= OsService::PROC_SPAWN && service <= OsService::PROC_FEED) {
+        return process_syscall.handle(service, args);
+    }
+    if (service == OsService::LOG) {
+        user_memory.copy_in_string(args, &g_log_line[0], 128);
+        debug.printf("[pid %d] %s\n", pid, (i32)(&g_log_line[0]));
+        return Ok(0);
+    }
+    return Err(OsServiceError::UnknownService(service));
+}
+
+// The kernel callback and user-facing OS_CALL use a raw i32 ABI. Keep the
+// negative unknown-service encoding at this single transport edge.
+i32 handle_raw(i32 pid, i32 service, i32 args) {
+    Result<i32, OsServiceError> result = handle(pid, service, args);
+    return case result of {
+        Ok(value) -> value;
+        Err(_) -> -1;
+    };
+}
+
+/**
+ * Initializes the OS service router.
+ *
+ * Sets up shell event and process cleanup sinks, and registers `handle_raw` as
+ * the OS_CALL handler with the kernel syscall subsystem.
+ */
+export void init() {
+    app.set_event_sink(app_events.push_shell);
+    app.set_process_gone_sink(request_gateway.process_gone);
+    syscall.set_os_handler(handle_raw);
+}

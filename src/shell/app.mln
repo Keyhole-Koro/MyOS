@@ -11,15 +11,15 @@ import compositor from "../ui/compositor.mln";
 import graphics from "../ui/graphics.mln";
 import annotations from "../../../../toolchain/MyStdLib/meta/annotations.mln";
 import { Annotations } from "../../../../toolchain/MyStdLib/meta/annotations.mln";
-import ui_events from "../ui/ui_events.mln";
 import fs from "../fs/fs.mln";
-import { FsError } from "../fs/fs.mln";
+import { FsError } from "../../../../contracts/io/fs.contract.mln";
+import { SpawnError } from "../../../../contracts/process/spawn.contract.mln";
+import { ProcessControlError, ProcessExitStatus } from "../../../../contracts/process/control.contract.mln";
 import console from "../proc/console.mln";
-import os_calls from "../proc/os_calls.mln";
 import mbin from "../../../../toolchain/MyStdLib/format/mbin.mln";
-import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { Result, result_take_ok } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
-import { UiEventKind } from "../../../MyAppFramework/src/protocol/ui.mln";
+import { ShellEventKind } from "events.mln";
 
 // The shell: the registry of installed apps and the instances running on
 // the desktop. This is the OS side of the application framework -- apps
@@ -35,8 +35,8 @@ import { UiEventKind } from "../../../MyAppFramework/src/protocol/ui.mln";
 // when the process starts and asks the shell only for what crosses the
 // boundary: a timer node, a key claim.
 //
-// An instance is a process. The shell talks to it only through UI protocol
-// events (ui_events): KEY when a claimed shortcut is pressed, OPEN with a
+// An instance is a process. The shell publishes events through its event
+// sink: KEY when a claimed shortcut is pressed, OPEN with a
 // path, CLOSE when the user closes its window; the instance answers CLOSE
 // with an EXIT request and ends, and the shell then frees what it owned
 // and reaps it. The instance's window comes back as a MAIN_WINDOW request.
@@ -51,241 +51,412 @@ import { UiEventKind } from "../../../MyAppFramework/src/protocol/ui.mln";
 
 i32 APPS_MAX = 16;
 
-i32 g_path[16];                // char*: the executable on disk
-i32 g_type[16];                // char*: "Counter", the @app row's receiver type
-i32 g_single[16];
-i32 g_name[16];                // char*: launcher label
-i32 g_opens[16];               // 1 if the type has an @open method
-i32 g_app_count = 0;
+/**
+ * Metadata read from an installed executable's @app annotation.
+ * @property path NUL-terminated executable path copied into the shell's stable string storage.
+ * @property type Application receiver type recorded in the @app annotation.
+ * @property single Nonzero when launch requests should reuse an existing instance.
+ * @property name Launcher label; falls back to type when the annotation omits a name.
+ * @property opens Nonzero when this application declares an @open handler.
+ */
+struct AppRecord {
+    i32 path;                   // char*: the executable on disk
+    i32 type;                   // char*: "Counter", the @app row's receiver type
+    i32 single;
+    i32 name;                   // char*: launcher label
+    i32 opens;                  // 1 if the type has an @open method
+};
+AppRecord registry[16];
+i32 registry_count = 0;
+
+// Outbound ports installed by boundary endpoints. The shell owns lifecycle
+// policy but does not depend on the transport that delivers it.
+i32 event_sink = 0;
+i32 process_gone_sink = 0;
+
+/**
+ * Installs the callback used to deliver application lifecycle and shortcut events.
+ * @param sink Callback with signature (owner, node_id, kind, arg, token, text), or 0 to disable.
+ */
+export void set_event_sink(i32 sink) { event_sink = sink; }
+
+/**
+ * Installs the callback invoked after an exited child process is reaped.
+ * @param sink Callback accepting the process ID, or 0 when no callback is needed.
+ */
+export void set_process_gone_sink(i32 sink) { process_gone_sink = sink; }
+
+/**
+ * Forwards an application event through the configured event endpoint.
+ * @param owner Recipient process ID.
+ * @param id Target DOM node or window ID.
+ * @param kind ShellEventKind event code.
+ * @param arg Event-specific integer argument.
+ * @param token Correlation token or event-specific secondary value.
+ * @param text Optional NUL-terminated text payload, such as an opened path.
+ */
+void push_app_event(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) {
+    if (event_sink != 0) { event_sink(owner, id, kind, arg, token, text); }
+}
 
 // Names, types and paths read out of images on disk are copied here: the
 // image buffer is freed once its header has been read.
-char g_names[512];
-i32 g_names_used = 0;
+char names[512];
+i32 names_used = 0;
 
 char *keep(char *s) {
     i32 n = str.len(s) + 1;
-    if (g_names_used + n > 512) { return ""; }
-    char *out = &g_names[g_names_used];
+    if (names_used + n > 512) { return ""; }
+    char *out = &names[names_used];
     str.copy(out, s);
-    g_names_used = g_names_used + n;
+    names_used = names_used + n;
     return out;
 }
 
 void register_app(char *path, char *type, i32 single, char *name, i32 opens) {
-    if (g_app_count >= APPS_MAX) {
+    if (registry_count >= APPS_MAX) {
         debug.println("app: registry full");
         return;
     }
-    i32 i = g_app_count;
-    g_app_count++;
-    g_path[i] = (i32)path;
-    g_type[i] = (i32)type;
-    g_single[i] = single;
-    g_name[i] = (i32)name;
-    if (name[0] == 0) { g_name[i] = (i32)type; }
-    g_opens[i] = opens;
+    i32 i = registry_count;
+    registry_count++;
+    registry[i].path = (i32)path;
+    registry[i].type = (i32)type;
+    registry[i].single = single;
+    registry[i].name = (i32)name;
+    if (name[0] == 0) { registry[i].name = (i32)type; }
+    registry[i].opens = opens;
 }
 
 // Every executable in /apps that declares @app is an installed app: read
 // each file's header (MBIN, section directory) for its annotation rows,
 // without loading it.
-char g_scan_path[32];
+char scan_path[32];
 
 void scan_disk() {
     char name[16];
     i32 start = 0;
     while (1) {
         Result<Option<i32>, FsError> res = fs.dir_next_at("apps", start, &name[0], 16);
-        i32 idx = -1;
-        case res of {
-            Ok(v) -> ({ idx = case v of { Some(n) -> n; None -> -1; }; });
-            Err(_) -> ({ return; });
+        Option<i32> entry = None;
+        if (!result_take_ok<Option<i32>, FsError>(&res, &entry)) { return; }
+        i32 idx = case entry of {
+            Some(n) -> n;
+            None -> ({ break; });
         };
-        if (idx < 0) { break; }
         start = idx + 1;
-        i32 size = fs.entry_size(idx);
+        Result<i32, FsError> size_result = fs.entry_size(idx);
+        i32 size = 0;
+        if (!result_take_ok<i32, FsError>(&size_result, &size)) { continue; }
         if (size < 36) { continue; }
-        i32 k = strbuf.reset(&g_scan_path[0]);
-        k = strbuf.append(&g_scan_path[0], 32, k, "apps/");
-        k = strbuf.append(&g_scan_path[0], 32, k, &name[0]);
-        i32 fd = case fs.open(&g_scan_path[0]) of { Ok(v) -> v; Err(_) -> -1; };
-        if (fd < 0) { continue; }
-        char *image = (char*)heap.alloc(size);
-        if (image == 0) { fs.close(fd); continue; }
-        i32 got = case fs.read(fd, (i32)image, size) of { Ok(v) -> v; Err(_) -> 0; };
-        fs.close(fd);
-        if (got == size) {
-            if (mbin.is_image(image, size)) {
-                Annotations rows = annotations.in_image(image);
-                rows.on("app", (char*)0);
-                if (rows.next()) {
-                    char *type = keep(rows.type());
-                    Annotations opens = annotations.in_image(image);
-                    opens.on("open", type);
-                    i32 has_open = 0;
-                    if (opens.next()) { has_open = 1; }
-                    register_app(keep(&g_scan_path[0]), type, rows.arg(0), keep(rows.text(1)), has_open);
-                    debug.printf("app: installed %s (%s)\n", (i32)type, (i32)(&g_scan_path[0]));
+        i32 k = strbuf.reset(&scan_path[0]);
+        k = strbuf.append(&scan_path[0], 32, k, "apps/");
+        k = strbuf.append(&scan_path[0], 32, k, &name[0]);
+        Result<i32, FsError> opened = fs.open(&scan_path[0]);
+        i32 fd = 0;
+        if (result_take_ok<i32, FsError>(&opened, &fd)) {
+            char *image = (char*)heap.alloc(size);
+            if (image != 0) {
+                Result<i32, FsError> read_result = fs.read(fd, (i32)image, size);
+                i32 got = 0;
+                bool read_ok = result_take_ok<i32, FsError>(&read_result, &got);
+                if (read_ok && got == size) {
+                    if (mbin.is_image(image, size)) {
+                        Annotations rows = annotations.in_image(image);
+                        rows.on("app", (char*)0);
+                        if (rows.next()) {
+                            char *type = keep(rows.type());
+                            Annotations opens = annotations.in_image(image);
+                            opens.on("open", type);
+                            i32 has_open = 0;
+                            if (opens.next()) { has_open = 1; }
+                            register_app(keep(&scan_path[0]), type, rows.arg(0), keep(rows.text(1)), has_open);
+                            debug.printf("app: installed %s (%s)\n", (i32)type, (i32)(&scan_path[0]));
+                        }
+                    }
                 }
+                heap.free((i32)image);
             }
+            fs.close(fd);
         }
-        heap.free((i32)image);
     }
 }
 
-export i32 count() { return g_app_count; }
+/**
+ * Returns the number of applications discovered during installation.
+ * @return Number of installed application records.
+ */
+export i32 count() { return registry_count; }
 
+/**
+ * Returns the launcher label for an installed application.
+ * @param index Zero-based application registry index.
+ * @return NUL-terminated label, or an empty string when index is invalid.
+ */
 export char* app_name(i32 index) {
     if (index < 0) { return ""; }
-    if (index >= g_app_count) { return ""; }
-    return (char*)g_name[index];
+    if (index >= registry_count) { return ""; }
+    return (char*)registry[index].name;
 }
 
 // --- instances -------------------------------------------------------------------------------
 
 i32 INSTANCES_MAX = 32;
-i32 g_inst_pid[32];    // the process (0 = free slot)
-i32 g_inst_app[32];    // registry slot
-i32 g_inst_win[32];    // its main window; 0 until the instance reports it (MAIN_WINDOW)
-i32 g_inst_open[32];   // 1: an OPEN with g_open_path waits for the window
-i32 g_inst_done[32];   // 1: it sent EXIT; the process is reaped once it has exited
-i32 g_inst_count = 0;  // slots in use, including freed ones below the high-water mark
+/**
+ * Shell bookkeeping for one running or starting application process.
+ * @property pid Process ID while this instance slot is occupied.
+ * @property app Index of the application's AppRecord in the registry.
+ * @property win Main window ID after MAIN_WINDOW arrives, or None while starting.
+ * @property open True while an OPEN path is waiting for the main window.
+ * @property done True after the app sends EXIT; the reaper collects it once stopped.
+ */
+struct AppInstance {
+    i32 pid;            // valid while the slot is Some
+    i32 app;            // registry slot
+    Option<i32> win;    // main window; None until MAIN_WINDOW
+    bool open;          // an OPEN with open_paths[slot] waits for the window
+    bool done;          // it sent EXIT; reap once it has exited
+};
+Option<AppInstance> instances[32];
+i32 instance_count = 0; // slots in use, including freed ones below the high-water mark
 
-char g_menu_buf[256];  // "\n"-joined app names for the launcher menu
-char g_open_path[64];  // path handed to an @open handler (copied: the caller's buffer may go away)
+char menu_buf[256];    // "\n"-joined app names for the launcher menu
+// One pending OPEN path per instance. A single global scratch buffer loses the
+// first path when two applications are still starting at the same time.
+char open_paths[2048]; // INSTANCES_MAX * 64
 
-i32 slot_of_owner(i32 owner) {
+char *open_path_for(i32 slot) { return &open_paths[slot * 64]; }
+
+Option<i32> slot_of_owner(i32 owner) {
     i32 i = 0;
-    while (i < g_inst_count) {
-        if (g_inst_pid[i] == owner) { return i; }
+    while (i < instance_count) {
+        case instances[i] of {
+            Some(instance) -> ({
+                if (instance.pid == owner) { return Some(i); }
+            });
+            None -> _;
+        };
         i++;
     }
-    return -1;
+    return None;
 }
 
-i32 slot_of_app(i32 app) {
+Option<i32> slot_of_app(i32 app) {
     i32 i = 0;
-    while (i < g_inst_count) {
-        if (g_inst_pid[i] != 0 && g_inst_done[i] == 0) {
-            if (g_inst_app[i] == app) { return i; }
-        }
+    while (i < instance_count) {
+        case instances[i] of {
+            Some(instance) -> ({
+                if (!instance.done && instance.app == app) { return Some(i); }
+            });
+            None -> _;
+        };
         i++;
     }
-    return -1;
+    return None;
 }
 
-i32 free_slot() {
+Option<i32> free_slot() {
     i32 i = 0;
-    while (i < g_inst_count) {
-        if (g_inst_pid[i] == 0) { return i; }
+    while (i < instance_count) {
+        case instances[i] of {
+            None -> ({ return Some(i); });
+            Some(_) -> _;
+        };
         i++;
     }
-    if (g_inst_count >= INSTANCES_MAX) { return -1; }
-    g_inst_count++;
-    return g_inst_count - 1;
+    if (instance_count >= INSTANCES_MAX) { return None; }
+    instance_count++;
+    return Some(instance_count - 1);
 }
 
-// The instance whose window this is, or 0.
+/**
+ * Finds the process that owns a given main window.
+ * @param win DOM node ID of the window.
+ * @return Owning process ID, or 0 if no live instance owns the window.
+ */
 export i32 owner_of_window(i32 win) {
     i32 i = 0;
-    while (i < g_inst_count) {
-        if (g_inst_win[i] == win) { return g_inst_pid[i]; }
+    while (i < instance_count) {
+        case instances[i] of {
+            Some(instance) -> ({
+                case instance.win of {
+                    Some(window) -> ({ if (window == win) { return instance.pid; } });
+                    None -> _;
+                };
+            });
+            None -> _;
+        };
         i++;
     }
     return 0;
 }
 
 // Start an instance of app `a`: spawn its executable. Its window arrives
-// later, as a MAIN_WINDOW request (window_ready below). Returns the
-// instance slot, or -1 when out of slots or the spawn failed.
-i32 mount(i32 a) {
-    i32 slot = free_slot();
-    if (slot < 0) {
-        debug.println("app: too many instances");
-        return -1;
-    }
-    i32 pid = console.spawn_file((char*)g_path[a]);
-    if (pid <= 0) {
-        debug.printf("app: cannot start %s\n", g_path[a]);
-        return -1;
-    }
-    g_inst_pid[slot] = pid;
-    g_inst_app[slot] = a;
-    g_inst_win[slot] = 0;
-    g_inst_open[slot] = 0;
-    g_inst_done[slot] = 0;
+// later, as a MAIN_WINDOW request (window_ready below).
+/** Failure cases when reserving an app instance slot or spawning its process. */
+enum MountError {
+    NoFreeSlot,
+    SpawnFailed,
+}
+
+Result<i32, MountError> mount(i32 a) {
+    i32 slot = case free_slot() of {
+        Some(v) -> v;
+        None -> ({
+            debug.println("app: too many instances");
+            return Err(MountError::NoFreeSlot);
+        });
+    };
+    Result<i32, SpawnError> spawned = console.spawn_file((char*)registry[a].path);
+    i32 pid = case spawned of {
+        Ok(value) -> value;
+        Err(_) -> ({
+            debug.printf("app: cannot start %s\n", registry[a].path);
+            return Err(MountError::SpawnFailed);
+        });
+    };
+    AppInstance instance;
+    instance.pid = pid;
+    instance.app = a;
+    instance.win = None;
+    instance.open = false;
+    instance.done = false;
+    instances[slot] = Some(instance);
     dom.note_app_starting(1);
-    return slot;
+    return Ok(slot);
 }
 
 // MAIN_WINDOW from an instance: its view() built `win`. Put it on the
 // desktop as the instance's window, and deliver an OPEN that was waiting
 // for it.
+/**
+ * Registers an application's newly created main window with the desktop.
+ * Assigns ownership and close handling, focuses it, and delivers any OPEN path
+ * that arrived while the application was starting.
+ * @param owner Process ID of the application instance.
+ * @param win DOM node ID of the window created by that process.
+ */
 export void window_ready(i32 owner, i32 win) {
-    i32 slot = slot_of_owner(owner);
-    if (slot < 0) { return; }
-    if (g_inst_win[slot] == 0) { dom.note_app_starting(-1); }
+    i32 slot = case slot_of_owner(owner) of {
+        Some(v) -> v;
+        None -> ({ return; });
+    };
+    AppInstance instance = case instances[slot] of {
+        Some(value) -> value;
+        None -> ({ return; });
+    };
+    bool had_window = case instance.win of {
+        Some(_) -> true;
+        None -> false;
+    };
+    if (!had_window) { dom.note_app_starting(-1); }
     if (win == 0) { return; }
     dom.set_owner(win, owner);
     dom.set_on_close(win, window_closed);
-    dom.append_child(dom.desktop_id(), win);
-    g_inst_win[slot] = win;
+    case dom.append_child(dom.desktop_id(), win) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return; });
+    };
+    instance.win = Some(win);
     dom_widgets.focus_window(win);
-    if (g_inst_open[slot] != 0) {
-        g_inst_open[slot] = 0;
-        ui_events.push(owner, win, UiEventKind::OPEN, 0, 0, &g_open_path[0]);
+    if (instance.open) {
+        instance.open = false;
+        push_app_event(owner, win, ShellEventKind::OPEN, 0, 0, open_path_for(slot));
     }
+    instances[slot] = Some(instance);
 }
 
 // The on_close handler every app window carries: tell the instance its
 // window is closing (a CLOSE event; its runtime runs the app's @on_close)
 // and wait for its EXIT request to actually take it down.
+/**
+ * Handles a window-close event by asking its owning app to close gracefully.
+ * @param owner Process ID owning the closed window.
+ * @param win DOM node ID of the closed window.
+ * @param arg Event argument supplied by the DOM callback (unused).
+ */
 void window_closed(i32 owner, i32 win, i32 arg) {
-    i32 slot = slot_of_owner(owner);
-    if (slot < 0) {
-        dom.remove_node(win);
-        dom_widgets.activate_topmost();
-        return;
-    }
-    ui_events.push(owner, win, UiEventKind::CLOSE, 0, 0, (char*)0);
+    i32 slot = case slot_of_owner(owner) of {
+        Some(v) -> v;
+        None -> ({
+            dom.remove_node(win);
+            dom_widgets.activate_topmost();
+            return;
+        });
+    };
+    push_app_event(owner, win, ShellEventKind::CLOSE, 0, 0, (char*)0);
 }
 
 // The instance is done (EXIT): remove everything it owns -- its window,
 // dialogs, timers -- and drop its key claims. The process ends itself
 // right after; reap_exited() collects it.
+/**
+ * Cleans up DOM nodes and key claims after an application sends EXIT.
+ * The process itself is collected later by the periodic reaper.
+ * @param owner Process ID of the exiting application.
+ */
 export void instance_exited(i32 owner) {
-    i32 slot = slot_of_owner(owner);
-    if (slot < 0) { return; }
+    i32 slot = case slot_of_owner(owner) of {
+        Some(v) -> v;
+        None -> ({ return; });
+    };
     dom.remove_owned(owner);
     release_claims(owner);
-    g_inst_done[slot] = 1;
+    AppInstance instance = case instances[slot] of {
+        Some(value) -> value;
+        None -> ({ return; });
+    };
+    instance.done = true;
+    instances[slot] = Some(instance);
     dom_widgets.activate_topmost();
 }
 
 // A timer on the desktop: collect processes that have ended -- ones that
 // sent EXIT, and ones that died without (a crash): their nodes go too.
+/**
+ * Reaps stopped application processes and removes resources for crashed apps.
+ * Registered as the shell's periodic timer callback.
+ * @param owner Timer event owner (unused).
+ * @param id Timer node ID (unused).
+ * @param arg Timer callback argument (unused).
+ */
 void reap_exited(i32 owner, i32 id, i32 arg) {
     i32 i = 0;
-    while (i < g_inst_count) {
-        i32 pid = g_inst_pid[i];
-        if (pid != 0) {
-            if (console.has_exited(pid)) {
-                if (g_inst_win[i] == 0) { dom.note_app_starting(-1); }
-                if (g_inst_done[i] == 0) {
-                    dom.remove_owned(pid);
-                    release_claims(pid);
-                    dom_widgets.activate_topmost();
+    while (i < instance_count) {
+        case instances[i] of {
+        None -> _;
+        Some(instance) -> ({
+            i32 pid = instance.pid;
+            Result<bool, ProcessControlError> status = console.has_exited(pid);
+            bool exited = case status of {
+                Ok(value) -> value;
+                Err(ProcessControlError::InvalidPid(_)) -> true;
+                Err(ProcessControlError::NotExited(_)) -> false;
+            };
+            if (exited) {
+                Result<ProcessExitStatus, ProcessControlError> reaped = console.reap(pid);
+                bool collected = case reaped of {
+                    Ok(_) -> true;
+                    Err(ProcessControlError::InvalidPid(_)) -> true;
+                    Err(ProcessControlError::NotExited(_)) -> false;
+                };
+                if (collected) {
+                    bool had_window = case instance.win of {
+                        Some(_) -> true;
+                        None -> false;
+                    };
+                    if (!had_window) { dom.note_app_starting(-1); }
+                    if (!instance.done) {
+                        dom.remove_owned(pid);
+                        release_claims(pid);
+                        dom_widgets.activate_topmost();
+                    }
+                    if (process_gone_sink != 0) { process_gone_sink(pid); }
+                    instances[i] = None;
                 }
-                console.reap(pid);
-                os_calls.process_gone(pid);
-                g_inst_pid[i] = 0;
-                g_inst_app[i] = 0;
-                g_inst_win[i] = 0;
-                g_inst_open[i] = 0;
-                g_inst_done[i] = 0;
             }
-        }
+        });
+        };
         i++;
     }
 }
@@ -293,25 +464,44 @@ void reap_exited(i32 owner, i32 id, i32 arg) {
 // Start the app at `index`; a single-instance app that is already running is
 // brought to the front instead. Returns the running instance's window, or
 // 0 when the instance is only starting (its window comes with MAIN_WINDOW).
+/**
+ * Launches an installed app, or focuses its existing instance when single-instance.
+ * @param index Zero-based application registry index.
+ * @return Existing main window ID when available; otherwise 0 while starting or on failure.
+ */
 export i32 launch(i32 index) {
     if (index < 0) { return 0; }
-    if (index >= g_app_count) { return 0; }
-    if (g_single[index] != 0) {
-        i32 slot = slot_of_app(index);
-        if (slot >= 0) {
-            if (g_inst_win[slot] != 0) { dom_widgets.focus_window(g_inst_win[slot]); }
-            return g_inst_win[slot];
-        }
+    if (index >= registry_count) { return 0; }
+    if (registry[index].single != 0) {
+        case slot_of_app(index) of {
+            Some(slot) -> ({
+                AppInstance instance = case instances[slot] of {
+                    Some(value) -> value;
+                    None -> ({ return 0; });
+                };
+                i32 window = case instance.win of {
+                    Some(value) -> value;
+                    None -> 0;
+                };
+                if (window != 0) { dom_widgets.focus_window(window); }
+                return window;
+            });
+            None -> _;
+        };
     }
-    mount(index);
+    case mount(index) of { Ok(_) -> _; Err(_) -> _; };
     return 0;
 }
 
-// Start the app called `name` (as the launcher shows it); 0 if there is none.
+/**
+ * Launches an installed application by its launcher label.
+ * @param name NUL-terminated application label shown in the launcher.
+ * @return Existing main window ID when available; otherwise 0 if starting or not found.
+ */
 export i32 launch_named(char *name) {
     i32 i = 0;
-    while (i < g_app_count) {
-        if (str.eq((char*)g_name[i], name) != 0) { return launch(i); }
+    while (i < registry_count) {
+    if (str.eq((char*)registry[i].name, name)) { return launch(i); }
         i++;
     }
     return 0;
@@ -322,21 +512,46 @@ export i32 launch_named(char *name) {
 // once to a running instance, or as soon as a new one reports its window.
 // Returns the window it went to (0 while the instance is still starting),
 // or 0 when no app opens files.
+/**
+ * Routes a file path to the first installed app that declares an @open handler.
+ * Queues the path until the app's main window exists when the app is starting.
+ * @param path NUL-terminated path to open.
+ * @return Target window ID when already available, or 0 while starting/no handler is found.
+ */
 export i32 open(char *path) {
     i32 a = 0;
-    while (a < g_app_count) {
-        if (g_opens[a] != 0) {
-            i32 slot = -1;
-            if (g_single[a] != 0) { slot = slot_of_app(a); }
-            if (slot < 0) { slot = mount(a); }
-            if (slot < 0) { return 0; }
-            str.ncopy(&g_open_path[0], path, 64);
-            i32 win = g_inst_win[slot];
+    while (a < registry_count) {
+        if (registry[a].opens != 0) {
+            i32 slot = 0;
+            bool found = false;
+            if (registry[a].single != 0) {
+                case slot_of_app(a) of {
+                    Some(v) -> ({ slot = v; found = true; });
+                    None -> _;
+                };
+            }
+            if (!found) {
+                slot = case mount(a) of {
+                    Ok(v) -> v;
+                    Err(_) -> ({ return 0; });
+                };
+            }
+            str.ncopy(open_path_for(slot), path, 64);
+            AppInstance instance = case instances[slot] of {
+                Some(value) -> value;
+                None -> ({ return 0; });
+            };
+            AppInstance *instance_ptr = &instance;
+            i32 win = case instance_ptr->win of {
+                Some(value) -> value;
+                None -> 0;
+            };
             if (win != 0) {
                 dom_widgets.focus_window(win);
-                ui_events.push(g_inst_pid[slot], win, UiEventKind::OPEN, 0, 0, &g_open_path[0]);
+                push_app_event(instance_ptr->pid, win, ShellEventKind::OPEN, 0, 0, open_path_for(slot));
             } else {
-                g_inst_open[slot] = 1;
+                instance_ptr->open = true;
+                instances[slot] = Some(instance);
             }
             return win;
         }
@@ -347,29 +562,39 @@ export i32 open(char *path) {
 
 // --- launcher menu ---------------------------------------------------------------------------
 
+/**
+ * Builds the launcher's newline-separated list of application labels.
+ * @return Pointer to a NUL-terminated string in shell-owned static storage.
+ */
 export char* menu_items() {
-    i32 n = strbuf.reset(&g_menu_buf[0]);
+    i32 n = strbuf.reset(&menu_buf[0]);
     i32 i = 0;
-    while (i < g_app_count) {
-        if (i > 0) { n = strbuf.append(&g_menu_buf[0], 256, n, "\n"); }
-        n = strbuf.append(&g_menu_buf[0], 256, n, (char*)g_name[i]);
+    while (i < registry_count) {
+        if (i > 0) { n = strbuf.append(&menu_buf[0], 256, n, "\n"); }
+        n = strbuf.append(&menu_buf[0], 256, n, (char*)registry[i].name);
         i++;
     }
-    return &g_menu_buf[0];
+    return &menu_buf[0];
 }
 
-// Menu handler(index): the same table order as menu_items().
+/**
+ * Launches the application selected from the launcher menu.
+ * @param index Zero-based app index matching the order in menu_items().
+ */
 export void on_menu(i32 index) {
     launch(index);
 }
 
-// Taskbar launcher: pop the app menu up above the button.
+/** Opens the application launcher menu above the taskbar button. */
 export void launch_menu() {
     i32 s = dom.ui_scale();
-    i32 rows = g_app_count;
+    i32 rows = registry_count;
     if (rows < 1) { rows = 1; }
     i32 y = graphics.display_height() - dom_widgets.taskbar_height() - (rows * 34 + 20) * s;
-    dom_widgets.open_menu(8 * s, y, menu_items(), on_menu, 0);
+    case dom_widgets.open_menu(8 * s, y, menu_items(), on_menu, 0) of {
+        Ok(_) -> _;
+        Err(_) -> _;
+    };
 }
 
 // --- keyboard shortcuts ----------------------------------------------------------------------
@@ -394,36 +619,36 @@ i32 word_is(char *word, i32 n, char *name) {
 }
 
 // The key code a spec's final word names: a single character (as lower
-// case), or a named key in the kernel's keyboard.mln encoding. -1 if unknown.
-i32 named_key(char *word, i32 n) {
+// case), or a named key in the kernel's keyboard.mln encoding. None if unknown.
+Option<i32> named_key(char *word, i32 n) {
     if (n == 1) {
         i32 c = word[0] & 0xFF;
         if (c >= 'A') { if (c <= 'Z') { c = c + 32; } }
-        return c;
+        return Some(c);
     }
-    if (word_is(word, n, "enter") != 0) { return 13; }
-    if (word_is(word, n, "return") != 0) { return 13; }
-    if (word_is(word, n, "tab") != 0) { return 9; }
-    if (word_is(word, n, "escape") != 0) { return 27; }
-    if (word_is(word, n, "esc") != 0) { return 27; }
-    if (word_is(word, n, "space") != 0) { return 32; }
-    if (word_is(word, n, "backspace") != 0) { return 8; }
-    if (word_is(word, n, "delete") != 0) { return 127; }
-    if (word_is(word, n, "left") != 0) { return 0x101; }
-    if (word_is(word, n, "right") != 0) { return 0x102; }
-    if (word_is(word, n, "up") != 0) { return 0x103; }
-    if (word_is(word, n, "down") != 0) { return 0x104; }
-    if (word_is(word, n, "home") != 0) { return 0x105; }
-    if (word_is(word, n, "end") != 0) { return 0x106; }
-    if (word_is(word, n, "pageup") != 0) { return 0x107; }
-    if (word_is(word, n, "pagedown") != 0) { return 0x108; }
+    if (word_is(word, n, "enter")) { return Some(13); }
+    if (word_is(word, n, "return")) { return Some(13); }
+    if (word_is(word, n, "tab")) { return Some(9); }
+    if (word_is(word, n, "escape")) { return Some(27); }
+    if (word_is(word, n, "esc")) { return Some(27); }
+    if (word_is(word, n, "space")) { return Some(32); }
+    if (word_is(word, n, "backspace")) { return Some(8); }
+    if (word_is(word, n, "delete")) { return Some(127); }
+    if (word_is(word, n, "left")) { return Some(0x101); }
+    if (word_is(word, n, "right")) { return Some(0x102); }
+    if (word_is(word, n, "up")) { return Some(0x103); }
+    if (word_is(word, n, "down")) { return Some(0x104); }
+    if (word_is(word, n, "home")) { return Some(0x105); }
+    if (word_is(word, n, "end")) { return Some(0x106); }
+    if (word_is(word, n, "pageup")) { return Some(0x107); }
+    if (word_is(word, n, "pagedown")) { return Some(0x108); }
     if (n >= 2) {
         if (word[0] == 'F') {
             i32 f = str.atoi(&word[1]);
-            if (f >= 1) { if (f <= 12) { return 0x120 + f; } }
+            if (f >= 1) { if (f <= 12) { return Some(0x120 + f); } }
         }
     }
-    return -1;
+    return None;
 }
 
 // Does "Ctrl+Shift+S" describe this key DOWN? Words before the last are
@@ -444,16 +669,19 @@ i32 key_spec_matches(char *spec, i32 code, i32 mods) {
                 if (spec[i + 1] != 0) { return 0; }
                 n = 1;
             } else {
-                if (word_is(&spec[start], n, "ctrl") != 0) { want_mods = want_mods | MOD_CTRL; }
-                else if (word_is(&spec[start], n, "shift") != 0) { want_mods = want_mods | MOD_SHIFT; }
-                else if (word_is(&spec[start], n, "alt") != 0) { want_mods = want_mods | MOD_ALT; }
+                if (word_is(&spec[start], n, "ctrl")) { want_mods = want_mods | MOD_CTRL; }
+                else if (word_is(&spec[start], n, "shift")) { want_mods = want_mods | MOD_SHIFT; }
+                else if (word_is(&spec[start], n, "alt")) { want_mods = want_mods | MOD_ALT; }
                 else { return 0; }
                 i++;
                 continue;
             }
         }
         if (want_mods != mods) { return 0; }
-        if (named_key(&spec[start], n) != code) { return 0; }
+        case named_key(&spec[start], n) of {
+            Some(want) -> ({ if (want != code) { return 0; } });
+            None -> ({ return 0; });
+        };
         return 1;
     }
     return 0;
@@ -468,44 +696,75 @@ i32 key_spec_matches(char *spec, i32 code, i32 mods) {
 
 i32 CLAIMS_MAX = 64;
 i32 SPEC_MAX = 16;         // "Ctrl+Shift+F12" fits
-i32 g_claim_owner[64];     // 0 = free
-char g_claim_spec[1024];   // CLAIMS_MAX * SPEC_MAX; the spec is copied: the request's string is gone by the next
-i32 g_claim_count = 0;
+/**
+ * One process-owned keyboard shortcut registered with the shell.
+ * @property owner Process ID that registered this shortcut; 0 marks an unused slot.
+ * @property spec Bounded copy of the textual key combination, such as "Ctrl+Shift+F12".
+ */
+struct KeyClaim {
+    i32 owner;              // 0 = free
+    char spec[16];          // copied because the request's string is transient
+};
+KeyClaim claims[64];
+i32 claim_count = 0;
 
+/**
+ * Registers a process keyboard shortcut and returns its event correlation token.
+ * @param owner Process ID that owns the shortcut.
+ * @param spec NUL-terminated combination such as "Ctrl+S" or "Alt+F4".
+ * @return One-based shortcut token, or 0 if the fixed claim table is full.
+ */
 export i32 claim_key(i32 owner, char *spec) {
     i32 i = 0;
-    while (i < g_claim_count) {
-        if (g_claim_owner[i] == 0) { break; }
+    while (i < claim_count) {
+        if (claims[i].owner == 0) { break; }
         i++;
     }
-    if (i == g_claim_count) {
-        if (g_claim_count >= CLAIMS_MAX) { return 0; }
-        g_claim_count++;
+    if (i == claim_count) {
+        if (claim_count >= CLAIMS_MAX) { return 0; }
+        claim_count++;
     }
-    g_claim_owner[i] = owner;
-    str.ncopy(&g_claim_spec[i * SPEC_MAX], spec, SPEC_MAX);
+    claims[i].owner = owner;
+    str.ncopy(&claims[i].spec[0], spec, SPEC_MAX);
     return i + 1;
 }
 
 void release_claims(i32 owner) {
     i32 i = 0;
-    while (i < g_claim_count) {
-        if (g_claim_owner[i] == owner) { g_claim_owner[i] = 0; }
+    while (i < claim_count) {
+        if (claims[i].owner == owner) { claims[i].owner = 0; }
         i++;
     }
 }
 
 // Key filter installed on the DOM: a DOWN event matching a claim of the
 // active window's instance becomes a KEY event to it and is taken.
+/**
+ * Tests a key-down event against one process's registered shortcuts.
+ * @param owner Process ID of the active window's owner.
+ * @param code Encoded key code from the keyboard driver.
+ * @param mods Modifier bitmask using MOD_SHIFT, MOD_CTRL, and MOD_ALT.
+ * @return 1 when a matching shortcut event was sent; otherwise 0.
+ */
 export i32 dispatch_key(i32 owner, i32 code, i32 mods) {
     if (owner == 0) { return 0; }
-    i32 slot = slot_of_owner(owner);
-    if (slot < 0) { return 0; }
+    i32 slot = case slot_of_owner(owner) of {
+        Some(v) -> v;
+        None -> ({ return 0; });
+    };
     i32 i = 0;
-    while (i < g_claim_count) {
-        if (g_claim_owner[i] == owner) {
-            if (key_spec_matches(&g_claim_spec[i * SPEC_MAX], code, mods) != 0) {
-                ui_events.push(owner, g_inst_win[slot], UiEventKind::KEY, code | (mods << 16), i + 1, (char*)0);
+    while (i < claim_count) {
+        if (claims[i].owner == owner) {
+            if (key_spec_matches(&claims[i].spec[0], code, mods)) {
+                AppInstance instance = case instances[slot] of {
+                    Some(value) -> value;
+                    None -> ({ return 0; });
+                };
+                i32 window = case instance.win of {
+                    Some(value) -> value;
+                    None -> ({ return 0; });
+                };
+                push_app_event(owner, window, ShellEventKind::KEY, code | (mods << 16), i + 1, (char*)0);
                 return 1;
             }
         }
@@ -517,10 +776,17 @@ export i32 dispatch_key(i32 owner, i32 code, i32 mods) {
 // Read the disk and wire the shell to the desktop: taskbar launcher,
 // desktop menu, the keyboard filter and the reaper. Call once after
 // dom.init() and fs.init().
+/**
+ * Scans installed applications and connects the shell to desktop events and launch UI.
+ * Call once after DOM and filesystem initialization.
+ */
 export void install() {
     scan_disk();
     dom_render.set_launcher(launch_menu);
     compositor.set_desktop_menu(menu_items(), on_menu);
     dom.set_key_filter(dispatch_key);
-    dom_widgets.create_timer(50, reap_exited);
+    case dom_widgets.create_timer(50, reap_exited) of {
+        Ok(_) -> _;
+        Err(_) -> ({ debug.panic("app: reaper timer creation failed"); });
+    };
 }

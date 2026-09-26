@@ -10,17 +10,17 @@ import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import { SchedulerError } from "../../../MyKernel/src/kernel/scheduler.mln";
 import irq_dispatch from "../../../MyKernel/src/kernel/irq_dispatch.mln";
 import irq from "../../../MyKernel/src/arch/irq.mln";
-import shell from "../apps/shell.mln";
+import shell from "../shell/serial.mln";
 import automation_ui from "../meta/automation_ui.mln";
 import compositor from "../ui/compositor.mln";
 import console from "../proc/console.mln";
 import mmu from "../../../MyKernel/src/mm/mmu.mln";
-import { MmuError } from "../../../MyKernel/src/mm/mmu.mln";
+import { MmuError } from "../../../../contracts/process/loader.contract.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 import app from "../shell/app.mln";
-import ui_channel from "../ui/ui_channel.mln";
-import os_calls from "../proc/os_calls.mln";
+import request_channel from "../ipc/channel.mln";
+import os_call_router from "../syscall/router.mln";
 
 // The applications are not part of this image: each is an executable on
 // the MFS disk (system/MyOS/src/apps/*.dom.mln built by
@@ -74,6 +74,12 @@ void enable_kernel_paging() {
 
 // Once a second: redraw the taskbar so its uptime clock advances. A system
 // timer, so it takes the raw handler ABI.
+/**
+ * Refreshes the taskbar clock when the system timer fires.
+ * @param owner Event owner supplied by the DOM timer dispatcher (unused).
+ * @param id Timer node ID supplied by the DOM timer dispatcher (unused).
+ * @param arg Timer callback argument (unused).
+ */
 void on_clock(i32 owner, i32 id, i32 arg) {
     dom_render.refresh_taskbar();
 }
@@ -89,8 +95,14 @@ void kernel_init() {
     enable_kernel_paging();
 
     dom.init();
-    dom.create_taskbar();
-    dom_widgets.create_timer(1000, on_clock);
+    case dom.create_taskbar() of {
+        Ok(_) -> _;
+        Err(_) -> ({ debug.panic("kernel: taskbar creation failed"); });
+    };
+    case dom_widgets.create_timer(1000, on_clock) of {
+        Ok(_) -> _;
+        Err(_) -> ({ debug.panic("kernel: clock timer creation failed"); });
+    };
     debug.println("kernel: dom ready");
 
     fs.init();
@@ -99,8 +111,9 @@ void kernel_init() {
     // The shell (../shell/app.mln) reads the apps' annotations and
     // owns launching, the app menu, shortcuts and window close.
     app.install();
-    ui_channel.init();   // the UI protocol's channels
-    os_calls.init();     // what a process reaches through OS_CALL: UI, files, processes
+    request_channel.init();   // application request/event channels
+    compositor.set_request_pump(request_channel.serve);
+    os_call_router.init(); // what a process reaches through OS_CALL: UI, files, processes
 
     dom_automation.dump();
 

@@ -11,7 +11,7 @@ export i32 main() {
     ulib.println("echo: type lines, 'quit' to exit");
     while (1) {
         i32 n = ulib.readline(&line[0], 96);
-        if (ulib.str_eq(&line[0], "quit") != 0) {
+        if (ulib.str_eq(&line[0], "quit")) {
             ulib.println("bye");
             return 0;
         }

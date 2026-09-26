@@ -1,0 +1,11 @@
+package shell_event;
+
+// Application lifecycle notifications produced by shell policy. These are
+// domain values; the IPC event endpoint maps them to the SDK wire contract.
+/** Lifecycle and shortcut events the shell sends to running applications. */
+export enum ShellEventKind {
+    NONE,
+    KEY,
+    CLOSE,
+    OPEN,
+}

@@ -1,0 +1,28 @@
+/**
+ * Application host operations server.
+ *
+ * Handles lifecycle, window discovery, key claims, and app opening requests
+ * originating from application processes, delegating them to the shell.
+ */
+package shell_protocol;
+
+import app from "app.mln";
+import { Request } from "../../../../contracts/myapp/message.contract.mln";
+import { AppOp } from "../../../../contracts/myapp/lifecycle.contract.mln";
+
+/**
+ * Dispatches an application host request to the shell subsystem.
+ *
+ * Supports AppOp::OPEN (open document / launch), AppOp::CLAIM_KEY (claim keyboard shortcut),
+ * AppOp::MAIN_WINDOW (register main window handle), and AppOp::EXIT (notify app exit).
+ *
+ * @param m Pointer to Request descriptor.
+ * @return Operation result or 0.
+ */
+export i32 handle(Request *m) {
+    if (m->op == AppOp::OPEN)        { return app.open(m->s0); }
+    if (m->op == AppOp::CLAIM_KEY)   { return app.claim_key(m->owner, m->s0); }
+    if (m->op == AppOp::MAIN_WINDOW) { app.window_ready(m->owner, m->a0); return 0; }
+    if (m->op == AppOp::EXIT)        { app.instance_exited(m->owner); return 0; }
+    return 0;
+}

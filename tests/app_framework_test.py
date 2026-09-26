@@ -50,6 +50,10 @@ def click_point(os, x, y):
     os._pointer_sequence([{"type": "move", "x": x, "y": y},
                           {"type": "down", "button": "left"},
                           {"type": "up", "button": "left"}])
+    # Input delivery and the app process run on later scheduler passes.
+    # Keep this helper consistent with apps_e2e_test instead of snapshotting
+    # immediately after the pointer-up event.
+    time.sleep(0.35)
 
 
 def launch_app(os, name):
@@ -65,6 +69,12 @@ def launch_app(os, name):
     menu = os.get_by_role("menu").snapshot()
     row = MENU.index(name)
     click_point(os, menu.bounds.x + 40, menu.bounds.y + 16 + ROW_H * row + ROW_H // 2)
+    deadline = time.monotonic() + 5.0
+    while not [n for n in os.snapshot().nodes
+               if n.role == "window" and n.text == name and n.visible]:
+        if time.monotonic() > deadline:
+            raise AssertionError(f"{name} window did not open")
+        time.sleep(0.05)
 
 
 def raise_window(os, name):
