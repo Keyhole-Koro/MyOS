@@ -10,18 +10,29 @@ import { app } from "../../../MyAppFramework/src/annotations.mln";
 // per-window state on the struct; each new window cascades down and right
 // of the previous one.
 
-i32 g_opened = 0;
+i32 opened_count = 0; // desktop placement sequence shared by Notes windows
 
+/**
+ * Per-window state for the Notes form.
+ * @property title DOM node ID of the title text input.
+ * @property body DOM node ID of the body text input.
+ * @property echo DOM node ID of the label that mirrors typed text.
+ * @property typed Scratch buffer used to copy text from the changed input.
+ */
 struct Notes {
     i32 title;
     i32 body;
     i32 echo;
+    char typed[128];
 };
 
 @app
+/** Builds a Notes window with per-instance title and body fields.
+ * @return DOM node ID of the new Notes window.
+ */
 i32 (Notes *n) view() {
-    i32 offset = 28 * g_opened;
-    g_opened++;
+    i32 offset = 28 * opened_count;
+    opened_count++;
     i32 muted = ui.rgb(0x6B, 0x72, 0x80);
     return <Window title="Notes" x={540 + offset} y={96 + offset} w={380} h={330}>
         <Column x={24} y={20} w={332} h={270} gap={12}>
@@ -38,14 +49,19 @@ i32 (Notes *n) view() {
     </Window>;
 }
 
-// Either field changed: echo its text.
-char g_typed[128];
-
+/**
+ * Copies a changed input's text and mirrors it in the echo label.
+ * @param id DOM node ID of the input that changed.
+ */
 void (Notes *n) changed(i32 id) {
-    ui.text_copy(id, &g_typed[0], 128);
-    ui.set_text_fmt(n->echo, "You typed: %s", (i32)(&g_typed[0]), 0);
+    ui.text_copy(id, &n->typed[0], 128);
+    ui.set_text_fmt(n->echo, "You typed: %s", (i32)(&n->typed[0]), 0);
 }
 
+/**
+ * Clears the title and body fields and refreshes the echo label.
+ * @param id DOM node ID supplied by the clear-button event.
+ */
 void (Notes *n) clear(i32 id) {
     ui.input_set(n->title, "");
     ui.input_set(n->body, "");

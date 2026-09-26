@@ -3458,7 +3458,7 @@ export i32 face_count() { return FACE_COUNT; }
 export i32 face_for(i32 bold, i32 scale) {
     i32 f = 0;
     if (scale >= 2) { f = 1; }
-    if (bold != 0) { f = f + 2; }
+    if (bold) { f = f + 2; }
     return f;
 }
 

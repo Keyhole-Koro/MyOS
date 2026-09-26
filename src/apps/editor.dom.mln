@@ -3,9 +3,9 @@ package editor;
 import elements from "../../../MyAppFramework/src/elements.mln";
 import ui from "../../../MyAppFramework/src/ui.mln";
 import { app, open, key } from "../../../MyAppFramework/src/annotations.mln";
-import fs from "../../../MyAppFramework/src/fs.mln";
+import fs from "../../../../toolchain/MyStdLib/hosted/fs.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
-import { FsError } from "../../../MyAppFramework/src/fs.mln";
+import { FsError } from "../../../../contracts/io/fs.contract.mln";
 
 // Text editor: a TextArea over one file on the MFS disk. Save rewrites the
 // file (MFS writes are append-only, so the file is removed and recreated).
@@ -16,13 +16,26 @@ import { FsError } from "../../../MyAppFramework/src/fs.mln";
 
 i32 CAP = 4096;
 
+/**
+ * Per-window state for the single-instance text editor.
+ * @property area DOM node ID of the editable text area.
+ * @property name DOM node ID of the filename input.
+ * @property status DOM node ID of the status label.
+ * @property save_name Scratch buffer holding the filename copied from the input.
+ * @property save_text Scratch buffer holding text copied from the editor before saving.
+ */
 struct Editor {
     i32 area;     // TextArea
     i32 name;     // filename TextInput
     i32 status;   // Label
+    char save_name[32];
+    char save_text[4096];
 };
 
 @app(single)
+/** Builds the editor window and opens a scratch document for a plain launch.
+ * @return DOM node ID of the editor window.
+ */
 i32 (Editor *e) view() {
     i32 muted = ui.rgb(0x6B, 0x72, 0x80);
     i32 win = <Window title="Editor" x={300} y={120} w={520} h={420}>
@@ -40,6 +53,10 @@ i32 (Editor *e) view() {
 
 // Load `path` into the text area (empty when the file does not exist).
 @open
+/**
+ * Opens a file into the editor, or leaves an empty document for a new path.
+ * @param path NUL-terminated file path to load.
+ */
 void (Editor *e) open(char *path) {
     ui.input_set(e->name, path);
     ui.area_clear(e->area);
@@ -53,7 +70,11 @@ void (Editor *e) open(char *path) {
     while (1) {
         i32 got = case fs.read(fd, (i32)(&chunk[0]), 127) of {
             Ok(v) -> v;
-            Err(_) -> 0;
+            Err(_) -> ({
+                fs.close(fd);
+                ui.set_text(e->status, "read failed: filesystem error");
+                return;
+            });
         };
         if (got <= 0) { break; }
         chunk[got] = (char)0;
@@ -66,15 +87,15 @@ void (Editor *e) open(char *path) {
     ui.set_text_fmt(e->status, "loaded %d bytes", total, 0);
 }
 
-char g_save_name[32];
-char g_save_text[4096];   // CAP
-
 @key("Ctrl+S")
+/** Saves the editor contents under the filename currently in the name field.
+ * @param id DOM node ID supplied by the key event.
+ */
 void (Editor *e) save(i32 id) {
-    char *path = &g_save_name[0];
+    char *path = &e->save_name[0];
     ui.text_copy(e->name, path, 32);
     if (path[0] == 0) { ui.set_text(e->status, "enter a file name first"); return; }
-    char *text = &g_save_text[0];
+    char *text = &e->save_text[0];
     i32 len = ui.text_copy(e->area, text, 4096);
     // Bind the Result: a discarded aggregate return has no out-pointer.
     Result<_, FsError> removed = fs.remove(path);
@@ -85,9 +106,14 @@ void (Editor *e) save(i32 id) {
     };
     i32 written = 0;
     if (len > 0) {
-        written = case fs.write(fd, (i32)text, len) of {
+        Result<i32, FsError> write_result = fs.write(fd, (i32)text, len);
+        written = case write_result of {
             Ok(v) -> v;
-            Err(_) -> 0;
+            Err(_) -> ({
+                fs.close(fd);
+                ui.set_text(e->status, "save failed: filesystem error");
+                return;
+            });
         };
     }
     fs.close(fd);

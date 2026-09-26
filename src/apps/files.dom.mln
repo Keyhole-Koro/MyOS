@@ -3,10 +3,11 @@ package files;
 import elements from "../../../MyAppFramework/src/elements.mln";
 import ui from "../../../MyAppFramework/src/ui.mln";
 import { app } from "../../../MyAppFramework/src/annotations.mln";
-import fs from "../../../MyAppFramework/src/fs.mln";
+import fs from "../../../../toolchain/MyStdLib/hosted/fs.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
-import { FsError } from "../../../MyAppFramework/src/fs.mln";
+import { FsError } from "../../../../contracts/io/fs.contract.mln";
+import { UiError } from "../../../../contracts/ui/widget.contract.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 
 // File manager: lists the MFS disk, opens a file in the editor (activate a
@@ -18,22 +19,33 @@ import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 // Nodes created from a handler belong to the instance that ran it, so if the
 // user closes Files while the dialog is up, the dialog goes with it.
 
+/**
+ * Per-window file-manager state, including its list and transient dialog buffers.
+ * @property list DOM node ID of the directory-entry list.
+ * @property status DOM node ID of the status label.
+ * @property dialog DOM node ID of the active confirmation dialog, or zero.
+ * @property items Newline-separated display rows backing the list widget.
+ * @property selected Name of the currently selected entry.
+ * @property question Text shown in the delete-confirmation dialog.
+ * @property dir Current directory path; an empty string denotes the root.
+ * @property path Scratch buffer used to assemble child paths.
+ */
 struct Files {
     i32 list;
     i32 status;
     i32 dialog;          // open confirmation window, or 0
+    char items[1024];   // "\n"-joined list rows
+    char selected[16];  // name of the selected row
+    char question[64];  // dialog text
+    char dir[64];       // the directory shown ("" = root)
+    char path[80];      // dir + "/" + a name, for the calls that take a path
 };
 
-// Text buffers the widgets point at. Module-level rather than fields because
-// the app is single-instance and an array field cannot be indexed through
-// a pointer yet (`f->items[0]` does not parse).
-char g_items[1024];    // "\n"-joined list rows
-char g_selected[16];   // name of the selected row
-char g_question[64];   // dialog text
-char g_dir[64];        // the directory shown ("" = root)
-char g_path[80];       // g_dir + "/" + a name, for the calls that take a path
-
 @app(single)
+/**
+ * Builds the file-manager window, loads the root directory, and focuses its list.
+ * @return DOM node ID of the file-manager window.
+ */
 i32 (Files *f) view() {
     i32 muted = ui.rgb(0x6B, 0x72, 0x80);
     i32 win = <Window title="Files" x={60} y={60} w={440} h={400}>
@@ -53,66 +65,95 @@ i32 (Files *f) view() {
 }
 
 // `name` inside the directory shown, as a path.
-char* path_of(char *name) {
-    i32 k = strbuf.reset(&g_path[0]);
-    if (g_dir[0] != 0) {
-        k = strbuf.append(&g_path[0], 80, k, &g_dir[0]);
-        k = strbuf.append(&g_path[0], 80, k, "/");
+/**
+ * Builds a path under the currently displayed directory.
+ * @param name NUL-terminated child entry name.
+ * @return Pointer to the instance's reusable path buffer.
+ */
+char* (Files *f) path_of(char *name) {
+    i32 k = strbuf.reset(&f->path[0]);
+    if (f->dir[0] != 0) {
+        k = strbuf.append(&f->path[0], 80, k, &f->dir[0]);
+        k = strbuf.append(&f->path[0], 80, k, "/");
     }
-    k = strbuf.append(&g_path[0], 80, k, name);
-    return &g_path[0];
+    k = strbuf.append(&f->path[0], 80, k, name);
+    return &f->path[0];
 }
 
 // Rebuild the list from the directory shown: ".." first unless at the
 // root, then one row per entry -- "name/" for a directory, "name  (N
 // bytes)" for a file.
+/**
+ * Refreshes the list widget and status label from the current directory.
+ * @param id DOM event argument (unused).
+ */
 void (Files *f) refresh(i32 id) {
     char name[16];
-    i32 k = strbuf.reset(&g_items[0]);
+    i32 k = strbuf.reset(&f->items[0]);
     i32 start = 0;
     i32 count = 0;
-    if (g_dir[0] != 0) {
-        k = strbuf.append(&g_items[0], 1024, k, "..");
+    if (f->dir[0] != 0) {
+        k = strbuf.append(&f->items[0], 1024, k, "..");
         count++;
     }
     while (1) {
-        // Decode the nested Result<Option> with statement-level cases: a
-        // struct-valued case arm (`Ok(v) -> v` into an Option local) is not
-        // copied correctly yet, while `case v of` on the bound field is.
-        Result<Option<i32>, FsError> res = fs.dir_next_at(&g_dir[0], start, &name[0], 16);
-        i32 idx = -1;
-        case res of {
-            Ok(v) -> ({ idx = case v of { Some(n) -> n; None -> -1; }; });
+        // None ends enumeration; Err reports a disk failure.
+        Result<Option<i32>, FsError> res = fs.dir_next_at(&f->dir[0], start, &name[0], 16);
+        i32 idx = case res of {
+            Ok(v) -> case v of { Some(n) -> n; None -> ({ break; }); };
             Err(_) -> ({ ui.set_text(f->status, "disk error"); return; });
         };
-        if (idx < 0) { break; }
-        if (count > 0) { k = strbuf.append(&g_items[0], 1024, k, "\n"); }
-        k = strbuf.append(&g_items[0], 1024, k, &name[0]);
-        if (fs.is_dir(idx)) {
-            k = strbuf.append(&g_items[0], 1024, k, "/");
+        if (count > 0) { k = strbuf.append(&f->items[0], 1024, k, "\n"); }
+        k = strbuf.append(&f->items[0], 1024, k, &name[0]);
+        Result<bool, FsError> directory = fs.is_dir(idx);
+        bool is_directory = case directory of {
+            Ok(value) -> value;
+            Err(_) -> ({ ui.set_text(f->status, "disk error"); return; });
+        };
+        if (is_directory) {
+            k = strbuf.append(&f->items[0], 1024, k, "/");
         } else {
-            k = strbuf.append(&g_items[0], 1024, k, "   (");
-            k = strbuf.append_i32(&g_items[0], 1024, k, fs.entry_size(idx));
-            k = strbuf.append(&g_items[0], 1024, k, " bytes)");
+            Result<i32, FsError> size_result = fs.entry_size(idx);
+            i32 size = case size_result of {
+                Ok(value) -> value;
+                Err(_) -> ({ ui.set_text(f->status, "disk error"); return; });
+            };
+            k = strbuf.append(&f->items[0], 1024, k, "   (");
+            k = strbuf.append_i32(&f->items[0], 1024, k, size);
+            k = strbuf.append(&f->items[0], 1024, k, " bytes)");
         }
         count++;
         start = idx + 1;
     }
-    ui.list_set_items(f->list, &g_items[0]);
-    if (g_dir[0] != 0) {
-        ui.set_text_fmt(f->status, "/%s: %d entries", (i32)(&g_dir[0]), count - 1);
+    ui.list_set_items(f->list, &f->items[0]);
+    if (f->dir[0] != 0) {
+        ui.set_text_fmt(f->status, "/%s: %d entries", (i32)(&f->dir[0]), count - 1);
     } else {
         ui.set_text_fmt(f->status, "%d entries on disk", count, 0);
     }
-    strbuf.reset(&g_selected[0]);
+    strbuf.reset(&f->selected[0]);
 }
 
 // Whether the selected row is a directory ("name/" or "..").
+/**
+ * Tests whether the selected row represents a directory or the parent entry.
+ * @return 1 for a directory or parent row; 0 for a file or unavailable selection.
+ */
 i32 (Files *f) selected_is_dir() {
-    i32 row = ui.list_selected(f->list);
-    if (row < 0) { return 0; }
+    Result<Option<i32>, UiError> selected = ui.list_selected(f->list);
+    i32 row = case selected of {
+        Ok(v) -> case v of {
+            Some(n) -> n;
+            None -> ({ return 0; });
+        };
+        Err(_) -> ({ return 0; });
+    };
     char item[48];
-    ui.list_item(f->list, row, &item[0], 48);
+    Result<i32, UiError> copied = ui.list_item(f->list, row, &item[0], 48);
+    case copied of {
+        Ok(_) -> _;
+        Err(_) -> ({ return 0; });
+    };
     if (item[0] == '.' && item[1] == '.' && item[2] == 0) { return 1; }
     i32 i = 0;
     while (item[i] != 0) { i++; }
@@ -121,59 +162,90 @@ i32 (Files *f) selected_is_dir() {
 }
 
 // Enter the selected directory (".." goes up), and show it.
+/**
+ * Changes the displayed directory and refreshes its contents.
+ * @param name Directory name to enter, or ".." to move to the parent.
+ */
 void (Files *f) enter(char *name) {
     if (name[0] == '.' && name[1] == '.' && name[2] == 0) {
         i32 n = 0;
-        while (g_dir[n] != 0) { n++; }
-        while (n > 0 && g_dir[n - 1] != '/') { n--; }
+        while (f->dir[n] != 0) { n++; }
+        while (n > 0 && f->dir[n - 1] != '/') { n--; }
         if (n > 0) { n--; }
-        g_dir[n] = (char)0;
+        f->dir[n] = (char)0;
     } else {
         i32 k = 0;
-        while (g_dir[k] != 0) { k++; }
-        if (k > 0) { k = strbuf.append(&g_dir[0], 64, k, "/"); }
-        k = strbuf.append(&g_dir[0], 64, k, name);
+        while (f->dir[k] != 0) { k++; }
+        if (k > 0) { k = strbuf.append(&f->dir[0], 64, k, "/"); }
+        k = strbuf.append(&f->dir[0], 64, k, name);
     }
     f->refresh(0);
 }
 
 // The selected row's file name (the part before the size), or 0.
+/**
+ * Copies the selected entry's name out of its display row.
+ * @return Pointer to the instance's selected-name buffer, or null if no row is selected.
+ */
 char* (Files *f) selected_name() {
-    i32 row = ui.list_selected(f->list);
-    if (row < 0) { return (char*)0; }
+    Result<Option<i32>, UiError> selected = ui.list_selected(f->list);
+    i32 row = case selected of {
+        Ok(v) -> case v of {
+            Some(n) -> n;
+            None -> ({ return (char*)0; });
+        };
+        Err(_) -> ({ return (char*)0; });
+    };
     char item[48];
-    ui.list_item(f->list, row, &item[0], 48);
+    Result<i32, UiError> copied = ui.list_item(f->list, row, &item[0], 48);
+    case copied of {
+        Ok(_) -> _;
+        Err(_) -> ({ return (char*)0; });
+    };
     i32 i = 0;
     while (item[i] != 0) {
         if (item[i] == ' ') { break; }
         if (item[i] == '/') { break; }
-        g_selected[i] = item[i];
+        f->selected[i] = item[i];
         i++;
         if (i >= fs.NAME_MAX - 1) { break; }
     }
-    g_selected[i] = (char)0;
-    return &g_selected[0];
+    f->selected[i] = (char)0;
+    return &f->selected[0];
 }
 
+/**
+ * Updates the status label when the selected row changes.
+ * @param id DOM node ID supplied by the list change event.
+ */
 void (Files *f) select(i32 id) {
     char *name = f->selected_name();
     if (name == 0) { return; }
     ui.set_text_fmt(f->status, "selected %s", (i32)name, 0);
 }
 
+/**
+ * Enters the selected directory or routes the selected file to an @open application.
+ * @param id DOM node ID supplied by the open/activate event.
+ */
 void (Files *f) open(i32 id) {
     char *name = f->selected_name();
     if (name == 0) { ui.set_text(f->status, "select a file first"); return; }
-    if (f->selected_is_dir() != 0) { f->enter(name); return; }
-    ui.open(path_of(name));
+    if (f->selected_is_dir()) { f->enter(name); return; }
+    ui.open(f->path_of(name));
 }
 
+/**
+ * Opens the editor on the default new-file path.
+ * @param id DOM node ID supplied by the New-button event (unused).
+ */
 void (Files *f) create(i32 id) {
-    ui.open(path_of("untitled.txt"));
+    ui.open(f->path_of("untitled.txt"));
 }
 
 // --- delete confirmation dialog ---
 
+/** Closes the active confirmation dialog, if one exists. */
 void (Files *f) close_dialog() {
     if (f->dialog != 0) {
         ui.close(f->dialog);
@@ -181,33 +253,53 @@ void (Files *f) close_dialog() {
     }
 }
 
+/**
+ * Removes the selected file after confirmation and refreshes the list.
+ * @param id DOM node ID supplied by the confirmation button (unused).
+ */
 void (Files *f) confirm_delete(i32 id) {
     f->close_dialog();
     char *name = f->selected_name();
     if (name == 0) { return; }
-    Result<_, FsError> removed = fs.remove(path_of(name));
-    case removed of { Ok(_) -> _; Err(_) -> _; };
-    f->refresh(0);
-    ui.set_text(f->status, "deleted");
+    Result<_, FsError> removed = fs.remove(f->path_of(name));
+    case removed of {
+        Ok(_) -> ({ f->refresh(0); ui.set_text(f->status, "deleted"); });
+        Err(_) -> ({ ui.set_text(f->status, "delete failed"); });
+    };
 }
 
+/**
+ * Dismisses the delete confirmation without changing the filesystem.
+ * @param id DOM node ID supplied by the cancel button (unused).
+ */
 void (Files *f) cancel_delete(i32 id) {
     f->close_dialog();
 }
 
+/**
+ * Opens a confirmation dialog for deleting the selected entry.
+ * @param id DOM node ID supplied by the Delete-button event (unused).
+ */
 void (Files *f) delete(i32 id) {
     char *name = f->selected_name();
     if (name == 0) { ui.set_text(f->status, "select a file first"); return; }
     f->close_dialog();
-    i32 k = strbuf.reset(&g_question[0]);
-    k = strbuf.append(&g_question[0], 64, k, "Delete \"");
-    k = strbuf.append(&g_question[0], 64, k, name);
-    k = strbuf.append(&g_question[0], 64, k, "\" permanently?");
-    i32 win = ui.window_of(f->list);
-    i32 wx = ui.window_x(win) + 60;
-    i32 wy = ui.window_y(win) + 90;
+    i32 k = strbuf.reset(&f->question[0]);
+    k = strbuf.append(&f->question[0], 64, k, "Delete \"");
+    k = strbuf.append(&f->question[0], 64, k, name);
+    k = strbuf.append(&f->question[0], 64, k, "\" permanently?");
+    Option<i32> enclosing = case ui.window_of(f->list) of {
+        Ok(value) -> value;
+        Err(_) -> ({ ui.set_text(f->status, "window lookup failed"); return; });
+    };
+    i32 win = case enclosing of {
+        Some(value) -> value;
+        None -> ({ ui.set_text(f->status, "window not found"); return; });
+    };
+    i32 wx = case ui.window_x(win) of { Ok(value) -> value + 60; Err(_) -> ({ return; }); };
+    i32 wy = case ui.window_y(win) of { Ok(value) -> value + 90; Err(_) -> ({ return; }); };
     f->dialog = <Window title="Delete file?" x={wx} y={wy} w={340} h={140}>
-        <Label text={&g_question[0]} x={20} y={16} />
+        <Label text={&f->question[0]} x={20} y={16} />
         <Row x={20} y={60} w={300} h={34} gap={10}>
             <PrimaryButton text="Delete" w={110} h={34} onClick={f->confirm_delete} />
             <Button text="Cancel" w={110} h={34} onClick={f->cancel_delete} />

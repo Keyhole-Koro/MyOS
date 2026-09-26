@@ -152,21 +152,21 @@ export void draw_button(Node *n) {
     i32 face = theme.button_face();
     i32 label = theme.text_primary();
     i32 border = theme.button_border();
-    if ((style & NodeStyle::PRIMARY) != 0) {
+    if (style & NodeStyle::PRIMARY) {
         face = theme.accent();
         label = theme.on_accent();
         border = theme.accent_pressed();
-        if ((state & NodeState::PRESSED) != 0) { face = theme.accent_pressed(); }
-        else if ((state & NodeState::HOVERED) != 0) { face = theme.accent_hover(); }
+        if (state & NodeState::PRESSED) { face = theme.accent_pressed(); }
+        else if (state & NodeState::HOVERED) { face = theme.accent_hover(); }
     } else {
-        if ((state & NodeState::PRESSED) != 0) { face = theme.button_face_pressed(); }
-        else if ((state & NodeState::HOVERED) != 0) { face = theme.button_face_hover(); }
+        if (state & NodeState::PRESSED) { face = theme.button_face_pressed(); }
+        else if (state & NodeState::HOVERED) { face = theme.button_face_hover(); }
     }
     label = node_fg(n, label);
 
     graphics.fill_round_rect(x, y, w, h, r, face);
     graphics.draw_round_rect(x, y, w, h, r, s, border);
-    if ((state & NodeState::FOCUSED) != 0) {
+    if (state & NodeState::FOCUSED) {
         // Keyboard focus ring just outside the button.
         i32 ring = theme.accent();
         graphics.draw_round_rect(x - 2 * s, y - 2 * s, w + 4 * s, h + 4 * s, r + 2 * s, s, ring);
@@ -246,7 +246,8 @@ export void draw_text_area(Node *n) {
     i32 first = n->scroll;
     i32 start = dom_widgets.line_start(n, first);
     i32 row = 0;
-    i32 caret_x = -1;
+    bool has_caret = false;
+    i32 caret_x = 0;
     i32 caret_y = 0;
     while (row < rows) {
         if (start > len) { break; }
@@ -260,6 +261,7 @@ export void draw_text_area(Node *n) {
             if (cur <= start + llen) {
                 caret_x = x + pad + graphics.text_width_n(&line[0], cur - start, 0, s);
                 caret_y = ty;
+                has_caret = true;
             }
         }
         start = start + llen + 1;
@@ -267,7 +269,7 @@ export void draw_text_area(Node *n) {
     }
     if (focused != 0) {
         if (!ro) {
-            if (caret_x >= 0) {
+            if (has_caret) {
                 i32 caret = theme.caret();
                 graphics.fill_rect(caret_x, caret_y + s, s, lh - 2 * s, caret);
             }
@@ -288,11 +290,11 @@ export void draw_text_area(Node *n) {
 /**
  * Renders text rows for List or Menu controls with an optional highlighted selection row.
  * @param n Pointer to DOM Node.
- * @param hl Index of row to highlight, or -1.
+ * @param hl Index of row to highlight, or None.
  * @param hl_color Background RGB color for highlight.
  * @param hl_fg Foreground text RGB color for highlight.
  */
-export void draw_rows(Node *n, i32 hl, i32 hl_color, i32 hl_fg) {
+export void draw_rows(Node *n, Option<i32> hl, i32 hl_color, i32 hl_fg) {
     i32 s = dom.ui_scale();
     i32 x = n->x;
     i32 y = n->y;
@@ -315,7 +317,11 @@ export void draw_rows(Node *n, i32 hl, i32 hl_color, i32 hl_fg) {
         i32 llen = dom_widgets.line_len_at(n, start);
         i32 ty = y + pad + row * lh;
         i32 color = fg;
-        if (first + row == hl) {
+        bool highlighted = case hl of {
+            Some(index) -> first + row == index;
+            None -> false;
+        };
+        if (highlighted) {
             graphics.fill_round_rect(x + 4 * s, ty - s, w - 8 * s, lh + 2 * s, r, hl_color);
             color = hl_fg;
         }
@@ -336,7 +342,8 @@ export void draw_list(Node *n) {
     i32 state = n->state;
     i32 focused = state & NodeState::FOCUSED;
     draw_rows_box(n, focused);
-    i32 sel = n->sel - 1;
+    Option<i32> sel = None;
+    if (n->sel != 0) { sel = Some(n->sel - 1); }
     i32 hl = theme.accent();
     i32 hl_fg = theme.on_accent();
     if (focused == 0) {
@@ -360,7 +367,9 @@ export void draw_menu(Node *n) {
     graphics.draw_round_rect(n->x, n->y, n->w, n->h, r, s, border);
     i32 hl = theme.accent();
     i32 hl_fg = theme.on_accent();
-    draw_rows(n, n->sel - 1, hl, hl_fg);
+    Option<i32> sel = None;
+    if (n->sel != 0) { sel = Some(n->sel - 1); }
+    draw_rows(n, sel, hl, hl_fg);
 }
 
 /**
@@ -374,7 +383,7 @@ export void draw_text_node(Node *n) {
     color = node_fg(n, color);
     i32 bold = dom.text_bold(n);
     i32 style = n->style;
-    if ((style & NodeStyle::CENTER) != 0) {
+    if (style & NodeStyle::CENTER) {
         graphics.draw_label_centered(n->x, n->y, n->w, (char*)n->text, color, bold, s);
     } else {
         graphics.draw_label(n->x, n->y, (char*)n->text, color, bold, s);
@@ -445,22 +454,22 @@ export void draw_checkbox(Node *n) {
 
     i32 face = theme.checkbox_bg();
     i32 border = theme.checkbox_border();
-    if (checked != 0) {
+    if (checked) {
         face = theme.accent();
         border = theme.accent_pressed();
-        if ((state & NodeState::PRESSED) != 0) { face = theme.accent_pressed(); }
-        else if ((state & NodeState::HOVERED) != 0) { face = theme.accent_hover(); }
+        if (state & NodeState::PRESSED) { face = theme.accent_pressed(); }
+        else if (state & NodeState::HOVERED) { face = theme.accent_hover(); }
     } else {
-        if ((state & NodeState::PRESSED) != 0) { face = theme.button_face_pressed(); }
-        else if ((state & NodeState::HOVERED) != 0) { face = theme.button_face_hover(); }
+        if (state & NodeState::PRESSED) { face = theme.button_face_pressed(); }
+        else if (state & NodeState::HOVERED) { face = theme.button_face_hover(); }
     }
     graphics.fill_round_rect(x, by, box, box, r, face);
     graphics.draw_round_rect(x, by, box, box, r, s, border);
-    if ((state & NodeState::FOCUSED) != 0) {
+    if (state & NodeState::FOCUSED) {
         i32 ring = theme.accent();
         graphics.draw_round_rect(x - 2 * s, by - 2 * s, box + 4 * s, box + 4 * s, r + 2 * s, s, ring);
     }
-    if (checked != 0) {
+    if (checked) {
         // Check mark: two strokes, drawn s+1 times side by side for weight.
         i32 white = theme.on_accent();
         i32 x0 = x + box * 25 / 100;
@@ -634,6 +643,7 @@ export void draw_taskbar(Node *n) {
     graphics.draw_label(x + w - cw - 16 * s, y + (h - th) / 2, &_clock_buf[0], on_dark, 0, s);
 }
 
+/** Target identified by hit-testing a pointer position on the taskbar. */
 export enum TaskbarTarget {
     Miss,
     Launcher,
@@ -749,7 +759,7 @@ export void draw_node(Node *n) {
  * @return True if node overlaps damage area or full repaint active, false otherwise.
  */
 export bool node_in_damage(Node *n) {
-    if (dom.get_g_painting_all() != 0) { return true; } // full repaint: draw everything
+    if (dom.get_g_painting_all()) { return true; } // full repaint: draw everything
     dom.node_extent(n);
     if (dom.get_g_ext_x() + dom.get_g_ext_w() <= dom.get_g_paint_x0()) { return false; }
     if (dom.get_g_ext_y() + dom.get_g_ext_h() <= dom.get_g_paint_y0()) { return false; }
@@ -877,4 +887,3 @@ export void render_desktop() {
     render_scene();
     graphics.present();
 }
-

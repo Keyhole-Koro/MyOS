@@ -1,7 +1,7 @@
 package graphics;
 
 import display_config from "display_config.mln";
-import ui_config from "ui_config.mln";
+import ui_config from "config.mln";
 import font from "font8x8.mln";
 import font_sans from "font_sans.mln";
 import str from "../../../../toolchain/MyStdLib/str.mln";
@@ -136,11 +136,23 @@ export i32 alpha_of(i32 color) {
     return (color >> 24) & 0xFF;
 }
 
-/** Extracts the 8-bit red component (0-255) from a color. */
+/**
+ * Extracts the red component from a packed color.
+ * @param color Packed ARGB color value.
+ * @return Red component in the range 0..255.
+ */
 export i32 red_of(i32 color) { return (color >> 16) & 0xFF; }
-/** Extracts the 8-bit green component (0-255) from a color. */
+/**
+ * Extracts the green component from a packed color.
+ * @param color Packed ARGB color value.
+ * @return Green component in the range 0..255.
+ */
 export i32 green_of(i32 color) { return (color >> 8) & 0xFF; }
-/** Extracts the 8-bit blue component (0-255) from a color. */
+/**
+ * Extracts the blue component from a packed color.
+ * @param color Packed ARGB color value.
+ * @return Blue component in the range 0..255.
+ */
 export i32 blue_of(i32 color) { return color & 0xFF; }
 
 /**
@@ -1055,7 +1067,7 @@ void draw_char_clipped(i32 x, i32 y, i32 ch, i32 fg) {
         i32 col = 0;
         while (col < 8) {
             i32 mask = 128 >> col;
-            if ((bits & mask) != 0) {
+            if (bits & mask) {
                 put_pixel(x + col, y + row, fg);
             }
             col++;
@@ -1085,7 +1097,7 @@ export void draw_char(i32 x, i32 y, i32 ch, i32 fg, i32 bg) {
     if (y < g_clip_y0) { partial = 1; }
     if (x + 8 > g_clip_x1) { partial = 1; }
     if (y + 8 > g_clip_y1) { partial = 1; }
-    if (partial != 0) {
+    if (partial) {
         draw_char_clipped(x, y, ch, fg);
         return;
     }
@@ -1100,7 +1112,7 @@ export void draw_char(i32 x, i32 y, i32 ch, i32 fg, i32 bg) {
         i32 col = 0;
         while (col < 8) {
             i32 mask = 128 >> col;
-            if ((bits & mask) != 0) {
+            if (bits & mask) {
                 i32* ptr = (i32*)addr;
                 *ptr = fg;
             }
@@ -1158,7 +1170,7 @@ export void draw_char_scaled(i32 x, i32 y, i32 ch, i32 fg, i32 bg, i32 scale) {
         i32 col = 0;
         while (col < 8) {
             i32 mask = 128 >> col;
-            if ((bits & mask) != 0) {
+            if (bits & mask) {
                 fill_rect(x + col * scale, y + row * scale, scale, scale, fg);
             }
             col++;

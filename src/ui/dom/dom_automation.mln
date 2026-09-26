@@ -62,7 +62,11 @@ void dump_props(i32 id) {
  */
 void dump_node(i32 id, i32 depth) {
     print_indent(depth);
-    debug.printf("Node(id=%i, kind=%i) ", id, case dom.kind_of(id) of { Some(v) -> v; None -> -1; });
+    debug.printf("Node(id=%i) ", id);
+    case dom.kind_of(id) of {
+        Some(v) -> debug.printf("kind=%i ", v);
+        None -> debug.print("kind=? ");
+    };
     char *name = dom.name_of(id);
     if (name != 0) {
         debug.print(name);
@@ -207,6 +211,7 @@ export void write_automation_snapshot() {
  */
 export void write_automation_hit_test(i32 x, i32 y) {
     automation_raw("{\"id\":");
-    automation_i32(dom.find_at(x, y));
+    Option<i32> hit = dom.find_at(x, y);
+    automation_i32(case hit of { Some(id) -> id; None -> 0; });
     automation_raw("}");
 }

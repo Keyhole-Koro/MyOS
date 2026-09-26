@@ -3,12 +3,16 @@ package terminal;
 import elements from "../../../MyAppFramework/src/elements.mln";
 import ui from "../../../MyAppFramework/src/ui.mln";
 import { app, timer, key, on_close } from "../../../MyAppFramework/src/annotations.mln";
-import console from "../../../MyAppFramework/src/console.mln";
-import fs from "../../../MyAppFramework/src/fs.mln";
+import terminal from "../../../MyAppFramework/src/terminal.mln";
+import fs from "../../../../toolchain/MyStdLib/hosted/fs.mln";
+import process from "../../../../toolchain/MyStdLib/hosted/process.mln";
 import str from "../../../../toolchain/MyStdLib/str.mln";
 import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
-import { Result } from "../../../../toolchain/MyStdLib/result.mln";
-import { FsError } from "../../../MyAppFramework/src/fs.mln";
+import { Result, result_take_ok } from "../../../../toolchain/MyStdLib/result.mln";
+import { FsError } from "../../../../contracts/io/fs.contract.mln";
+import { SpawnError } from "../../../../contracts/process/spawn.contract.mln";
+import { LoaderError } from "../../../../contracts/process/loader.contract.mln";
+import { ProcessControlError, ProcessExitStatus } from "../../../../contracts/process/control.contract.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 
 // Terminal: a read-only TextArea for output and a command line. Lines typed
@@ -16,20 +20,34 @@ import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 // built-in commands (help, ls, cat, clear, run). `run hello` (or just
 // `hello`) loads the executable from the disk image and starts it as a
 // separate process whose stdout lands in this window (see proc/console.mln).
-// Each instance polls its own process on a @timer and prints the exit code.
+// Each instance polls its own process on a @timer and reports its exit status.
 
-i32 g_opened = 0;
+i32 opened_count = 0; // desktop placement sequence shared by Terminal windows
 
+/**
+ * Per-window state for a terminal instance.
+ * @property out DOM node ID of the output text area.
+ * @property input DOM node ID of the command input field.
+ * @property pid Attached child process ID, or zero when no program is running.
+ * @property line_buf Scratch buffer for formatted output lines.
+ * @property cmd Mutable command-line copy used by command parsing.
+ */
 struct Terminal {
     i32 out;      // output TextArea
     i32 input;    // command TextInput
     i32 pid;      // attached process, 0 = none
+    char line_buf[96];   // scratch for one formatted line
+    char cmd[96];        // mutable copy used by run_line
 };
 
 @app
+/**
+ * Builds the terminal window and focuses its command input.
+ * @return DOM node ID of the terminal window.
+ */
 i32 (Terminal *t) view() {
-    i32 off = 24 * g_opened;
-    g_opened++;
+    i32 off = 24 * opened_count;
+    opened_count++;
     i32 win = <Window title="Terminal" x={220 + off} y={40 + off} w={560} h={400}>
         <TextArea ref={t->out} name="output" x={12} y={12} w={536} h={296} capacity={6144} readonly={1} testId="terminal-output" />
         <Row x={12} y={320} w={536} h={34} gap={8}>
@@ -42,50 +60,71 @@ i32 (Terminal *t) view() {
     return win;
 }
 
+/**
+ * Appends text to the terminal output area.
+ * @param s NUL-terminated text to append.
+ */
 void (Terminal *t) say(char *s) {
     ui.area_append(t->out, s);
 }
 
+/**
+ * Appends a line of text and a newline to the terminal output area.
+ * @param s NUL-terminated line to append.
+ */
 void (Terminal *t) say_line(char *s) {
     t->say(s);
     t->say("\n");
 }
 
-char g_line_buf[96];   // scratch for one formatted line
-
 // `ls [dir]`: the root, or a directory (`ls apps`).
+/**
+ * Lists entries in a directory in the terminal output.
+ * @param dir NUL-terminated directory path; empty string selects the root.
+ */
 void (Terminal *t) cmd_ls(char *dir) {
     char name[16];
     i32 n = 0;
     i32 start = 0;
     while (1) {
-        // See files.dom.mln's refresh(): decode Result<Option> in two
-        // statement-level cases.
+        // None breaks enumeration; Err remains a distinct filesystem result.
         Result<Option<i32>, FsError> res = fs.dir_next_at(dir, start, &name[0], 16);
-        i32 idx = -1;
-        case res of {
-            Ok(v) -> ({ idx = case v of { Some(n) -> n; None -> -1; }; });
-            Err(NotFound) -> ({ t->say_line("ls: no such directory"); return; });
+        i32 idx = case res of {
+            Ok(v) -> case v of { Some(n) -> n; None -> ({ break; }); };
+            Err(FsError::NotFound) -> ({ t->say_line("ls: no such directory"); return; });
             Err(e) -> ({ t->say_line("ls: filesystem error"); return; });
         };
-        if (idx < 0) { break; }
-        i32 k = strbuf.reset(&g_line_buf[0]);
-        k = strbuf.append(&g_line_buf[0], 96, k, "  ");
-        k = strbuf.append(&g_line_buf[0], 96, k, &name[0]);
-        if (fs.is_dir(idx)) {
-            k = strbuf.append(&g_line_buf[0], 96, k, "/\n");
+        i32 k = strbuf.reset(&t->line_buf[0]);
+        k = strbuf.append(&t->line_buf[0], 96, k, "  ");
+        k = strbuf.append(&t->line_buf[0], 96, k, &name[0]);
+        Result<bool, FsError> directory = fs.is_dir(idx);
+        bool is_directory = case directory of {
+            Ok(value) -> value;
+            Err(_) -> ({ t->say_line("ls: filesystem error"); return; });
+        };
+        if (is_directory) {
+            k = strbuf.append(&t->line_buf[0], 96, k, "/\n");
         } else {
-            k = strbuf.append(&g_line_buf[0], 96, k, "  ");
-            k = strbuf.append_i32(&g_line_buf[0], 96, k, fs.entry_size(idx));
-            k = strbuf.append(&g_line_buf[0], 96, k, " bytes\n");
+            Result<i32, FsError> size_result = fs.entry_size(idx);
+            i32 size = case size_result of {
+                Ok(value) -> value;
+                Err(_) -> ({ t->say_line("ls: filesystem error"); return; });
+            };
+            k = strbuf.append(&t->line_buf[0], 96, k, "  ");
+            k = strbuf.append_i32(&t->line_buf[0], 96, k, size);
+            k = strbuf.append(&t->line_buf[0], 96, k, " bytes\n");
         }
-        t->say(&g_line_buf[0]);
+        t->say(&t->line_buf[0]);
         n++;
         start = idx + 1;
     }
     if (n == 0) { t->say_line("  (empty)"); }
 }
 
+/**
+ * Reads a file and writes its contents to the terminal output.
+ * @param path NUL-terminated file path to display.
+ */
 void (Terminal *t) cmd_cat(char *path) {
     i32 fd = case fs.open(path) of {
         Ok(v) -> v;
@@ -95,7 +134,11 @@ void (Terminal *t) cmd_cat(char *path) {
     while (1) {
         i32 got = case fs.read(fd, (i32)(&chunk[0]), 63) of {
             Ok(v) -> v;
-            Err(e) -> 0;
+            Err(_) -> ({
+                fs.close(fd);
+                t->say_line("cat: filesystem read error");
+                return;
+            });
         };
         if (got <= 0) { break; }
         chunk[got] = (char)0;
@@ -105,27 +148,47 @@ void (Terminal *t) cmd_cat(char *path) {
     t->say("\n");
 }
 
+/**
+ * Starts an executable in a child process and routes its output to this terminal.
+ * @param path NUL-terminated executable path or app name to launch.
+ */
 void (Terminal *t) cmd_run(char *path) {
     if (t->pid != 0) {
         t->say_line("a process is still running here");
         return;
     }
-    i32 pid = console.spawn_bound(path, t->out);
-    if (pid <= 0) {
-        t->say_line("run: cannot start that (no such file, or not an executable)");
-        return;
-    }
+    Result<i32, SpawnError> started = terminal.spawn_bound(path, t->out);
+    i32 pid = case started of {
+        Ok(value) -> value;
+        Err(SpawnError::NotFound) -> ({ t->say_line("run: file not found"); return; });
+        Err(SpawnError::EmptyExecutable) -> ({ t->say_line("run: not an executable"); return; });
+        Err(SpawnError::ShortRead(_)) -> ({ t->say_line("run: incomplete executable"); return; });
+        Err(SpawnError::Loader(e)) -> ({
+            case e of {
+                LoaderError::InvalidHeader(_) -> ({ t->say_line("run: not an executable"); });
+                LoaderError::InvalidBounds(_) -> ({ t->say_line("run: invalid executable layout"); });
+                _ -> ({ t->say_line("run: process could not be started"); });
+            };
+            return;
+        });
+        Err(_) -> ({ t->say_line("run: process could not be started"); return; });
+    };
     t->pid = pid;
-    i32 k = strbuf.reset(&g_line_buf[0]);
-    k = strbuf.append(&g_line_buf[0], 96, k, "[pid ");
-    k = strbuf.append_i32(&g_line_buf[0], 96, k, pid);
-    k = strbuf.append(&g_line_buf[0], 96, k, "] ");
-    k = strbuf.append(&g_line_buf[0], 96, k, path);
-    k = strbuf.append(&g_line_buf[0], 96, k, "\n");
-    t->say(&g_line_buf[0]);
+    i32 k = strbuf.reset(&t->line_buf[0]);
+    k = strbuf.append(&t->line_buf[0], 96, k, "[pid ");
+    k = strbuf.append_i32(&t->line_buf[0], 96, k, pid);
+    k = strbuf.append(&t->line_buf[0], 96, k, "] ");
+    k = strbuf.append(&t->line_buf[0], 96, k, path);
+    k = strbuf.append(&t->line_buf[0], 96, k, "\n");
+    t->say(&t->line_buf[0]);
 }
 
 // Split "cmd arg" at the first space (in place) and return the argument.
+/**
+ * Splits a mutable command line at its first space.
+ * @param line NUL-terminated command buffer, modified to end after the command word.
+ * @return Pointer to the first non-space argument, or the terminating NUL when absent.
+ */
 char* split_arg(char *line) {
     i32 i = 0;
     while (line[i] != 0) {
@@ -140,24 +203,26 @@ char* split_arg(char *line) {
     return &line[i];
 }
 
-char g_cmd[96];
-
+/**
+ * Echoes and dispatches a command line, forwarding it to an attached process when present.
+ * @param line NUL-terminated command line.
+ */
 void (Terminal *t) run_line(char *line) {
     // Echo the command line into the transcript.
     t->say("$ ");
     t->say_line(line);
 
     if (t->pid != 0) {
-        console.feed_line(t->pid, line);
+        process.feed_line(t->pid, line);
         return;
     }
     // Work on a copy: split_arg edits in place.
-    i32 k = strbuf.reset(&g_cmd[0]);
-    k = strbuf.append(&g_cmd[0], 96, k, line);
-    char *arg = split_arg(&g_cmd[0]);
-    char *cmd = &g_cmd[0];
+    i32 k = strbuf.reset(&t->cmd[0]);
+    k = strbuf.append(&t->cmd[0], 96, k, line);
+    char *arg = split_arg(&t->cmd[0]);
+    char *cmd = &t->cmd[0];
     if (cmd[0] == 0) { return; }
-    if (str.eq(cmd, "help") != 0) {
+    if (str.eq(cmd, "help")) {
         t->say_line("help          this text");
         t->say_line("ls [dir]      list the disk, or a directory (bin, apps)");
         t->say_line("cat <file>    print a file");
@@ -165,42 +230,70 @@ void (Terminal *t) run_line(char *line) {
         t->say_line("clear         clear the screen");
         return;
     }
-    if (str.eq(cmd, "ls") != 0) { t->cmd_ls(arg); return; }
-    if (str.eq(cmd, "clear") != 0) { ui.area_clear(t->out); return; }
-    if (str.eq(cmd, "cat") != 0) { t->cmd_cat(arg); return; }
-    if (str.eq(cmd, "run") != 0) { t->cmd_run(arg); return; }
+    if (str.eq(cmd, "ls")) { t->cmd_ls(arg); return; }
+    if (str.eq(cmd, "clear")) { ui.area_clear(t->out); return; }
+    if (str.eq(cmd, "cat")) { t->cmd_cat(arg); return; }
+    if (str.eq(cmd, "run")) { t->cmd_run(arg); return; }
     t->cmd_run(cmd);
 }
 
 // Enter anywhere in the window, or the Run button, submits the command line.
 @key("Enter")
+/**
+ * Submits the current input text as a terminal command.
+ * @param id DOM node ID supplied by the key/button event.
+ */
 void (Terminal *t) submit(i32 id) {
-    ui.text_copy(t->input, &g_line_buf[0], 96);
+    ui.text_copy(t->input, &t->line_buf[0], 96);
     ui.input_set(t->input, "");
-    t->run_line(&g_line_buf[0]);
+    t->run_line(&t->line_buf[0]);
     ui.focus(t->input);
 }
 
 // Poll the attached process; report and reap it once it exits.
 @timer(100)
+/** Checks the attached child process and reports/reaps it after exit. */
 void (Terminal *t) poll() {
     if (t->pid == 0) { return; }
-    if (!console.has_exited(t->pid)) { return; }
     i32 pid = t->pid;
-    i32 code = console.reap(pid);
+    Result<bool, ProcessControlError> status = process.has_exited(pid);
+    bool exited = case status of {
+        Ok(value) -> value;
+        Err(ProcessControlError::InvalidPid(_)) -> true;
+        Err(ProcessControlError::NotExited(_)) -> false;
+    };
+    if (!exited) { return; }
+    Result<ProcessExitStatus, ProcessControlError> reaped = process.reap(pid);
+    ProcessExitStatus exit_status;
+    bool got_status = result_take_ok<ProcessExitStatus, ProcessControlError>(&reaped, &exit_status);
     t->pid = 0;
-    i32 k = strbuf.reset(&g_line_buf[0]);
-    k = strbuf.append(&g_line_buf[0], 96, k, "[pid ");
-    k = strbuf.append_i32(&g_line_buf[0], 96, k, pid);
-    k = strbuf.append(&g_line_buf[0], 96, k, " exited with ");
-    k = strbuf.append_i32(&g_line_buf[0], 96, k, code);
-    k = strbuf.append(&g_line_buf[0], 96, k, "]\n");
-    t->say(&g_line_buf[0]);
+    i32 k = strbuf.reset(&t->line_buf[0]);
+    k = strbuf.append(&t->line_buf[0], 96, k, "[pid ");
+    k = strbuf.append_i32(&t->line_buf[0], 96, k, pid);
+    if (got_status) {
+        case exit_status of {
+            ProcessExitStatus::Code(code) -> ({
+                k = strbuf.append(&t->line_buf[0], 96, k, " exited with ");
+                k = strbuf.append_i32(&t->line_buf[0], 96, k, code);
+            });
+            ProcessExitStatus::PageFault -> ({
+                k = strbuf.append(&t->line_buf[0], 96, k, " terminated by page fault");
+            });
+            ProcessExitStatus::PrivilegeViolation -> ({
+                k = strbuf.append(&t->line_buf[0], 96, k, " terminated by privilege violation");
+            });
+        };
+    } else {
+        k = strbuf.append(&t->line_buf[0], 96, k, " could not be reaped");
+    }
+    k = strbuf.append(&t->line_buf[0], 96, k, "]\n");
+    t->say(&t->line_buf[0]);
 }
 
 // Closing the window while a process is attached: stop routing its output
 // to a TextArea that no longer exists.
 @on_close
+/** Unbinds the child process from this terminal's output node before close. */
 void (Terminal *t) closing() {
-    if (t->pid != 0) { console.unbind(t->pid); }
+    if (t->pid != 0) { terminal.unbind(t->pid); }
 }

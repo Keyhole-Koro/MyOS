@@ -16,7 +16,7 @@ i32 CMD_DOM_HIT_TEST = 2;
  */
 export void run() {
     while (1) {
-        if (automation_transport.has_request() != 0) {
+        if (automation_transport.has_request()) {
             i32 command = automation_transport.read_request();
             // Reading the tree while the UI server is mid-pass would give a
             // torn picture: take the DOM lock for the dump.

@@ -80,6 +80,15 @@ def main() -> int:
             os._press("enter")
             wait_text_contains(term_out, "readme.txt")
 
+            # A typed Err crosses the syscall boundary; there is no negative
+            # integer convention in the hosted FS API.
+            os._type("cat definitely-missing")
+            os._press("enter")
+            wait_text_contains(term_out, "cat: no such file")
+            os._type("ls definitely-missing")
+            os._press("enter")
+            wait_text_contains(term_out, "ls: no such directory")
+
             # 2. The editor saves a new file to the disk.
             launch_app(os, 1)  # Editor (menu is alphabetical: Counter, Editor, Files, Notes, Terminal)
             editor = os.get_by_role("window", name="Editor")
@@ -109,6 +118,19 @@ def main() -> int:
             listing = os.get_by_test_id("file-list").snapshot().text
             for name in ("bin/", "apps/", "readme.txt", "note.txt"):
                 assert name in listing, f"{name} missing from the file list:\n{listing}"
+
+            # Result<_, FsError> also crosses intact. Delete an existing file
+            # and require the Ok arm to refresh the listing.
+            note_row = next(i for i, row in enumerate(listing.split("\n"))
+                            if row.startswith("note.txt"))
+            list_box = os.get_by_test_id("file-list").snapshot().bounds
+            click_point(os, list_box.x + 40, list_box.y + 20 + 39 * note_row)
+            os.get_by_role("button", name="Delete").click()
+            os.get_by_role("window", name="Delete file?").get_by_role("button", name="Delete").click()
+            wait_text_contains(os.get_by_test_id("files-status"), "deleted")
+            listing = os.get_by_test_id("file-list").snapshot().text
+            assert not any(row.startswith("note.txt") for row in listing.split("\n")), \
+                f"deleted file remains:\n{listing}"
 
             # 4. Entering a directory: activate "bin/" (double-click = click the
             #    selected row again) and the programs are listed; ".." leads back.

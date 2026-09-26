@@ -5,10 +5,12 @@ import heap from "../../../../MyKernel/src/mm/heap.mln";
 import scheduler from "../../../../MyKernel/src/kernel/scheduler.mln";
 import graphics from "../graphics.mln";
 import theme from "../theme.mln";
-import ui_events from "../ui_events.mln";
+import ui_event from "../events.mln";
 import irq from "../../../../MyKernel/src/arch/irq.mln";
-import { UiEventKind } from "../../../../MyAppFramework/src/protocol/ui.mln";
+import { UiEventKind } from "../events.mln";
 import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
+import { Result } from "../../../../../toolchain/MyStdLib/result.mln";
+import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
 
 // Kernel object tree + UI DOM. See docs/DOM_SPEC.md and MYOS-014.
 //
@@ -21,6 +23,7 @@ import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
 // z-order (later on top); bring_to_front re-links a window to the end.
 
 // --- node kinds --------------------------------------------------------------
+/** Structural and interactive node types supported by the DOM renderer. */
 export enum NodeKind {
     ROOT,
     SYSTEM,
@@ -47,6 +50,7 @@ export enum NodeKind {
     MENU,
 }
 
+/** Accessibility and automation roles assigned to DOM nodes. */
 export enum NodeRole {
     NONE,
     ROOT,
@@ -63,6 +67,7 @@ export enum NodeRole {
     MENU,
 }
 
+/** Bit flags describing visibility, interaction, focus, and widget state. */
 export enum NodeState {
     VISIBLE      = 0b0000001,
     ENABLED      = 0b0000010,
@@ -76,6 +81,7 @@ export enum NodeState {
     TEXT_OWNED   = 512,       // `text` is a heap copy this node frees (set_text_copy)
 }
 
+/** Presentation flags that change how text and controls are rendered. */
 export enum NodeStyle {
     BOLD     = 1, // Text: heavier face
     PRIMARY  = 2, // Button: accent-coloured call to action
@@ -96,9 +102,9 @@ export enum NodeStyle {
 // the node, `arg` event data (a key handler gets code | mods << 16).
 // The on_* fields hold server-side functions only -- the taskbar, menus,
 // the shell's window-close hook, the clock. A node an app owns (owner != 0)
-// never carries a function pointer: what happens to it is emitted as a UI
-// protocol event (emit -> ui_events) and the app's own runtime calls the
-// handler. Server handlers are not called where the event is detected
+// never carries a function pointer: what happens to it is emitted through
+// the UI event port; the IPC event endpoint turns that into a protocol event,
+// and the app's own runtime calls the handler. Server handlers are not called where the event is detected
 // either: they are queued (push_event) and run by drain_events() at a point
 // the compositor chooses, with g_current_owner set so anything the handler
 // creates is owned by the same app.
@@ -194,7 +200,16 @@ export i32 g_current_owner = 0;
 // the automation snapshot ("starting") so a test harness can tell a
 // desktop that is still booting from a settled one.
 i32 g_apps_starting = 0;
+/**
+ * Adjusts the count of app processes still waiting to create their first window.
+ * @param delta Amount to add or subtract; the stored count is clamped at zero.
+ */
 export void note_app_starting(i32 delta) { g_apps_starting = g_apps_starting + delta; if (g_apps_starting < 0) { g_apps_starting = 0; } }
+
+/**
+ * Returns the number of apps still starting their first window.
+ * @return Nonnegative count of app launches awaiting a window.
+ */
 export i32 apps_starting() { return g_apps_starting; }
 
 // Installed by the app framework: i32 filter(owner, code, mods) sees every
@@ -225,27 +240,44 @@ i32 g_free_count = 0;
 i32 g_owner_nodes_owner[32];   // per-owner node counts, 0 = free slot
 i32 g_owner_nodes_count[32];
 
-i32 owner_slot(i32 owner, i32 make) {
-    i32 free = -1;
+Option<i32> owner_slot(i32 owner, i32 make) {
+    Option<i32> free = None;
     i32 i = 0;
     while (i < 32) {
-        if (g_owner_nodes_owner[i] == owner) { return i; }
-        if (g_owner_nodes_owner[i] == 0 && free < 0) { free = i; }
+        if (g_owner_nodes_owner[i] == owner) { return Some(i); }
+        if (g_owner_nodes_owner[i] == 0) {
+            case free of {
+                None -> ({ free = Some(i); });
+                Some(_) -> _;
+            };
+        }
         i++;
     }
-    if (make == 0) { return -1; }
-    if (free < 0) { return -1; }
-    g_owner_nodes_owner[free] = owner;
-    g_owner_nodes_count[free] = 0;
-    return free;
+    if (make == 0) { return None; }
+    i32 slot = case free of {
+        Some(v) -> v;
+        None -> ({ return None; });
+    };
+    g_owner_nodes_owner[slot] = owner;
+    g_owner_nodes_count[slot] = 0;
+    return Some(slot);
 }
 
-// Nodes the owner holds right now.
+/**
+ * Returns the number of DOM nodes currently owned by a process.
+ * @param owner Process ID whose nodes are counted.
+ * @return Current owned-node count, or 0 if the owner has no tracked nodes.
+ */
 export i32 nodes_of(i32 owner) {
-    i32 s = owner_slot(owner, 0);
-    if (s < 0) { return 0; }
-    return g_owner_nodes_count[s];
+    return case owner_slot(owner, 0) of {
+        Some(s) -> g_owner_nodes_count[s];
+        None -> 0;
+    };
 }
+/**
+ * Returns the backing table of DOM node pointers for renderer traversal.
+ * @return Pointer to the first entry in the node table.
+ */
 export Node **get_g_node_table() { return (Node**)(&g_node_table[0]); }
 
 // Registered timers (ids), scanned by tick().
@@ -337,13 +369,17 @@ export bool node_exists(i32 id) {
  * @param name Null-terminated node name string.
  * @return Newly allocated Node ID.
  */
-export i32 create_node(i32 kind, char *name) {
-    // The owner's share first: an app past its limit gets 0, not a panic.
-    i32 oslot = -1;
+export Result<i32, UiError> create_node(i32 kind, char *name) {
+    i32 oslot = 0;
+    bool has_owner_slot = false;
     if (g_current_owner != 0) {
-        oslot = owner_slot(g_current_owner, 1);
-        if (oslot < 0) { return 0; }
-        if (g_owner_nodes_count[oslot] >= NODES_PER_OWNER) { return 0; }
+        oslot = case owner_slot(g_current_owner, 1) of {
+            Some(v) -> ({ has_owner_slot = true; v; });
+            None -> ({ return Err(UiError::OwnerTableFull(g_current_owner)); });
+        };
+        if (g_owner_nodes_count[oslot] >= NODES_PER_OWNER) {
+            return Err(UiError::OwnerNodeLimit(g_current_owner));
+        }
     }
     i32 id = 0;
     if (g_free_count > 0) {
@@ -351,15 +387,20 @@ export i32 create_node(i32 kind, char *name) {
         id = g_free_ids[g_free_count];
     } else {
         if (g_next_node_id >= NODE_IDS) {
-            if (g_current_owner != 0) { return 0; }
-            debug.panic("dom: out of node ids");
+            return Err(UiError::NodeIdLimit);
         }
         id = g_next_node_id;
         g_next_node_id = g_next_node_id + 1;
     }
-    if (oslot >= 0) { g_owner_nodes_count[oslot] = g_owner_nodes_count[oslot] + 1; }
+    if (has_owner_slot) { g_owner_nodes_count[oslot] = g_owner_nodes_count[oslot] + 1; }
 
     Node *n = (Node *)heap.alloc(NODE_SIZE);
+    if (n == 0) {
+        if (has_owner_slot) { g_owner_nodes_count[oslot] = g_owner_nodes_count[oslot] - 1; }
+        g_free_ids[g_free_count] = id;
+        g_free_count = g_free_count + 1;
+        return Err(UiError::AllocationFailed(NODE_SIZE));
+    }
 
     n->id = (u16)id;
     n->kind = (u16)kind;
@@ -403,18 +444,27 @@ export i32 create_node(i32 kind, char *name) {
 
     g_node_table[id] = n;
     touch();
-    return id;
+    return Ok(id);
 }
 
 // --- ownership ------------------------------------------------------------------------
 
+/**
+ * Returns the process that owns a DOM node.
+ * @param id DOM node ID.
+ * @return Owner process ID, or 0 for an invalid or system-owned node.
+ */
 export i32 owner_of(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return 0; }
     return n->owner;
 }
 
-// Re-stamp a subtree with `owner`, for trees built before the owner existed.
+/**
+ * Assigns an owner process ID recursively to a node and its descendants.
+ * @param id Root DOM node ID of the subtree.
+ * @param owner Process ID to assign, or 0 for system ownership.
+ */
 export void set_owner(i32 id, i32 owner) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -427,15 +477,34 @@ export void set_owner(i32 id, i32 owner) {
     }
 }
 
+/**
+ * Installs the key-down filter called before the focused widget receives a key.
+ * @param handler Callback (owner, key_code, modifiers) returning nonzero to consume the key; 0 disables it.
+ */
 export void set_key_filter(i32 handler) { g_key_filter = handler; }
+
+/**
+ * Returns the currently installed key-filter callback.
+ * @return Callback function pointer, or 0 if no filter is installed.
+ */
 export i32 key_filter() { return g_key_filter; }
 
+/**
+ * Returns the app process ID whose view or event handler is currently running.
+ * @return Current app owner, or 0 while system-owned code is running.
+ */
 export i32 current_owner() { return g_current_owner; }
+
+/**
+ * Sets the owner stamped onto DOM nodes created by subsequent operations.
+ * @param owner Process ID to make current, or 0 for system-owned nodes.
+ */
 export void set_current_owner(i32 owner) { g_current_owner = owner; }
 
-// Delete every node an app instance owns: its windows, any dialog it opened
-// and its timers. Ids are walked in order; a node freed as part of an
-// earlier subtree simply reads back as absent.
+/**
+ * Removes every DOM node owned by an application process, including its windows, dialogs, and timers.
+ * @param owner Process ID whose nodes should be removed; zero is ignored.
+ */
 export void remove_owned(i32 owner) {
     if (owner == 0) { return; }
     i32 id = 1;
@@ -450,8 +519,14 @@ export void remove_owned(i32 owner) {
 
 // --- event queue ----------------------------------------------------------------------
 
-// Queue a handler call. A full queue drops the event: the alternative,
-// running it inline, is exactly what the queue exists to avoid.
+/**
+ * Queues a server-side event handler call for later execution.
+ * A full event queue drops the event rather than calling the handler inline.
+ * @param handler Callback function pointer to enqueue; zero is ignored.
+ * @param owner Process ID associated with the queued handler.
+ * @param id DOM node ID associated with the event.
+ * @param arg Event-specific integer argument.
+ */
 export void push_event(i32 handler, i32 owner, i32 id, i32 arg) {
     if (handler == 0) { return; }
     i32 next = g_event_tail + 1;
@@ -465,17 +540,26 @@ export void push_event(i32 handler, i32 owner, i32 id, i32 arg) {
     g_event_tail = next;
 }
 
+/**
+ * Checks whether the DOM event queue contains a handler call.
+ * @return 1 when an event is pending, otherwise 0.
+ */
 export i32 has_events() {
     if (g_event_head == g_event_tail) { return 0; }
     return 1;
 }
 
-// Something happened to node `n`: an app-owned node emits a protocol event
-// to its owner (the app's runtime runs the handler); a server node queues
-// its own `handler`, if any. Returns 1 when either was done.
+/**
+ * Routes a node event to its owning app or queues a server-side callback.
+ * @param n Node that produced the event.
+ * @param kind UiEventKind event code.
+ * @param handler Server-side callback to queue when the node has no app owner.
+ * @param arg Event-specific integer argument.
+ * @return 1 when an app event or callback was delivered/queued, otherwise 0.
+ */
 export i32 emit(Node *n, i32 kind, i32 handler, i32 arg) {
     if (n->owner != 0) {
-        ui_events.push(n->owner, n->id, kind, arg, 0, (char*)0);
+        ui_event.emit(n->owner, n->id, kind, arg);
         return 1;
     }
     if (handler == 0) { return 0; }
@@ -483,9 +567,10 @@ export i32 emit(Node *n, i32 kind, i32 handler, i32 arg) {
     return 1;
 }
 
-// Run every queued handler, in order, each with g_current_owner set to the
-// app it belongs to. Handlers may queue further events; those run in the
-// same pass.
+/**
+ * Runs queued server-side handlers in order with the associated owner context set.
+ * Handlers may enqueue more events, which are drained in the same pass.
+ */
 export void drain_events() {
     while (g_event_head != g_event_tail) {
         i32 at = g_event_head * 4;
@@ -514,11 +599,11 @@ i32 g_lock = 0;      // held
 i32 g_want = 0;      // tasks waiting for it
 i32 g_handoff = 0;   // unlock() passed the lock straight to a waiter
 
-// Take the lock. A waiter sleeps a tick at a time; when the holder lets go
-// while someone waits, the lock is handed over rather than released, so a
-// long-running holder (the UI server's pass) cannot grab it again ahead of
-// a task that was already waiting -- the automation dump would otherwise
-// starve behind the compositor.
+/**
+ * Acquires the DOM lock, sleeping until ownership is handed to this task when contended.
+ * Unlock hands the lock directly to a waiter so the compositor cannot starve
+ * the automation reader by repeatedly reacquiring it.
+ */
 export void lock() {
     i32 was = irq.save_disable();
     if (g_lock == 0) {
@@ -541,6 +626,7 @@ export void lock() {
     }
 }
 
+/** Releases the DOM lock, handing it directly to a waiting task when one exists. */
 export void unlock() {
     i32 was = irq.save_disable();
     if (g_want != 0) {
@@ -575,13 +661,29 @@ export i32 parent_of(i32 id) {
     return n->parent;
 }
 
-/** Returns the absolute X coordinate in screen pixels of a node. */
+/**
+ * Returns the absolute X coordinate of a node in screen pixels.
+ * @param id DOM node ID.
+ * @return X coordinate, or 0 when the node ID is invalid.
+ */
 export i32 node_x(i32 id) { Node *n = node_ptr(id); if (n == 0) { return 0; } return n->x; }
-/** Returns the absolute Y coordinate in screen pixels of a node. */
+/**
+ * Returns the absolute Y coordinate of a node in screen pixels.
+ * @param id DOM node ID.
+ * @return Y coordinate, or 0 when the node ID is invalid.
+ */
 export i32 node_y(i32 id) { Node *n = node_ptr(id); if (n == 0) { return 0; } return n->y; }
-/** Returns the width in screen pixels of a node. */
+/**
+ * Returns the width of a node in screen pixels.
+ * @param id DOM node ID.
+ * @return Width, or 0 when the node ID is invalid.
+ */
 export i32 node_w(i32 id) { Node *n = node_ptr(id); if (n == 0) { return 0; } return n->w; }
-/** Returns the height in screen pixels of a node. */
+/**
+ * Returns the height of a node in screen pixels.
+ * @param id DOM node ID.
+ * @return Height, or 0 when the node ID is invalid.
+ */
 export i32 node_h(i32 id) { Node *n = node_ptr(id); if (n == 0) { return 0; } return n->h; }
 
 /**
@@ -710,7 +812,7 @@ export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
 
     i32 i = 0;
     while (i < g_damage_count) {
-        if (rects_touch(x0, y0, x1, y1, g_damage_x0[i], g_damage_y0[i], g_damage_x1[i], g_damage_y1[i]) != 0) {
+        if (rects_touch(x0, y0, x1, y1, g_damage_x0[i], g_damage_y0[i], g_damage_x1[i], g_damage_y1[i])) {
             damage_union_into(i, x0, y0, x1, y1);
             return;
         }
@@ -787,7 +889,7 @@ export void clear_damage() {
  * @return 1 if bold, 0 otherwise.
  */
 export i32 text_bold(Node *n) {
-    if ((n->style & NodeStyle::BOLD) != 0) { return 1; }
+    if (n->style & NodeStyle::BOLD) { return 1; }
     return 0;
 }
 
@@ -967,7 +1069,7 @@ export void set_text(i32 id, char *text) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
     damage_node(id);   // old string's extent
-    if ((n->state & NodeState::TEXT_OWNED) != 0) {
+    if (n->state & NodeState::TEXT_OWNED) {
         if (n->text != 0) { heap.free((i32)n->text); }
         n->state = (u16)(n->state & ~NodeState::TEXT_OWNED);
     }
@@ -986,9 +1088,12 @@ export void set_text(i32 id, char *text) {
     touch();
 }
 
-// set_text with a copy the node owns: for text that comes from an app
-// (another address space, or a buffer it will reuse). Freed when the text
-// is replaced or the node removed.
+/**
+ * Copies text into kernel-owned storage before assigning it to a DOM node.
+ * The copy is freed when replaced or when the node is removed.
+ * @param id DOM node ID whose text should be replaced.
+ * @param text NUL-terminated source text to copy.
+ */
 export void set_text_copy(i32 id, char *text) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
@@ -1149,7 +1254,7 @@ export bool get_state_flag(i32 id, i32 flag) {
     Node *n = node_ptr(id);
     if (n == 0) { return false; }
     i32 state = n->state;
-    if ((state & flag) != 0) { return true; }
+    if (state & flag) { return true; }
     return false;
 }
 
@@ -1307,6 +1412,7 @@ export void set_on_close(i32 id, i32 handler) {
 /**
  * Returns a node's registered close handler function pointer, if any.
  * @param id DOM Node ID.
+ * @return Close handler function pointer, or 0 when none is registered or the ID is invalid.
  */
 export i32 on_close_of(i32 id) {
     Node *n = node_ptr(id);
@@ -1323,8 +1429,12 @@ export void fire_change(Node *n) {
     emit(n, UiEventKind::CHANGE, n->on_change, 0);
 }
 
-// Queue a node's click handler, if any. Checkboxes toggle first, so the
-// handler observes the new state. Returns 1 if a handler was queued, else 0.
+/**
+ * Dispatches a click to the node's owner or registered server-side handler.
+ * Checkboxes toggle before the event is queued.
+ * @param id DOM node ID that was clicked.
+ * @return 1 when an app event or handler was queued, otherwise 0.
+ */
 export i32 dispatch_click(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return 0; }
@@ -1355,12 +1465,13 @@ export void content_origin(Node *parent) {
  * Appends a child node to a parent node, shifting coordinates and updating layout.
  * @param parent_id DOM Node ID of parent.
  * @param child_id DOM Node ID of child to append.
+ * @return Ok(_) on success, or Err(UiError::NodeNotFound) if either node ID is invalid.
  */
-export void append_child(i32 parent_id, i32 child_id) {
+export Result<_, UiError> append_child(i32 parent_id, i32 child_id) {
     Node *parent = node_ptr(parent_id);
     Node *child = node_ptr(child_id);
-    if (parent == 0) { return; }
-    if (child == 0) { return; }
+    if (parent == 0) { return Err(UiError::NodeNotFound(parent_id)); }
+    if (child == 0) { return Err(UiError::NodeNotFound(child_id)); }
 
     child->parent = (u16)parent_id;
     child->next_sibling = 0;
@@ -1391,6 +1502,7 @@ export void append_child(i32 parent_id, i32 child_id) {
     // after linking so the new child participates immediately.
     relayout_container(parent);
     touch();
+    return Ok(_);
 }
 
 /**
@@ -1486,16 +1598,18 @@ export void free_subtree(i32 id) {
             i++;
         }
     }
-    if (owns_buffer(n) != 0 || (n->state & NodeState::TEXT_OWNED) != 0) {
+    if (owns_buffer(n) || (n->state & NodeState::TEXT_OWNED)) {
         if (n->text != 0) { heap.free((i32)n->text); }
     }
     if (g_menu_id == id) { g_menu_id = 0; }
     if (n->owner != 0) {
-        i32 oslot = owner_slot(n->owner, 0);
-        if (oslot >= 0) {
-            g_owner_nodes_count[oslot] = g_owner_nodes_count[oslot] - 1;
-            if (g_owner_nodes_count[oslot] <= 0) { g_owner_nodes_owner[oslot] = 0; }
-        }
+        case owner_slot(n->owner, 0) of {
+            Some(oslot) -> ({
+                g_owner_nodes_count[oslot] = g_owner_nodes_count[oslot] - 1;
+                if (g_owner_nodes_count[oslot] <= 0) { g_owner_nodes_owner[oslot] = 0; }
+            });
+            None -> _;
+        };
     }
     g_node_table[id] = (Node*)0;
     g_free_ids[g_free_count] = id;
@@ -1645,7 +1759,10 @@ export void set_g_active_window(i32 v) { g_active_window = v; }
  * Returns the currently active top-level window node ID.
  * @return Active window DOM Node ID, or 0 if none.
  */
-export i32 active_window() { return g_active_window; }
+export Option<i32> active_window() {
+    if (g_active_window == 0) { return None; }
+    return Some(g_active_window);
+}
 /** Gets focused node ID. @return Focused node ID. */
 export i32 get_g_focus_id() { return g_focus_id; }
 /** Sets focused node ID. @param v Node ID to focus. */
@@ -1753,7 +1870,7 @@ export i32 hit_test(i32 node_id, i32 px, i32 py) {
     bool inside = node_contains(n, px, py);
     i32 found = 0;
     if (inside) {
-        if ((n->state & NodeState::HIT_TESTABLE) != 0) {
+        if (n->state & NodeState::HIT_TESTABLE) {
             found = node_id;
         }
     }
@@ -1781,14 +1898,14 @@ export i32 hit_test(i32 node_id, i32 px, i32 py) {
  * @param y Screen Y coordinate.
  * @return Topmost DOM Node ID, or 0 if background.
  */
-export i32 find_at(i32 x, i32 y) {
+export Option<i32> find_at(i32 x, i32 y) {
     if (g_menu_id != 0) {
         i32 m = hit_test(g_menu_id, x, y);
-        if (m != 0) { return m; }
+        if (m != 0) { return Some(m); }
     }
     if (g_taskbar_id != 0) {
         i32 tb = hit_test(g_taskbar_id, x, y);
-        if (tb != 0) { return tb; }
+        if (tb != 0) { return Some(tb); }
     }
     i32 child_id = first_child(g_desktop_node_id);
     i32 found = 0;
@@ -1803,42 +1920,57 @@ export i32 find_at(i32 x, i32 y) {
         }
         child_id = next_sibling(child_id);
     }
-    return found;
+    if (found == 0) { return None; }
+    return Some(found);
 }
 
 // --- init ------------------------------------------------------------------------------------------
+
+i32 require_system_node(Result<i32, UiError> result) {
+    return case result of {
+        Ok(id) -> id;
+        Err(_) -> ({ debug.panic("dom: failed to construct system DOM"); 0; });
+    };
+}
+
+void require_system_append(Result<_, UiError> result) {
+    case result of {
+        Ok(_) -> _;
+        Err(_) -> ({ debug.panic("dom: failed to link system DOM"); });
+    };
+}
 
 /**
  * Initializes graphics subsystem and constructs the initial DOM tree hierarchy.
  */
 export void init() {
     graphics.init();
-    i32 root = create_node(NodeKind::ROOT, "root");
+    i32 root = require_system_node(create_node(NodeKind::ROOT, "root"));
     g_root_node_id = root;
     set_role(root, NodeRole::ROOT);
 
-    i32 sys = create_node(NodeKind::SYSTEM, "system");
-    append_child(root, sys);
+    i32 sys = require_system_node(create_node(NodeKind::SYSTEM, "system"));
+    require_system_append(append_child(root, sys));
 
-    i32 proc = create_node(NodeKind::PROCESS, "process");
-    append_child(sys, proc);
+    i32 proc = require_system_node(create_node(NodeKind::PROCESS, "process"));
+    require_system_append(append_child(sys, proc));
 
-    i32 dev = create_node(NodeKind::DEVICE, "device");
-    append_child(sys, dev);
+    i32 dev = require_system_node(create_node(NodeKind::DEVICE, "device"));
+    require_system_append(append_child(sys, dev));
 
-    i32 fs_node = create_node(NodeKind::DIRECTORY, "fs");
-    append_child(dev, fs_node);
+    i32 fs_node = require_system_node(create_node(NodeKind::DIRECTORY, "fs"));
+    require_system_append(append_child(dev, fs_node));
 
-    i32 ui = create_node(NodeKind::UI, "ui");
-    append_child(sys, ui);
+    i32 ui = require_system_node(create_node(NodeKind::UI, "ui"));
+    require_system_append(append_child(sys, ui));
 
-    i32 desktop = create_node(NodeKind::DESKTOP, "desktop");
-    append_child(ui, desktop);
+    i32 desktop = require_system_node(create_node(NodeKind::DESKTOP, "desktop"));
+    require_system_append(append_child(ui, desktop));
     g_desktop_node_id = desktop;
     set_role(desktop, NodeRole::DESKTOP);
 
-    i32 timers = create_node(NodeKind::UI, "timers");
-    append_child(ui, timers);
+    i32 timers = require_system_node(create_node(NodeKind::UI, "timers"));
+    require_system_append(append_child(ui, timers));
     g_timers_node_id = timers;
     g_timer_count = 0;
 
@@ -1851,19 +1983,22 @@ export void init() {
  * Creates and docks the taskbar at the bottom of the desktop screen.
  * @return Taskbar DOM Node ID.
  */
-export i32 create_taskbar() {
-    if (g_taskbar_id != 0) { return g_taskbar_id; }
+export Result<i32, UiError> create_taskbar() {
+    if (g_taskbar_id != 0) { return Ok(g_taskbar_id); }
     i32 s = ui_scale();
     i32 h = theme.taskbar_h() * s;
     i32 dw = graphics.display_width();
     i32 dh = graphics.display_height();
-    i32 id = create_node(NodeKind::TASKBAR, "taskbar");
+    i32 id = case create_node(NodeKind::TASKBAR, "taskbar") of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
     set_role(id, NodeRole::TOOLBAR);
     set_text(id, "taskbar");
     set_bounds(id, 0, dh - h, dw, h);
     set_state_flag(id, NodeState::VISIBLE, 1);
     set_state_flag(id, NodeState::HIT_TESTABLE, 1);
-    append_child(g_desktop_node_id, id);
+    case append_child(g_desktop_node_id, id) of {
+        Ok(_) -> _;
+        Err(e) -> ({ remove_node(id); return Err(e); });
+    };
     g_taskbar_id = id;
-    return id;
+    return Ok(id);
 }

@@ -21,6 +21,12 @@ import { app } from "../../../MyAppFramework/src/annotations.mln";
 // Window's children start below its title bar. Column and Row position their
 // own children, so those need only sizes.
 
+/**
+ * Per-window state for the click-counter application.
+ * @property clicks Current accumulated click count.
+ * @property step Amount added by each click, selected by the checkbox.
+ * @property label DOM node ID of the text label displaying the count.
+ */
 struct Counter {
     i32 clicks;
     i32 step;
@@ -28,6 +34,9 @@ struct Counter {
 };
 
 @app
+/** Builds the counter window and initializes its per-instance increment step.
+ * @return DOM node ID of the newly created window.
+ */
 i32 (ref mut Counter c) view() {
     c.step = 1;
     i32 muted = ui.rgb(0x6B, 0x72, 0x80);
@@ -46,15 +55,24 @@ i32 (ref mut Counter c) view() {
     </Window>;
 }
 
+/** Refreshes the count label from the current counter state. */
 void (ref mut Counter c) refresh() {
     ui.set_text_fmt(c.label, "clicks: %d", c.clicks, 0);
 }
 
+/**
+ * Adds the configured step and refreshes the count label.
+ * @param id DOM node ID supplied by the click event.
+ */
 void (ref mut Counter c) click(i32 id) {
     c.clicks = c.clicks + c.step;
     c.refresh();
 }
 
+/**
+ * Resets the count to zero and refreshes the display.
+ * @param id DOM node ID supplied by the reset-button event.
+ */
 void (ref mut Counter c) reset(i32 id) {
     c.clicks = 0;
     c.refresh();
@@ -62,6 +80,10 @@ void (ref mut Counter c) reset(i32 id) {
 
 // Checkbox: the toggle happens before the handler runs, so reading the
 // node gives the new state.
+/**
+ * Selects an increment step of one or two from the checkbox state.
+ * @param id Checkbox DOM node ID whose checked state has just changed.
+ */
 void (ref mut Counter c) step_changed(i32 id) {
     c.step = 1;
     if (ui.is_checked(id)) { c.step = 2; }

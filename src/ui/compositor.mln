@@ -1,4 +1,5 @@
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 package compositor;
 
 import dom from "dom/dom.mln";
@@ -10,9 +11,15 @@ import mouse from "../../../MyKernel/src/io/mouse.mln";
 import keyboard from "../../../MyKernel/src/io/keyboard.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import irq from "../../../MyKernel/src/arch/irq.mln";
-// The server's end of the UI protocol (system/MyAppFramework/src/protocol/ui.mln):
-// the request carrier apps call, served from the loop below.
-import ui_channel from "ui_channel.mln";
+
+// Work owned by outer boundary endpoints that must run on this task. Boot wires
+// the callback; the compositor does not depend on request transport.
+i32 g_request_pump = 0;
+/**
+ * Registers the callback that drains work owned by an outer request endpoint.
+ * @param pump Callback function pointer, or 0 when no request pump is installed.
+ */
+export void set_request_pump(i32 pump) { g_request_pump = pump; }
 
 // Presents the DOM scene and turns mouse and keyboard events into DOM
 // interactions: hover, press/click, window focus and z-order, title-bar
@@ -70,6 +77,7 @@ export void set_desktop_menu(char *items, i32 handler) {
     g_desktop_menu_handler = handler;
 }
 
+/** Actions available in a window's context menu. */
 enum WindowMenuAction {
     MINIMIZE,
     MAXIMIZE,
@@ -99,20 +107,21 @@ void on_press(i32 ex, i32 ey) {
     // A click while a menu is open either picks an item or dismisses the
     // menu; either way it goes no further.
     if (dom_widgets.menu_id() != 0) {
-        i32 mhit = dom.find_at(ex, ey);
-        if (mhit == dom_widgets.menu_id()) {
-            dom_widgets.menu_click(ex, ey);
-        } else {
-            dom_widgets.close_menu();
-        }
+        Option<i32> mhit = dom.find_at(ex, ey);
+        case mhit of {
+            Some(id) -> ({
+                if (id == dom_widgets.menu_id()) { dom_widgets.menu_click(ex, ey); }
+                else { dom_widgets.close_menu(); }
+            });
+            None -> ({ dom_widgets.close_menu(); });
+        };
         return;
     }
 
-    i32 hit = dom.find_at(ex, ey);
-    if (hit == 0) {
-        dom_widgets.set_focus(0);
-        return;
-    }
+    i32 hit = case dom.find_at(ex, ey) of {
+        Some(id) -> id;
+        None -> ({ dom_widgets.set_focus(0); return; });
+    };
 
     // Anything inside a window activates that window first.
     i32 win = dom.window_of(hit);
@@ -178,22 +187,26 @@ void on_right_press(i32 ex, i32 ey) {
         dom_widgets.close_menu();
         return;
     }
-    i32 hit = dom.find_at(ex, ey);
+    Option<i32> found = dom.find_at(ex, ey);
+    i32 hit = case found of {
+        Some(id) -> id;
+        None -> ({
+            if (g_desktop_menu_items != 0) {
+                case dom_widgets.open_menu(ex, ey, g_desktop_menu_items, g_desktop_menu_handler, 0) of { Ok(_) -> _; Err(_) -> _; };
+            }
+            return;
+        });
+    };
     if (hit == dom.taskbar_id()) { return; }
     i32 win = dom.window_of(hit);
     if (win != 0) {
         dom_widgets.focus_window(win);
         if (dom_widgets.is_maximized(win)) {
-            dom_widgets.open_menu(ex, ey, "Minimize\nRestore\nClose", on_window_menu, win);
+            case dom_widgets.open_menu(ex, ey, "Minimize\nRestore\nClose", on_window_menu, win) of { Ok(_) -> _; Err(_) -> _; };
         } else {
-            dom_widgets.open_menu(ex, ey, "Minimize\nMaximize\nClose", on_window_menu, win);
+            case dom_widgets.open_menu(ex, ey, "Minimize\nMaximize\nClose", on_window_menu, win) of { Ok(_) -> _; Err(_) -> _; };
         }
         return;
-    }
-    if (hit == 0) {
-        if (g_desktop_menu_items != 0) {
-            dom_widgets.open_menu(ex, ey, g_desktop_menu_items, g_desktop_menu_handler, 0);
-        }
     }
 }
 
@@ -215,10 +228,11 @@ void on_release(i32 ex, i32 ey) {
         // Un-press whatever this loop pressed, not whatever happens to be
         // under the pointer now; click only if it is the same node.
         dom.set_pressed(g_pressed_id, 0);
-        i32 hit = dom.find_at(ex, ey);
-        if (hit == g_pressed_id) {
-            dom.dispatch_click(hit); // may change the node's text
-        }
+        Option<i32> hit = dom.find_at(ex, ey);
+        case hit of {
+            Some(id) -> ({ if (id == g_pressed_id) { dom.dispatch_click(id); } });
+            None -> _;
+        };
         g_pressed_id = 0;
     }
 }
@@ -251,13 +265,12 @@ void on_motion(i32 ex, i32 ey) {
 // registers stay authoritative for the cursor position and hover state, so a
 // dropped event can delay a repaint but never wedge a node in a pressed or
 // hovered state.
-/**
- * Main UI compositor loop.
- *
- * Consumes hardware events, manages focus, coordinates window drags and clicks, updates timers, and paints dirty DOM regions.
- */
 i32 g_paint_deferred = 0;
 
+/**
+ * Runs the compositor event loop until the system stops.
+ * Polls queued input, dispatches UI events, advances timers, and paints damaged regions.
+ */
 export void run() {
     i32 prev_left = 0;
     i32 prev_right = 0;
@@ -271,7 +284,7 @@ export void run() {
         // Consume all queued mouse events. Clicks are dispatched at the
         // event's own coordinates: where the press happened, not where the
         // pointer is now.
-        while (mouse.has_event() != 0) {
+        while (mouse.has_event()) {
             i32 ex = mouse.event_x();
             i32 ey = mouse.event_y();
             i32 btn = mouse.event_btn();
@@ -280,31 +293,34 @@ export void run() {
             i32 eb = btn & 1;
             i32 er = btn & 2;
 
-            if (eb != 0) {
+            if (eb) {
                 if (prev_left == 0) {
                     on_press(ex, ey);
                 } else {
                     on_motion(ex, ey);
                 }
             } else {
-                if (prev_left != 0) {
+                if (prev_left) {
                     on_release(ex, ey);
                 }
             }
             prev_left = eb;
 
-            if (er != 0) {
+            if (er) {
                 if (prev_right == 0) { on_right_press(ex, ey); }
             }
             prev_right = er;
 
             if (wheel != 0) {
-                dom_widgets.dispatch_wheel(dom.find_at(ex, ey), wheel);
+                case dom.find_at(ex, ey) of {
+                    Some(id) -> ({ dom_widgets.dispatch_wheel(id, wheel); });
+                    None -> _;
+                };
             }
         }
 
         // Keyboard events go to whichever node holds focus.
-        while (keyboard.has_event() != 0) {
+        while (keyboard.has_event()) {
             i32 t = keyboard.event_type();
             i32 c = keyboard.event_code();
             i32 m = keyboard.event_mods();
@@ -319,7 +335,7 @@ export void run() {
         i32 my = mouse.y();
         graphics.set_cursor(mx, my);
 
-        i32 hit = dom.find_at(mx, my);
+        i32 hit = case dom.find_at(mx, my) of { Some(id) -> id; None -> 0; };
         if (hit != g_hot_id) {
             if (g_hot_id != 0) { dom.set_hovered(g_hot_id, 0); }
             if (hit != 0) { dom.set_hovered(hit, 1); }
@@ -330,10 +346,11 @@ export void run() {
         // Timers (clock, animations) run on this task between events.
         dom_widgets.tick();
 
-        // The apps' requests (UI protocol) are answered here, on this task:
-        // the app task sleeps on each until its reply. Their handlers run
-        // over there, on events the DOM emitted above.
-        i32 served = ui_channel.serve();
+        // Application service work is answered here, on this task. The app
+        // task sleeps on each request until its reply; its handlers run over
+        // there, on events the DOM emitted above.
+        i32 served = 0;
+        if (g_request_pump != 0) { served = g_request_pump(); }
 
         // The server's own queued handlers (taskbar, menus, the shell's
         // window-close hook) run here, between input and paint.
@@ -345,7 +362,7 @@ export void run() {
         // dozen creates, each one pass apart): hold the paint until a quiet
         // pass, but never for more than a few, so a chatty app still shows.
         if (served > 0) { g_paint_deferred++; } else { g_paint_deferred = 0; }
-        if (dom.has_damage() != 0) {
+        if (dom.has_damage()) {
             if (served == 0 || g_paint_deferred > 8) {
                 g_paint_deferred = 0;
                 present_frame();

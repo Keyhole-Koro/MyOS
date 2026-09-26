@@ -6,11 +6,14 @@ import graphics from "../graphics.mln";
 import theme from "../theme.mln";
 import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
 import dom from "dom.mln";
-import { UiEventKind } from "../../../../MyAppFramework/src/protocol/ui.mln";
-import ui_config from "../ui_config.mln";
+import { UiEventKind } from "../events.mln";
+import ui_config from "../config.mln";
 import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
 import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
+import { Result } from "../../../../../toolchain/MyStdLib/result.mln";
+import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
 
+/** Result of applying a keyboard edit to a text-input widget. */
 export enum EditResult {
     Unhandled,
     Changed,
@@ -33,16 +36,18 @@ export i32 taskbar_height() {
  * Returns the DOM Node ID of the active window.
  * @return Active window Node ID.
  */
-export i32 active_window() {
-    return dom.get_g_active_window();
+export Option<i32> active_window() {
+    if (dom.get_g_active_window() == 0) { return None; }
+    return Some(dom.get_g_active_window());
 }
 
 /**
  * Returns the DOM Node ID of the currently focused control.
  * @return Focused Node ID, or 0 if none.
  */
-export i32 focused_node() {
-    return dom.get_g_focus_id();
+export Option<i32> focused_node() {
+    if (dom.get_g_focus_id() == 0) { return None; }
+    return Some(dom.get_g_focus_id());
 }
 
 /**
@@ -67,7 +72,7 @@ export void focus_window(i32 win) {
     Node *n = dom.node_ptr(win);
     if (n == 0) { return; }
     if (n->kind != NodeKind::WINDOW) { return; }
-    if ((n->state & NodeState::MINIMIZED) != 0) {
+    if (n->state & NodeState::MINIMIZED) {
         dom.set_state_flag(win, NodeState::MINIMIZED, 0);
         dom.set_state_flag(win, NodeState::VISIBLE, 1);
     }
@@ -105,6 +110,10 @@ export void activate_topmost() {
 // The user closed a window. A window with an on_close handler is handed to
 // its app (queued, so the app framework runs the handler and then removes
 // everything the instance owns); any other window is removed here.
+/**
+ * Closes a window by queuing its close callback or removing it immediately.
+ * @param win DOM node ID of the window to close.
+ */
 export void close_window(i32 win) {
     i32 handler = dom.on_close_of(win);
     if (handler != 0) {
@@ -180,7 +189,7 @@ export bool is_maximized(i32 win) {
 export void maximize_window(i32 win) {
     Node *n = dom.node_ptr(win);
     if (n == 0) { return; }
-    if ((n->state & NodeState::MAXIMIZED) != 0) {
+    if (n->state & NodeState::MAXIMIZED) {
         i32 rx = n->sx;
         i32 ry = n->sy;
         dom.move_node(win, rx - n->x, ry - n->y);
@@ -307,7 +316,7 @@ export bool resize_grip_hit(i32 win, i32 px, i32 py) {
 export bool titlebar_hit(i32 win, i32 px, i32 py) {
     Node *w = dom.node_ptr(win);
     if (w == 0) { return false; }
-    if (titlebar_button_hit(win, px, py) != 0) { return false; }
+    if (titlebar_button_hit(win, px, py)) { return false; }
     i32 tb = theme.titlebar_h() * dom.ui_scale();
     if (px < w->x) { return false; }
     if (px >= w->x + w->w) { return false; }
@@ -702,7 +711,7 @@ export void append_bytes(i32 id, i32 addr, i32 count) {
         i32 keep = 0;
         if (c == 10) { keep = 1; }
         if (c >= 0x20) { if (c <= 0x7E) { keep = 1; } }
-        if (keep != 0) {
+        if (keep) {
             tmp[n] = (char)c;
             n++;
             if (n == 63) {
@@ -796,15 +805,17 @@ export void list_set_items(i32 id, char *items) {
 }
 
 /**
- * Returns the currently selected row index in a List, or None if no selection.
+ * Returns the currently selected row index in a List. No selection is a
+ * successful `None`; an invalid node is an error.
  * @param id DOM Node ID of List.
- * @return Option containing 0-based row index, or None.
+ * @return Result containing an optional 0-based row index.
  */
-export Option<i32> list_selected(i32 id) {
+export Result<Option<i32>, UiError> list_selected(i32 id) {
     Node *n = dom.node_ptr(id);
-    if (n == 0) { return None; }
-    if (n->sel == 0) { return None; }
-    return Some(n->sel - 1);
+    if (n == 0) { return Err(UiError::NodeNotFound(id)); }
+    if (n->kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
+    if (n->sel == 0) { return Ok(None); }
+    return Ok(Some(n->sel - 1));
 }
 
 /**
@@ -825,13 +836,17 @@ export i32 list_count(i32 id) {
  * @param index 0-based item index.
  * @param out Destination buffer for item string.
  * @param cap Buffer capacity in bytes.
- * @return Option containing string length copied, or None on error.
+ * @return Result containing the copied string length.
  */
-export Option<i32> list_item(i32 id, i32 index, char *out, i32 cap) {
+export Result<i32, UiError> list_item(i32 id, i32 index, char *out, i32 cap) {
     Node *n = dom.node_ptr(id);
-    if (n == 0) { return None; }
-    if (index < 0) { return None; }
-    if (index >= list_count(id)) { return None; }
+    if (n == 0) { return Err(UiError::NodeNotFound(id)); }
+    if (n->kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
+    if (cap <= 0) { return Err(UiError::InvalidCapacity(cap)); }
+    if (index < 0 || index >= list_count(id)) {
+        out[0] = (char)0;
+        return Err(UiError::InvalidIndex(index));
+    }
     i32 start = line_start(n, index);
     i32 llen = line_len_at(n, start);
     char *buf = (char*)n->text;
@@ -842,7 +857,7 @@ export Option<i32> list_item(i32 id, i32 index, char *out, i32 cap) {
         i++;
     }
     out[i] = (char)0;
-    return Some(i);
+    return Ok(i);
 }
 
 /**
@@ -984,7 +999,7 @@ export i32 menu_target() {
  * @param target Associated target Node ID.
  * @return Menu DOM Node ID.
  */
-export i32 open_menu(i32 x, i32 y, char *items, i32 handler, i32 target) {
+export Result<i32, UiError> open_menu(i32 x, i32 y, char *items, i32 handler, i32 target) {
     close_menu();
     i32 s = dom.ui_scale();
     i32 count = 1;
@@ -1032,11 +1047,12 @@ export i32 open_menu(i32 x, i32 y, char *items, i32 handler, i32 target) {
     if (x < 0) { x = 0; }
     if (y < 0) { y = 0; }
 
-    i32 id = dom.create_node(NodeKind::MENU, "menu");
+    i32 id = case dom.create_node(NodeKind::MENU, "menu") of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
     dom.set_role(id, NodeRole::MENU);
     Node *n = dom.node_ptr(id);
     i32 cap = i + 2;
     char *buf = (char*)heap.alloc(cap);
+    if (buf == 0) { dom.remove_node(id); return Err(UiError::AllocationFailed(cap)); }
     i32 k = 0;
     while (k < i) { buf[k] = items[k]; k++; }
     buf[i] = (char)0;
@@ -1053,13 +1069,16 @@ export i32 open_menu(i32 x, i32 y, char *items, i32 handler, i32 target) {
     dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
     // Appended to the desktop like a window, but painted last (see
     // paint_desktop) and hit-tested first (see find_at).
-    dom.append_child(dom.get_g_desktop_node_id(), id);
+    case dom.append_child(dom.get_g_desktop_node_id(), id) of {
+        Ok(_) -> _;
+        Err(e) -> ({ dom.remove_node(id); return Err(e); });
+    };
     // append_child translated by the desktop origin (0,0): bounds stand.
     dom.set_g_menu_id(id);
     dom.set_g_menu_handler(handler);
     dom.set_g_menu_target(target);
     dom.touch();
-    return id;
+    return Ok(id);
 }
 
 /**
@@ -1167,7 +1186,7 @@ export void focus_next(i32 backwards) {
     i32 next_idx = 0;
     case cur of {
         Some(idx) -> ({
-            if (backwards != 0) {
+            if (backwards) {
                 if (idx == 0) { next_idx = g_focus_ring_count - 1; }
                 else { next_idx = idx - 1; }
             } else {
@@ -1176,7 +1195,7 @@ export void focus_next(i32 backwards) {
             }
         });
         None -> ({
-            if (backwards != 0) {
+            if (backwards) {
                 next_idx = g_focus_ring_count - 1;
             } else {
                 next_idx = 0;
@@ -1206,7 +1225,7 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
         i32 filter = dom.key_filter();
         if (filter != 0) {
             i32 claimed = filter(dom.owner_of(dom.get_g_active_window()), code, mods);
-            if (claimed != 0) { return; }
+            if (claimed) { return; }
         }
     }
     Node *n = dom.node_ptr(dom.get_g_focus_id());
@@ -1218,7 +1237,7 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
             // Runs inline, unlike the queued handlers: it decides whether
             // the key goes on to the widget, which cannot wait.
             i32 claimed = handler(n->owner, id, code | (mods << 16));
-            if (claimed != 0) { return; }
+            if (claimed) { return; }
         }
     }
     i32 kind = n->kind;
@@ -1295,6 +1314,9 @@ export void set_input_text(i32 id, char *s) {
 
 // Queue every registered timer whose period has elapsed. The compositor
 // calls this once per pass and drains the queue afterwards.
+/**
+ * Queues callbacks for all registered timers whose deadlines have elapsed.
+ */
 export void tick() {
     i32 *g_timer_ids = dom.get_g_timer_ids();
     i32 now = scheduler.ticks();
@@ -1315,21 +1337,18 @@ export void tick() {
 /**
  * Creates and registers a recurring timer with a given interval and callback.
  * @param interval Periodic interval in system ticks.
- * @param handler Server-side tick callback, or 0 for an app timer (its
- * ticks are TIMER events to the owner).
+ * @param handler Server-side tick callback, or 0 to deliver TIMER events to the owning app.
  * @return Timer DOM Node ID.
  */
-export i32 create_timer(i32 interval, i32 handler) {
+export Result<i32, UiError> create_timer(i32 interval, i32 handler) {
     i32 *g_timer_ids = dom.get_g_timer_ids();
-    i32 id = dom.create_node(NodeKind::TIMER, "timer");
+    if (dom.get_g_timer_count() >= dom.get_TIMER_MAX()) { return Err(UiError::TimerLimit); }
+    i32 id = case dom.create_node(NodeKind::TIMER, "timer") of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
     Node *t = dom.node_ptr(id);
     t->interval = interval;
     t->on_tick = handler;
     t->next_due = scheduler.ticks() + interval;
-    if (dom.get_g_timer_count() < dom.get_TIMER_MAX()) {
-        g_timer_ids[dom.get_g_timer_count()] = id;
-        dom.set_g_timer_count(dom.get_g_timer_count() + 1);
-    }
-    return id;
+    g_timer_ids[dom.get_g_timer_count()] = id;
+    dom.set_g_timer_count(dom.get_g_timer_count() + 1);
+    return Ok(id);
 }
-
