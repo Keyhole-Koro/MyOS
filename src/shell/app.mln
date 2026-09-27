@@ -134,16 +134,18 @@ void register_app(char *path, char *type, i32 single, char *name, i32 opens) {
 InlineCString<32> scan_path;
 
 void scan_disk() {
-    char name[16];
+    InlineCString<16> name = InlineCString<16> {};
     i32 start = 0;
     while (1) {
-        Result<Option<i32>, FsError> res = fs.dir_next_at("apps", start, &name[0], 16);
+        name.clear();
+        Result<Option<i32>, FsError> res = fs.dir_next_at("apps", start, name.as_ptr(), name.data.length);
         Option<i32> entry = None;
         if (!result_take_ok<Option<i32>, FsError>(&res, &entry)) { return; }
         i32 idx = case entry of {
             Some(n) -> n;
             None -> ({ break; });
         };
+        name.sync_from_ptr();
         start = idx + 1;
         Result<i32, FsError> size_result = fs.entry_size(idx);
         i32 size = 0;
@@ -151,7 +153,7 @@ void scan_disk() {
         if (size < 36) { continue; }
         scan_path.clear();
         scan_path.append("apps/");
-        scan_path.append(str.from_c(&name[0]));
+        scan_path.append(name.as_str());
         Result<i32, FsError> opened = fs.open(scan_path.as_ptr());
         i32 fd = 0;
         if (result_take_ok<i32, FsError>(&opened, &fd)) {
@@ -223,9 +225,9 @@ i32 instance_count = 0; // slots in use, including freed ones below the high-wat
 InlineCString<256> menu_buf; // "\n"-joined app names
 // One pending OPEN path per instance. A single global scratch buffer loses the
 // first path when two applications are still starting at the same time.
-char open_paths[2048]; // INSTANCES_MAX * 64
+InlineCString<64> open_paths[32];
 
-char *open_path_for(i32 slot) { return &open_paths[slot * 64]; }
+InlineCString<64> *open_path_for(i32 slot) { return &open_paths[slot]; }
 
 Option<i32> slot_of_owner(i32 owner) {
     i32 i = 0;
@@ -361,7 +363,8 @@ export void window_ready(i32 owner, i32 win) {
     dom_widgets.focus_window(win);
     if (instance.open) {
         instance.open = false;
-        push_app_event(owner, win, ShellEventKind::OPEN, 0, 0, open_path_for(slot));
+        InlineCString<64> *open_path = open_path_for(slot);
+        push_app_event(owner, win, ShellEventKind::OPEN, 0, 0, open_path->as_ptr());
     }
     instances[slot] = Some(instance);
 }
@@ -519,6 +522,8 @@ export i32 launch_named(char *name) {
  * @return Target window ID when already available, or 0 while starting/no handler is found.
  */
 export i32 open(char *path) {
+    str path_text = str.from_c(path);
+    if (path_text.length > 63) { return 0; }
     i32 a = 0;
     while (a < registry_count) {
         if (registry[a].opens != 0) {
@@ -536,7 +541,9 @@ export i32 open(char *path) {
                     Err(_) -> ({ return 0; });
                 };
             }
-            str.ncopy(open_path_for(slot), path, 64);
+            InlineCString<64> *open_path = open_path_for(slot);
+            open_path->clear();
+            open_path->append(path_text);
             AppInstance instance = case instances[slot] of {
                 Some(value) -> value;
                 None -> ({ return 0; });
@@ -548,7 +555,7 @@ export i32 open(char *path) {
             };
             if (win != 0) {
                 dom_widgets.focus_window(win);
-                push_app_event(instance_ptr->pid, win, ShellEventKind::OPEN, 0, 0, open_path_for(slot));
+                push_app_event(instance_ptr->pid, win, ShellEventKind::OPEN, 0, 0, open_path->as_ptr());
             } else {
                 instance_ptr->open = true;
                 instances[slot] = Some(instance);
@@ -695,7 +702,6 @@ i32 key_spec_matches(char *spec, i32 code, i32 mods) {
 // app code has to run to decide whether a key is taken.
 
 i32 CLAIMS_MAX = 64;
-i32 SPEC_MAX = 16;         // "Ctrl+Shift+F12" fits
 /**
  * One process-owned keyboard shortcut registered with the shell.
  * @property owner Process ID that registered this shortcut; 0 marks an unused slot.
@@ -703,7 +709,7 @@ i32 SPEC_MAX = 16;         // "Ctrl+Shift+F12" fits
  */
 struct KeyClaim {
     i32 owner;              // 0 = free
-    char spec[16];          // copied because the request's string is transient
+    InlineCString<16> spec; // copied because the request's string is transient
 };
 KeyClaim claims[64];
 i32 claim_count = 0;
@@ -715,6 +721,8 @@ i32 claim_count = 0;
  * @return One-based shortcut token, or 0 if the fixed claim table is full.
  */
 export i32 claim_key(i32 owner, char *spec) {
+    str key_spec = str.from_c(spec);
+    if (key_spec.length > 15) { return 0; }
     i32 i = 0;
     while (i < claim_count) {
         if (claims[i].owner == 0) { break; }
@@ -724,8 +732,10 @@ export i32 claim_key(i32 owner, char *spec) {
         if (claim_count >= CLAIMS_MAX) { return 0; }
         claim_count++;
     }
-    claims[i].owner = owner;
-    str.ncopy(&claims[i].spec[0], spec, SPEC_MAX);
+    KeyClaim *claim = &claims[i];
+    claim->owner = owner;
+    claim->spec.clear();
+    claim->spec.append(key_spec);
     return i + 1;
 }
 
@@ -754,8 +764,9 @@ export i32 dispatch_key(i32 owner, i32 code, i32 mods) {
     };
     i32 i = 0;
     while (i < claim_count) {
-        if (claims[i].owner == owner) {
-            if (key_spec_matches(&claims[i].spec[0], code, mods)) {
+        KeyClaim *claim = &claims[i];
+        if (claim->owner == owner) {
+            if (key_spec_matches(claim->spec.as_ptr(), code, mods)) {
                 AppInstance instance = case instances[slot] of {
                     Some(value) -> value;
                     None -> ({ return 0; });

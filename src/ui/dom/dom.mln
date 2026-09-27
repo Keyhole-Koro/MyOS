@@ -291,9 +291,6 @@ export i32 g_ext_y = 0;
 export i32 g_ext_w = 0;
 export i32 g_ext_h = 0;
 
-// Formatted uptime clock for the taskbar.
-export char g_clock_buf[16];
-
 /**
  * Increments the global DOM revision counter when observable tree changes occur.
  */
@@ -1810,7 +1807,6 @@ export i32 get_g_ext_h() { return g_ext_h; }
 /** Sets extent calculation scratch height. @param v Scratch height. */
 export void set_g_ext_h(i32 v) { g_ext_h = v; }
 /** Gets pointer to formatted taskbar clock string buffer. @return Clock buffer pointer. */
-export char *get_g_clock_buf() { return &g_clock_buf[0]; }
 /** Gets baseline display width constant. @return Baseline display width in logical pixels. */
 export i32 get_BASE_DISPLAY_WIDTH() { return BASE_DISPLAY_WIDTH; }
 /** Sets baseline display width constant. @param v New baseline display width. */

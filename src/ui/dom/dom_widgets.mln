@@ -11,6 +11,7 @@ import ui_config from "../config.mln";
 import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
 import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
 import { Result } from "../../../../../toolchain/MyStdLib/result.mln";
+import { InlineCString } from "../../../../../toolchain/MyStdLib/text/inline_c_string.mln";
 import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
 
 /** Result of applying a keyboard edit to a text-input widget. */
@@ -702,8 +703,8 @@ export void append_text(i32 id, char *s) {
  * @param count Number of bytes to read and append.
  */
 export void append_bytes(i32 id, i32 addr, i32 count) {
-    char tmp[64];
-    i32 n = 0;
+    InlineCString<64> tmp = InlineCString<64> {};
+    tmp.clear();
     i32 i = 0;
     while (i < count) {
         char *p = (char*)(addr + i);
@@ -712,18 +713,15 @@ export void append_bytes(i32 id, i32 addr, i32 count) {
         if (c == 10) { keep = 1; }
         if (c >= 0x20) { if (c <= 0x7E) { keep = 1; } }
         if (keep) {
-            tmp[n] = (char)c;
-            n++;
-            if (n == 63) {
-                tmp[n] = (char)0;
-                append_text(id, &tmp[0]);
-                n = 0;
+            if (!tmp.push((u8)c)) {
+                append_text(id, tmp.as_ptr());
+                tmp.clear();
+                tmp.push((u8)c);
             }
         }
         i++;
     }
-    tmp[n] = (char)0;
-    if (n > 0) { append_text(id, &tmp[0]); }
+    if (!tmp.is_empty()) { append_text(id, tmp.as_ptr()); }
 }
 
 /**

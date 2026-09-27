@@ -308,16 +308,16 @@ export Result<i32, SpawnError> spawn_file(char *path) {
  * @param result_out Kernel address of Result<i32, SpawnError> output.
  */
 void on_spawn(i32 user_path, Result<i32, SpawnError> *result_out) {
-    char path[32];
+    InlineCString<32> path = InlineCString<32> {};
+    path.clear();
     i32 k = 0;
-    while (k < 31) {
+    while (k < path.capacity()) {
         i32 c = mem.read_byte(user_path + k);
-        path[k] = (char)c;
         if (c == 0) { break; }
+        path.push((u8)c);
         k++;
     }
-    path[31] = (char)0;
-    Result<i32, SpawnError> result = spawn_file(&path[0]);
+    Result<i32, SpawnError> result = spawn_file(path.as_ptr());
     i32 pid = 0;
     if (result_take_ok<i32, SpawnError>(&result, &pid)) {
         i32 parent = case process.get_current_pid() of {

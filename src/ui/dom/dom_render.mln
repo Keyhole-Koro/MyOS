@@ -9,6 +9,7 @@ import dom_widgets from "dom_widgets.mln";
 import dom from "dom.mln";
 import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
 import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
+import { InlineCString } from "../../../../../toolchain/MyStdLib/text/inline_c_string.mln";
 // --- renderer ---------------------------------------------------------------------------------
 // Walk the UI subtree and paint each node with graphics.*. The renderer and
 // the window manager are one: z-order is sibling order (later siblings on
@@ -188,17 +189,17 @@ export void draw_button(Node *n) {
  * @param buf Source text buffer.
  * @param start Start byte offset in source.
  * @param llen Number of bytes to copy.
- * @param out Destination output buffer.
- * @param cap Destination buffer capacity.
+ * @return A bounded NUL-terminated copy of the requested line.
  */
-export void copy_line(char *buf, i32 start, i32 llen, char *out, i32 cap) {
+export InlineCString<160> copy_line(char *buf, i32 start, i32 llen) {
+    InlineCString<160> out = InlineCString<160> {};
+    out.clear();
     i32 i = 0;
     while (i < llen) {
-        if (i + 1 >= cap) { break; }
-        out[i] = buf[start + i];
+        if (!out.push((u8)buf[start + i])) { break; }
         i++;
     }
-    out[i] = (char)0;
+    return out;
 }
 
 /**
@@ -253,13 +254,12 @@ export void draw_text_area(Node *n) {
         if (start > len) { break; }
         i32 llen = dom_widgets.line_len_at(n, start);
         i32 ty = y + pad + row * lh;
-        char line[160];
-        copy_line(buf, start, llen, &line[0], 160);
-        graphics.draw_label(x + pad, ty, &line[0], fg, 0, s);
+        InlineCString<160> line = copy_line(buf, start, llen);
+        graphics.draw_label(x + pad, ty, line.as_ptr(), fg, 0, s);
         i32 cur = n->cursor;
         if (cur >= start) {
             if (cur <= start + llen) {
-                caret_x = x + pad + graphics.text_width_n(&line[0], cur - start, 0, s);
+                caret_x = x + pad + graphics.text_width_n(line.as_ptr(), cur - start, 0, s);
                 caret_y = ty;
                 has_caret = true;
             }
@@ -325,9 +325,8 @@ export void draw_rows(Node *n, Option<i32> hl, i32 hl_color, i32 hl_fg) {
             graphics.fill_round_rect(x + 4 * s, ty - s, w - 8 * s, lh + 2 * s, r, hl_color);
             color = hl_fg;
         }
-        char line[160];
-        copy_line(buf, start, llen, &line[0], 160);
-        graphics.draw_label(x + pad + 4 * s, ty, &line[0], color, 0, s);
+        InlineCString<160> line = copy_line(buf, start, llen);
+        graphics.draw_label(x + pad + 4 * s, ty, line.as_ptr(), color, 0, s);
         start = start + llen + 1;
         row = row + 1;
     }
@@ -549,14 +548,14 @@ export i32 taskbar_entry_x(i32 index) {
 }
 
 /**
- * Formats current system uptime into "HH:MM:SS" inside g_clock_buf.
+ * Formats current system uptime as "HH:MM:SS".
+ * @return Owned, NUL-terminated clock text.
  */
-export void format_clock() {
+export InlineCString<16> format_clock() {
     i32 *_damage_x0 = dom.get_g_damage_x0();
     i32 *_damage_y0 = dom.get_g_damage_y0();
     i32 *_damage_x1 = dom.get_g_damage_x1();
     i32 *_damage_y1 = dom.get_g_damage_y1();
-    char *_clock_buf = dom.get_g_clock_buf();
     Node **_node_table = dom.get_g_node_table();
 
     // Uptime from the 1 ms scheduler tick: HH:MM:SS.
@@ -564,15 +563,17 @@ export void format_clock() {
     i32 hh = (secs / 3600) % 100;
     i32 mm = (secs / 60) % 60;
     i32 ss = secs % 60;
-    _clock_buf[0] = (char)('0' + hh / 10);
-    _clock_buf[1] = (char)('0' + hh % 10);
-    _clock_buf[2] = ':';
-    _clock_buf[3] = (char)('0' + mm / 10);
-    _clock_buf[4] = (char)('0' + mm % 10);
-    _clock_buf[5] = ':';
-    _clock_buf[6] = (char)('0' + ss / 10);
-    _clock_buf[7] = (char)('0' + ss % 10);
-    _clock_buf[8] = (char)0;
+    InlineCString<16> clock = InlineCString<16> {};
+    clock.clear();
+    clock.push((u8)('0' + hh / 10));
+    clock.push((u8)('0' + hh % 10));
+    clock.push((u8)':');
+    clock.push((u8)('0' + mm / 10));
+    clock.push((u8)('0' + mm % 10));
+    clock.push((u8)':');
+    clock.push((u8)('0' + ss / 10));
+    clock.push((u8)('0' + ss % 10));
+    return clock;
 }
 
 /**
@@ -584,7 +585,6 @@ export void draw_taskbar(Node *n) {
     i32 *_damage_y0 = dom.get_g_damage_y0();
     i32 *_damage_x1 = dom.get_g_damage_x1();
     i32 *_damage_y1 = dom.get_g_damage_y1();
-    char *_clock_buf = dom.get_g_clock_buf();
     Node **_node_table = dom.get_g_node_table();
 
     i32 s = dom.ui_scale();
@@ -638,9 +638,9 @@ export void draw_taskbar(Node *n) {
     }
 
     // Clock at the right.
-    format_clock();
-    i32 cw = graphics.text_width(&_clock_buf[0], 0, s);
-    graphics.draw_label(x + w - cw - 16 * s, y + (h - th) / 2, &_clock_buf[0], on_dark, 0, s);
+    InlineCString<16> clock = format_clock();
+    i32 cw = graphics.text_width(clock.as_ptr(), 0, s);
+    graphics.draw_label(x + w - cw - 16 * s, y + (h - th) / 2, clock.as_ptr(), on_dark, 0, s);
 }
 
 /** Target identified by hit-testing a pointer position on the taskbar. */
@@ -777,7 +777,6 @@ export void render(i32 node_id) {
     i32 *_damage_y0 = dom.get_g_damage_y0();
     i32 *_damage_x1 = dom.get_g_damage_x1();
     i32 *_damage_y1 = dom.get_g_damage_y1();
-    char *_clock_buf = dom.get_g_clock_buf();
     Node **_node_table = dom.get_g_node_table();
 
     Node *n = dom.node_ptr(node_id);
@@ -834,7 +833,6 @@ export void render_all() {
     i32 *_damage_y0 = dom.get_g_damage_y0();
     i32 *_damage_x1 = dom.get_g_damage_x1();
     i32 *_damage_y1 = dom.get_g_damage_y1();
-    char *_clock_buf = dom.get_g_clock_buf();
     Node **_node_table = dom.get_g_node_table();
 
     dom.clear_damage();
@@ -852,7 +850,6 @@ export void render_scene() {
     i32 *_damage_y0 = dom.get_g_damage_y0();
     i32 *_damage_x1 = dom.get_g_damage_x1();
     i32 *_damage_y1 = dom.get_g_damage_y1();
-    char *_clock_buf = dom.get_g_clock_buf();
     Node **_node_table = dom.get_g_node_table();
 
     if (dom.get_g_damage_count() == 0) {

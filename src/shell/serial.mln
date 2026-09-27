@@ -48,10 +48,7 @@ export void run() {
                 }
             } else {
                 if (buf.push((u8)c)) {
-                    char tmp[2];
-                    tmp[0] = c;
-                    tmp[1] = 0;
-                    debug.print(tmp);
+                    serial.putc(c);
                 }
             }
         }

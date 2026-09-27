@@ -90,7 +90,7 @@ char* (Files *f) path_of(char *name) {
  * @param id DOM event argument (unused).
  */
 void (Files *f) refresh(i32 id) {
-    char name[16];
+    InlineCString<16> name = InlineCString<16> {};
     f->items.clear();
     i32 start = 0;
     i32 count = 0;
@@ -100,13 +100,15 @@ void (Files *f) refresh(i32 id) {
     }
     while (1) {
         // None ends enumeration; Err reports a disk failure.
-        Result<Option<i32>, FsError> res = fs.dir_next_at(f->dir.as_ptr(), start, &name[0], 16);
+        name.clear();
+        Result<Option<i32>, FsError> res = fs.dir_next_at(f->dir.as_ptr(), start, name.as_ptr(), name.data.length);
         i32 idx = case res of {
             Ok(v) -> case v of { Some(n) -> n; None -> ({ break; }); };
             Err(_) -> ({ ui.set_text(f->status, "disk error"); return; });
         };
+        name.sync_from_ptr();
         if (count > 0) { f->items.append("\n"); }
-        f->items.append(str.from_c(&name[0]));
+        f->items.append(name.as_str());
         Result<bool, FsError> directory = fs.is_dir(idx);
         bool is_directory = case directory of {
             Ok(value) -> value;
@@ -151,16 +153,16 @@ i32 (Files *f) selected_is_dir() {
         };
         Err(_) -> ({ return 0; });
     };
-    char item[48];
-    Result<i32, UiError> copied = ui.list_item(f->list, row, &item[0], 48);
+    InlineCString<48> item = InlineCString<48> {};
+    item.clear();
+    Result<i32, UiError> copied = ui.list_item(f->list, row, item.as_ptr(), item.data.length);
     case copied of {
         Ok(_) -> _;
         Err(_) -> ({ return 0; });
     };
-    if (item[0] == '.' && item[1] == '.' && item[2] == 0) { return 1; }
-    i32 i = 0;
-    while (item[i] != 0) { i++; }
-    if (i > 0 && item[i - 1] == '/') { return 1; }
+    item.sync_from_ptr();
+    if (item.len() == 2 && item.data[0] == '.' && item.data[1] == '.') { return 1; }
+    if (!item.is_empty() && item.data[item.len() - 1] == '/') { return 1; }
     return 0;
 }
 
@@ -196,18 +198,20 @@ char* (Files *f) selected_name() {
         };
         Err(_) -> ({ return (char*)0; });
     };
-    char item[48];
-    Result<i32, UiError> copied = ui.list_item(f->list, row, &item[0], 48);
+    InlineCString<48> item = InlineCString<48> {};
+    item.clear();
+    Result<i32, UiError> copied = ui.list_item(f->list, row, item.as_ptr(), item.data.length);
     case copied of {
         Ok(_) -> _;
         Err(_) -> ({ return (char*)0; });
     };
+    item.sync_from_ptr();
     f->selected.clear();
     i32 i = 0;
-    while (item[i] != 0) {
-        if (item[i] == ' ') { break; }
-        if (item[i] == '/') { break; }
-        f->selected.push((u8)item[i]);
+    while (i < item.len()) {
+        if (item.data[i] == ' ') { break; }
+        if (item.data[i] == '/') { break; }
+        f->selected.push((u8)item.data[i]);
         i++;
         if (i >= fs.NAME_MAX - 1) { break; }
     }

@@ -84,20 +84,22 @@ void (Terminal *t) say_line(char *s) {
  * @param dir NUL-terminated directory path; empty string selects the root.
  */
 void (Terminal *t) cmd_ls(char *dir) {
-    char name[16];
+    InlineCString<16> name = InlineCString<16> {};
     i32 n = 0;
     i32 start = 0;
     while (1) {
         // None breaks enumeration; Err remains a distinct filesystem result.
-        Result<Option<i32>, FsError> res = fs.dir_next_at(dir, start, &name[0], 16);
+        name.clear();
+        Result<Option<i32>, FsError> res = fs.dir_next_at(dir, start, name.as_ptr(), name.data.length);
         i32 idx = case res of {
             Ok(v) -> case v of { Some(n) -> n; None -> ({ break; }); };
             Err(FsError::NotFound) -> ({ t->say_line("ls: no such directory"); return; });
             Err(e) -> ({ t->say_line("ls: filesystem error"); return; });
         };
+        name.sync_from_ptr();
         t->line_buf.clear();
         t->line_buf.append("  ");
-        t->line_buf.append(str.from_c(&name[0]));
+        t->line_buf.append(name.as_str());
         Result<bool, FsError> directory = fs.is_dir(idx);
         bool is_directory = case directory of {
             Ok(value) -> value;

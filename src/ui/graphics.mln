@@ -5,6 +5,7 @@ import ui_config from "config.mln";
 import font from "font8x8.mln";
 import font_sans from "font_sans.mln";
 import str from "../../../../toolchain/MyStdLib/str.mln";
+import { InlineString } from "../../../../toolchain/MyStdLib/text/inline_string.mln";
 
 export i32 VRAM_BASE = 0x30000000;
 
@@ -1217,20 +1218,15 @@ export void draw_text_scaled(i32 x, i32 y, char* s, i32 fg, i32 bg, i32 scale) {
  * @return X coordinate immediately following the rendered number.
  */
 export i32 draw_int(i32 x, i32 y, i32 value, i32 fg, i32 bg) {
-    // str.itoa already does the sign, the zero case, and the digit-order
-    // reversal (11 bytes covers "-2147483648" plus the terminator); this just
-    // walks the resulting string and draws it, the same as draw_text.
-    char digits[12];
-    str.itoa(value, &digits[0]);
+    InlineString<12> digits = value.to_string();
 
     i32 cx = x;
     i32 i = 0;
-    i32 c = (i32)digits[0] & 0xFF;
-    while (c != 0) {
+    while (i < digits.len()) {
+        i32 c = (i32)digits.data[i] & 0xFF;
         draw_char(cx, y, c, fg, bg);
         cx = cx + font.glyph_w();
         i++;
-        c = (i32)digits[i] & 0xFF;
     }
     return cx;
 }

@@ -13,6 +13,7 @@ import ssd from "ssd.mln";
 import { SsdError } from "ssd.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
 import { FsError, SeekWhence } from "../../../../contracts/io/fs.contract.mln";
 
 // =========================================================================
@@ -392,12 +393,14 @@ Result<i32, PathError> split_path(char* path, char* out_name) {
 
 // The entry a path names, or None.
 Option<i32> find_entry_by_path(char* path) {
-    char name[16];
-    i32 parent_code = case split_path(path, &name[0]) of {
+    InlineCString<16> name = InlineCString<16> {};
+    name.clear();
+    i32 parent_code = case split_path(path, name.as_ptr()) of {
         Ok(v) -> v;
         Err(_) -> ({ return None; });
     };
-    return find_entry_in(parent_code, &name[0]);
+    name.sync_from_ptr();
+    return find_entry_in(parent_code, name.as_ptr());
 }
 
 /**
@@ -548,15 +551,17 @@ Result<i32, FsError> make_entry(char* path, i32 flags) {
         return Err(FsError::Disabled);
     }
 
-    char clean_name[16];
-    i32 parent_code = case split_path(path, &clean_name[0]) of {
+    InlineCString<16> clean_name = InlineCString<16> {};
+    clean_name.clear();
+    i32 parent_code = case split_path(path, clean_name.as_ptr()) of {
         Ok(v) -> v;
         Err(PathError::EmptyName) -> ({ return Err(FsError::InvalidName); });
         Err(PathError::MissingDirectory) -> ({ return Err(FsError::NotFound); });
     };
-    if (clean_name[0] == 0) { return Err(FsError::InvalidName); }
+    clean_name.sync_from_ptr();
+    if (clean_name.is_empty()) { return Err(FsError::InvalidName); }
 
-    case find_entry_in(parent_code, &clean_name[0]) of {
+    case find_entry_in(parent_code, clean_name.as_ptr()) of {
         Some(_) -> ({ return Err(FsError::AlreadyExists); });
         None -> _;
     };
@@ -581,7 +586,7 @@ Result<i32, FsError> make_entry(char* path, i32 flags) {
         Ok(v) -> v;
         Err(e) -> ({ return Err(e); });
     };
-    store_name(off, &clean_name[0]);
+    store_name(off, clean_name.as_ptr());
     set_buf_word(off + 16, first);       // first_block
     set_buf_word(off + 20, 0);           // file_size
     set_buf_word(off + 24, flags);       // flags
@@ -1055,8 +1060,9 @@ export Result<_, FsError> remove(char* path) {
         Err(e) -> ({ return Err(e); });
     };
     if (is_directory) {
-        char child[16];
-        Result<Option<i32>, FsError> any = dir_next_in(idx + 1, 0, &child[0], 16);
+        InlineCString<16> child = InlineCString<16> {};
+        child.clear();
+        Result<Option<i32>, FsError> any = dir_next_in(idx + 1, 0, child.as_ptr(), child.data.length);
         bool has_child = false;
         case any of {
             Ok(v) -> ({ has_child = case v of { Some(_) -> true; None -> false; }; });

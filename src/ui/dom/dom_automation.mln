@@ -5,6 +5,8 @@ package dom_automation;
 import dom from "dom.mln";
 import automation_transport from "../../meta/automation_transport.mln";
 import debug from "../../../../MyKernel/src/debug/debug.mln";
+import str from "../../../../../toolchain/MyStdLib/str.mln";
+import { InlineString } from "../../../../../toolchain/MyStdLib/text/inline_string.mln";
 
 // Human-readable tree dump (the kernel debug shell's `dump` command) and the
 // machine-readable JSON snapshot for the MYOS-004 UI automation bridge.
@@ -115,19 +117,11 @@ void automation_raw(char *s) {
  * @param value Integer value to transmit.
  */
 void automation_i32(i32 value) {
-    if (value == 0) { automation_transport.putc('0'); return; }
-    if (value < 0) { automation_transport.putc('-'); value = -value; }
-    char digits[12];
-    i32 n = 0;
-    while (value > 0) {
-        digits[n] = (char)('0' + value % 10);
-        value = value / 10;
-        n++;
-    }
-    n--;
-    while (n >= 0) {
-        automation_transport.putc(digits[n]);
-        n--;
+    InlineString<12> decimal = value.to_string();
+    i32 i = 0;
+    while (i < decimal.len()) {
+        automation_transport.putc(decimal.data[i]);
+        i++;
     }
 }
 
