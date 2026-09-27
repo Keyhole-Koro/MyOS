@@ -18,6 +18,7 @@ import mmu from "../../../MyKernel/src/mm/mmu.mln";
 import { MmuError } from "../../../../contracts/process/loader.contract.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+import allocator from "../../../../toolchain/MyStdLib/memory/allocator.mln";
 import app from "../shell/app.mln";
 import request_channel from "../ipc/channel.mln";
 import os_call_router from "../syscall/router.mln";
@@ -51,6 +52,7 @@ void kernel_boot_banner() {
 void kernel_arch_init() {
     debug.println("kernel: arch init");
     heap.init();
+    allocator.configure(heap.alloc, heap.free);
     debug.println("kernel: heap ready");
 }
 
