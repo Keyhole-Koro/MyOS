@@ -7,7 +7,8 @@ import terminal from "../../../MyAppFramework/src/terminal.mln";
 import fs from "../../../../toolchain/MyStdLib/hosted/fs.mln";
 import process from "../../../../toolchain/MyStdLib/hosted/process.mln";
 import str from "../../../../toolchain/MyStdLib/str.mln";
-import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
+import { InlineString } from "../../../../toolchain/MyStdLib/text/inline_string.mln";
+import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
 import { Result, result_take_ok } from "../../../../toolchain/MyStdLib/result.mln";
 import { FsError } from "../../../../contracts/io/fs.contract.mln";
 import { SpawnError } from "../../../../contracts/process/spawn.contract.mln";
@@ -36,8 +37,8 @@ struct Terminal {
     i32 out;      // output TextArea
     i32 input;    // command TextInput
     i32 pid;      // attached process, 0 = none
-    char line_buf[96];   // scratch for one formatted line
-    char cmd[96];        // mutable copy used by run_line
+    InlineCString<96> line_buf; // scratch for one formatted line
+    InlineCString<96> cmd;      // mutable copy used by run_line
 };
 
 @app
@@ -94,27 +95,28 @@ void (Terminal *t) cmd_ls(char *dir) {
             Err(FsError::NotFound) -> ({ t->say_line("ls: no such directory"); return; });
             Err(e) -> ({ t->say_line("ls: filesystem error"); return; });
         };
-        i32 k = strbuf.reset(&t->line_buf[0]);
-        k = strbuf.append(&t->line_buf[0], 96, k, "  ");
-        k = strbuf.append(&t->line_buf[0], 96, k, &name[0]);
+        t->line_buf.clear();
+        t->line_buf.append("  ");
+        t->line_buf.append(str.from_c(&name[0]));
         Result<bool, FsError> directory = fs.is_dir(idx);
         bool is_directory = case directory of {
             Ok(value) -> value;
             Err(_) -> ({ t->say_line("ls: filesystem error"); return; });
         };
         if (is_directory) {
-            k = strbuf.append(&t->line_buf[0], 96, k, "/\n");
+            t->line_buf.append("/\n");
         } else {
             Result<i32, FsError> size_result = fs.entry_size(idx);
             i32 size = case size_result of {
                 Ok(value) -> value;
                 Err(_) -> ({ t->say_line("ls: filesystem error"); return; });
             };
-            k = strbuf.append(&t->line_buf[0], 96, k, "  ");
-            k = strbuf.append_i32(&t->line_buf[0], 96, k, size);
-            k = strbuf.append(&t->line_buf[0], 96, k, " bytes\n");
+            t->line_buf.append("  ");
+            InlineString<12> size_text = size.to_string();
+            t->line_buf.append(size_text.as_str());
+            t->line_buf.append(" bytes\n");
         }
-        t->say(&t->line_buf[0]);
+        t->say(t->line_buf.as_ptr());
         n++;
         start = idx + 1;
     }
@@ -174,13 +176,14 @@ void (Terminal *t) cmd_run(char *path) {
         Err(_) -> ({ t->say_line("run: process could not be started"); return; });
     };
     t->pid = pid;
-    i32 k = strbuf.reset(&t->line_buf[0]);
-    k = strbuf.append(&t->line_buf[0], 96, k, "[pid ");
-    k = strbuf.append_i32(&t->line_buf[0], 96, k, pid);
-    k = strbuf.append(&t->line_buf[0], 96, k, "] ");
-    k = strbuf.append(&t->line_buf[0], 96, k, path);
-    k = strbuf.append(&t->line_buf[0], 96, k, "\n");
-    t->say(&t->line_buf[0]);
+    t->line_buf.clear();
+    t->line_buf.append("[pid ");
+    InlineString<12> pid_text = pid.to_string();
+    t->line_buf.append(pid_text.as_str());
+    t->line_buf.append("] ");
+    t->line_buf.append(str.from_c(path));
+    t->line_buf.append("\n");
+    t->say(t->line_buf.as_ptr());
 }
 
 // Split "cmd arg" at the first space (in place) and return the argument.
@@ -217,10 +220,10 @@ void (Terminal *t) run_line(char *line) {
         return;
     }
     // Work on a copy: split_arg edits in place.
-    i32 k = strbuf.reset(&t->cmd[0]);
-    k = strbuf.append(&t->cmd[0], 96, k, line);
-    char *arg = split_arg(&t->cmd[0]);
-    char *cmd = &t->cmd[0];
+    t->cmd.clear();
+    t->cmd.append(str.from_c(line));
+    char *arg = split_arg(t->cmd.as_ptr());
+    char *cmd = t->cmd.as_ptr();
     if (cmd[0] == 0) { return; }
     str command = cmd.as_str();
     if (command == "help") {
@@ -245,9 +248,10 @@ void (Terminal *t) run_line(char *line) {
  * @param id DOM node ID supplied by the key/button event.
  */
 void (Terminal *t) submit(i32 id) {
-    ui.text_copy(t->input, &t->line_buf[0], 96);
+    ui.text_copy(t->input, t->line_buf.as_ptr(), t->line_buf.data.length);
+    t->line_buf.sync_from_ptr();
     ui.input_set(t->input, "");
-    t->run_line(&t->line_buf[0]);
+    t->run_line(t->line_buf.as_ptr());
     ui.focus(t->input);
 }
 
@@ -268,27 +272,29 @@ void (Terminal *t) poll() {
     ProcessExitStatus exit_status;
     bool got_status = result_take_ok<ProcessExitStatus, ProcessControlError>(&reaped, &exit_status);
     t->pid = 0;
-    i32 k = strbuf.reset(&t->line_buf[0]);
-    k = strbuf.append(&t->line_buf[0], 96, k, "[pid ");
-    k = strbuf.append_i32(&t->line_buf[0], 96, k, pid);
+    t->line_buf.clear();
+    t->line_buf.append("[pid ");
+    InlineString<12> pid_text = pid.to_string();
+    t->line_buf.append(pid_text.as_str());
     if (got_status) {
         case exit_status of {
             ProcessExitStatus::Code(code) -> ({
-                k = strbuf.append(&t->line_buf[0], 96, k, " exited with ");
-                k = strbuf.append_i32(&t->line_buf[0], 96, k, code);
+                t->line_buf.append(" exited with ");
+                InlineString<12> code_text = code.to_string();
+                t->line_buf.append(code_text.as_str());
             });
             ProcessExitStatus::PageFault -> ({
-                k = strbuf.append(&t->line_buf[0], 96, k, " terminated by page fault");
+                t->line_buf.append(" terminated by page fault");
             });
             ProcessExitStatus::PrivilegeViolation -> ({
-                k = strbuf.append(&t->line_buf[0], 96, k, " terminated by privilege violation");
+                t->line_buf.append(" terminated by privilege violation");
             });
         };
     } else {
-        k = strbuf.append(&t->line_buf[0], 96, k, " could not be reaped");
+        t->line_buf.append(" could not be reaped");
     }
-    k = strbuf.append(&t->line_buf[0], 96, k, "]\n");
-    t->say(&t->line_buf[0]);
+    t->line_buf.append("]\n");
+    t->say(t->line_buf.as_ptr());
 }
 
 // Closing the window while a process is attached: stop routing its output

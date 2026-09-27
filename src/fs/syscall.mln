@@ -22,10 +22,11 @@ import {
 } from "../../../../contracts/myos/fs-args.contract.mln";
 import fs from "fs.mln";
 import user_memory from "../syscall/user_memory.mln";
+import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
 
-char g_path[64];
+InlineCString<64> g_path;
 char g_io[512];
-char g_name[16];
+InlineCString<16> g_name;
 
 /**
  * Reads bytes into a user buffer through a bounded kernel staging buffer.
@@ -116,22 +117,24 @@ i32 write_user(i32 user_args) {
 i32 dir_next_user(i32 user_args) {
     FsDirNextArgs<Result<Option<i32>, FsError>> args;
     user_memory.copy_in(user_args, (char*)(&args), sizeof(args));
-    user_memory.copy_in_string((i32)args.path, &g_path[0], 64);
+    user_memory.copy_in_string((i32)args.path, g_path.as_ptr(), g_path.data.length);
+    g_path.sync_from_ptr();
     i32 start = args.start;
     i32 user_out = (i32)args.name_out;
     i32 cap = args.name_cap;
     i32 user_result = (i32)args.result_out;
     if (cap < 0) { cap = 0; }
     if (cap > 16) { cap = 16; }
-    Result<Option<i32>, FsError> res = fs.dir_next_at(&g_path[0], start, &g_name[0], 16);
+    Result<Option<i32>, FsError> res = fs.dir_next_at(g_path.as_ptr(), start, g_name.as_ptr(), g_name.data.length);
+    g_name.sync_from_ptr();
     case res of {
         Ok(v) -> ({
             case v of {
                 Some(idx) -> ({
                     if (cap > 0) {
-                        i32 n = str.len(&g_name[0]) + 1;
+                        i32 n = g_name.len() + 1;
                         if (n > cap) { n = cap; }
-                        user_memory.copy_out(user_out, &g_name[0], n);
+                        user_memory.copy_out(user_out, g_name.as_ptr(), n);
                         mem.write_byte(user_out + cap - 1, 0);
                     }
                 });
@@ -205,8 +208,9 @@ export Result<i32, OsServiceError> handle(i32 service, i32 args) {
     if (service == OsService::FS_OPEN) {
         FsOpenArgs<Result<i32, FsError>> request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        user_memory.copy_in_string((i32)request.path, &g_path[0], 64);
-        Result<i32, FsError> r = fs.open(&g_path[0]);
+        user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
+        g_path.sync_from_ptr();
+        Result<i32, FsError> r = fs.open(g_path.as_ptr());
         user_memory.copy_out(
             (i32)request.result_out,
             (char*)(&r),
@@ -217,8 +221,9 @@ export Result<i32, OsServiceError> handle(i32 service, i32 args) {
     if (service == OsService::FS_CREATE) {
         FsCreateArgs<Result<i32, FsError>> request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        user_memory.copy_in_string((i32)request.path, &g_path[0], 64);
-        Result<i32, FsError> r = fs.create(&g_path[0]);
+        user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
+        g_path.sync_from_ptr();
+        Result<i32, FsError> r = fs.create(g_path.as_ptr());
         user_memory.copy_out(
             (i32)request.result_out,
             (char*)(&r),
@@ -229,8 +234,9 @@ export Result<i32, OsServiceError> handle(i32 service, i32 args) {
     if (service == OsService::FS_REMOVE) {
         FsRemoveArgs<Result<_, FsError>> request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        user_memory.copy_in_string((i32)request.path, &g_path[0], 64);
-        Result<_, FsError> r = fs.remove(&g_path[0]);
+        user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
+        g_path.sync_from_ptr();
+        Result<_, FsError> r = fs.remove(g_path.as_ptr());
         user_memory.copy_out(
             (i32)request.result_out,
             (char*)(&r),
@@ -241,8 +247,9 @@ export Result<i32, OsServiceError> handle(i32 service, i32 args) {
     if (service == OsService::FS_MKDIR) {
         FsMkdirArgs<Result<i32, FsError>> request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        user_memory.copy_in_string((i32)request.path, &g_path[0], 64);
-        Result<i32, FsError> r = fs.mkdir(&g_path[0]);
+        user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
+        g_path.sync_from_ptr();
+        Result<i32, FsError> r = fs.mkdir(g_path.as_ptr());
         user_memory.copy_out(
             (i32)request.result_out,
             (char*)(&r),

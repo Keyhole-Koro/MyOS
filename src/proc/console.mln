@@ -15,7 +15,8 @@ import { SpawnError, SpawnFsOperation, SpawnFilesystemError, SpawnReadMismatch }
 import { ProcessControlError, ProcessExitStatus } from "../../../../contracts/process/control.contract.mln";
 import { FsError, SeekWhence } from "../../../../contracts/io/fs.contract.mln";
 import fs from "../fs/fs.mln";
-import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
+import str from "../../../../toolchain/MyStdLib/str.mln";
+import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
 import dom_widgets from "../ui/dom/dom_widgets.mln";
 import dom from "../ui/dom/dom.mln";
 
@@ -203,7 +204,7 @@ i32 on_read(i32 pid, i32 buf, i32 count) {
  * @return Ok(PID) on success, or Err(SpawnError) when the executable cannot
  *         be opened, loaded, or scheduled.
  */
-char spawn_path[80];
+InlineCString<80> spawn_path;
 
 // The file for an executable name: a path as given, or a bare name looked
 // up in /bin then /apps (the search path).
@@ -224,15 +225,15 @@ Result<i32, SpawnError> open_executable(char *path) {
     i32 i = 0;
     while (path[i] != 0) { if (path[i] == '/') { has_slash = 1; } i++; }
     if (has_slash == 0) {
-        i32 k = strbuf.reset(&spawn_path[0]);
-        k = strbuf.append(&spawn_path[0], 80, k, "bin/");
-        k = strbuf.append(&spawn_path[0], 80, k, path);
-        Option<i32> bin = try_open(&spawn_path[0])?;
+        spawn_path.clear();
+        spawn_path.append("bin/");
+        spawn_path.append(str.from_c(path));
+        Option<i32> bin = try_open(spawn_path.as_ptr())?;
         case bin of { Some(fd) -> ({ return Ok(fd); }); None -> _; };
-        k = strbuf.reset(&spawn_path[0]);
-        k = strbuf.append(&spawn_path[0], 80, k, "apps/");
-        k = strbuf.append(&spawn_path[0], 80, k, path);
-        Option<i32> apps = try_open(&spawn_path[0])?;
+        spawn_path.clear();
+        spawn_path.append("apps/");
+        spawn_path.append(str.from_c(path));
+        Option<i32> apps = try_open(spawn_path.as_ptr())?;
         case apps of { Some(fd) -> ({ return Ok(fd); }); None -> _; };
     }
     Option<i32> direct = try_open(path)?;

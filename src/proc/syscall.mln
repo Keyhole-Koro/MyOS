@@ -16,9 +16,10 @@ import user_memory from "../syscall/user_memory.mln";
 import { Result, result_take_ok } from "../../../../toolchain/MyStdLib/result.mln";
 import { SpawnError } from "../../../../contracts/process/spawn.contract.mln";
 import { ProcessControlError, ProcessExitStatus } from "../../../../contracts/process/control.contract.mln";
+import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
 
-char g_path[64];
-char g_line[128];
+InlineCString<64> g_path;
+InlineCString<128> g_line;
 
 /**
  * Dispatches a process OS_CALL request and performs user-memory copies where needed.
@@ -31,8 +32,9 @@ export Result<i32, OsServiceError> handle(i32 service, i32 args) {
     if (service == OsService::PROC_SPAWN) {
         ProcSpawnArgs<Result<i32, SpawnError>> request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        user_memory.copy_in_string((i32)request.path, &g_path[0], 64);
-        Result<i32, SpawnError> result = console.spawn_file(&g_path[0]);
+        user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
+        g_path.sync_from_ptr();
+        Result<i32, SpawnError> result = console.spawn_file(g_path.as_ptr());
         i32 pid = 0;
         if (request.stdout_node != 0 && result_take_ok<i32, SpawnError>(&result, &pid)) {
             console.bind(pid, request.stdout_node);
@@ -81,8 +83,9 @@ export Result<i32, OsServiceError> handle(i32 service, i32 args) {
     if (service == OsService::PROC_FEED) {
         ProcFeedArgs request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        user_memory.copy_in_string((i32)request.line, &g_line[0], 128);
-        console.feed_line(request.pid, &g_line[0]);
+        user_memory.copy_in_string((i32)request.line, g_line.as_ptr(), g_line.data.length);
+        g_line.sync_from_ptr();
+        console.feed_line(request.pid, g_line.as_ptr());
         return Ok(0);
     }
     return Err(OsServiceError::UnknownService(service));

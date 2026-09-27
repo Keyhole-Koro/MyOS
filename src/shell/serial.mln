@@ -5,7 +5,7 @@ import fs from "../fs/fs.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import serial from "../../../MyKernel/src/io/serial.mln";
 import str from "../../../../toolchain/MyStdLib/str.mln";
-import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
+import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
 import { Option } from "../../../../toolchain/MyStdLib/option.mln";
 
 /**
@@ -28,12 +28,11 @@ i32 read_char() {
  */
 export void run() {
     debug.println("Starting OS shell...");
-    char buf[128];
-    i32 len = 0;
+    InlineCString<128> buf = InlineCString<128> {};
 
     while (1) {
         debug.print("MyOS> ");
-        len = strbuf.reset(&buf[0]);
+        buf.clear();
 
         while (1) {
             i32 c = read_char();
@@ -42,15 +41,13 @@ export void run() {
                 break;
             }
             if (c == 8 || c == 127) {
-                if (len > 0) {
-                    len = strbuf.truncate(&buf[0], len, 1);
+                if (!buf.is_empty()) {
+                    buf.truncate(buf.len() - 1);
                     // Backspace, space, backspace to erase char on terminal
                     debug.print("\b \b");
                 }
             } else {
-                i32 next = strbuf.push(&buf[0], 128, len, c);
-                if (next != len) {
-                    len = next;
+                if (buf.push((u8)c)) {
                     char tmp[2];
                     tmp[0] = c;
                     tmp[1] = 0;
@@ -59,9 +56,8 @@ export void run() {
             }
         }
 
-        if (len > 0) {
-            char *command_data = &buf[0];
-            str command = command_data.as_str();
+        if (!buf.is_empty()) {
+            str command = buf.as_str();
             if (command == "help") {
                 debug.println("Commands:");
                 debug.println("  help  - Show this help");
@@ -73,7 +69,7 @@ export void run() {
                 debug.println("Hello from MyOS Shell!");
             } else {
                 debug.print("Unknown command: ");
-                debug.println(&buf[0]);
+                debug.println(buf.as_ptr());
             }
         }
     }

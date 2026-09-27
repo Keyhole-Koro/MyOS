@@ -3,7 +3,7 @@ package app;
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import str from "../../../../toolchain/MyStdLib/str.mln";
-import strbuf from "../../../../toolchain/MyStdLib/text/strbuf.mln";
+import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
 import dom from "../ui/dom/dom.mln";
 import dom_widgets from "../ui/dom/dom_widgets.mln";
 import dom_render from "../ui/dom/dom_render.mln";
@@ -131,7 +131,7 @@ void register_app(char *path, char *type, i32 single, char *name, i32 opens) {
 // Every executable in /apps that declares @app is an installed app: read
 // each file's header (MBIN, section directory) for its annotation rows,
 // without loading it.
-char scan_path[32];
+InlineCString<32> scan_path;
 
 void scan_disk() {
     char name[16];
@@ -149,10 +149,10 @@ void scan_disk() {
         i32 size = 0;
         if (!result_take_ok<i32, FsError>(&size_result, &size)) { continue; }
         if (size < 36) { continue; }
-        i32 k = strbuf.reset(&scan_path[0]);
-        k = strbuf.append(&scan_path[0], 32, k, "apps/");
-        k = strbuf.append(&scan_path[0], 32, k, &name[0]);
-        Result<i32, FsError> opened = fs.open(&scan_path[0]);
+        scan_path.clear();
+        scan_path.append("apps/");
+        scan_path.append(str.from_c(&name[0]));
+        Result<i32, FsError> opened = fs.open(scan_path.as_ptr());
         i32 fd = 0;
         if (result_take_ok<i32, FsError>(&opened, &fd)) {
             char *image = (char*)heap.alloc(size);
@@ -170,8 +170,8 @@ void scan_disk() {
                             opens.on("open", type);
                             i32 has_open = 0;
                             if (opens.next()) { has_open = 1; }
-                            register_app(keep(&scan_path[0]), type, rows.arg(0), keep(rows.text(1)), has_open);
-                            debug.printf("app: installed %s (%s)\n", (i32)type, (i32)(&scan_path[0]));
+                            register_app(keep(scan_path.as_ptr()), type, rows.arg(0), keep(rows.text(1)), has_open);
+                            debug.printf("app: installed %s (%s)\n", (i32)type, (i32)(scan_path.as_ptr()));
                         }
                     }
                 }
@@ -220,7 +220,7 @@ struct AppInstance {
 Option<AppInstance> instances[32];
 i32 instance_count = 0; // slots in use, including freed ones below the high-water mark
 
-char menu_buf[256];    // "\n"-joined app names for the launcher menu
+InlineCString<256> menu_buf; // "\n"-joined app names
 // One pending OPEN path per instance. A single global scratch buffer loses the
 // first path when two applications are still starting at the same time.
 char open_paths[2048]; // INSTANCES_MAX * 64
@@ -567,14 +567,14 @@ export i32 open(char *path) {
  * @return Pointer to a NUL-terminated string in shell-owned static storage.
  */
 export char* menu_items() {
-    i32 n = strbuf.reset(&menu_buf[0]);
+    menu_buf.clear();
     i32 i = 0;
     while (i < registry_count) {
-        if (i > 0) { n = strbuf.append(&menu_buf[0], 256, n, "\n"); }
-        n = strbuf.append(&menu_buf[0], 256, n, (char*)registry[i].name);
+        if (i > 0) { menu_buf.append("\n"); }
+        menu_buf.append(str.from_c((char*)registry[i].name));
         i++;
     }
-    return &menu_buf[0];
+    return menu_buf.as_ptr();
 }
 
 /**

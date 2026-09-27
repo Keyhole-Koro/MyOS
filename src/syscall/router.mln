@@ -16,8 +16,9 @@ import fs_syscall from "../fs/syscall.mln";
 import process_syscall from "../proc/syscall.mln";
 import app_events from "../ipc/events.mln";
 import app from "../shell/app.mln";
+import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
 
-char g_log_line[128];
+InlineCString<128> g_log_line;
 
 /**
  * Dispatches an OS_CALL request to the corresponding boundary endpoint.
@@ -50,8 +51,9 @@ Result<i32, OsServiceError> handle(i32 pid, i32 service, i32 args) {
         return process_syscall.handle(service, args);
     }
     if (service == OsService::LOG) {
-        user_memory.copy_in_string(args, &g_log_line[0], 128);
-        debug.printf("[pid %d] %s\n", pid, (i32)(&g_log_line[0]));
+        user_memory.copy_in_string(args, g_log_line.as_ptr(), g_log_line.data.length);
+        g_log_line.sync_from_ptr();
+        debug.printf("[pid %d] %s\n", pid, (i32)(g_log_line.as_ptr()));
         return Ok(0);
     }
     return Err(OsServiceError::UnknownService(service));

@@ -6,6 +6,7 @@ import { app, open, key } from "../../../MyAppFramework/src/annotations.mln";
 import fs from "../../../../toolchain/MyStdLib/hosted/fs.mln";
 import { Result } from "../../../../toolchain/MyStdLib/result.mln";
 import { FsError } from "../../../../contracts/io/fs.contract.mln";
+import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
 
 // Text editor: a TextArea over one file on the MFS disk. Save rewrites the
 // file (MFS writes are append-only, so the file is removed and recreated).
@@ -28,8 +29,8 @@ struct Editor {
     i32 area;     // TextArea
     i32 name;     // filename TextInput
     i32 status;   // Label
-    char save_name[32];
-    char save_text[4096];
+    InlineCString<32> save_name;
+    InlineCString<4096> save_text;
 };
 
 @app(single)
@@ -92,11 +93,13 @@ void (Editor *e) open(char *path) {
  * @param id DOM node ID supplied by the key event.
  */
 void (Editor *e) save(i32 id) {
-    char *path = &e->save_name[0];
-    ui.text_copy(e->name, path, 32);
+    char *path = e->save_name.as_ptr();
+    ui.text_copy(e->name, path, e->save_name.data.length);
+    e->save_name.sync_from_ptr();
     if (path[0] == 0) { ui.set_text(e->status, "enter a file name first"); return; }
-    char *text = &e->save_text[0];
-    i32 len = ui.text_copy(e->area, text, 4096);
+    char *text = e->save_text.as_ptr();
+    i32 len = ui.text_copy(e->area, text, e->save_text.data.length);
+    e->save_text.sync_from_ptr();
     // Bind the Result: a discarded aggregate return has no out-pointer.
     Result<_, FsError> removed = fs.remove(path);
     case removed of { Ok(_) -> _; Err(_) -> _; };

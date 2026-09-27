@@ -3,6 +3,7 @@ package notes;
 import elements from "../../../MyAppFramework/src/elements.mln";
 import ui from "../../../MyAppFramework/src/ui.mln";
 import { app } from "../../../MyAppFramework/src/annotations.mln";
+import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
 
 // "Notes": a small form that exercises keyboard input. Two text fields, a
 // checkbox and a separator, plus a label that echoes what was typed. Every
@@ -23,7 +24,7 @@ struct Notes {
     i32 title;
     i32 body;
     i32 echo;
-    char typed[128];
+    InlineCString<128> typed;
 };
 
 @app
@@ -54,8 +55,9 @@ i32 (Notes *n) view() {
  * @param id DOM node ID of the input that changed.
  */
 void (Notes *n) changed(i32 id) {
-    ui.text_copy(id, &n->typed[0], 128);
-    ui.set_text_fmt(n->echo, "You typed: %s", (i32)(&n->typed[0]), 0);
+    ui.text_copy(id, n->typed.as_ptr(), n->typed.data.length);
+    n->typed.sync_from_ptr();
+    ui.set_text_fmt(n->echo, "You typed: %s", (i32)(n->typed.as_ptr()), 0);
 }
 
 /**
