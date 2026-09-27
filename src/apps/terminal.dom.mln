@@ -222,7 +222,8 @@ void (Terminal *t) run_line(char *line) {
     char *arg = split_arg(&t->cmd[0]);
     char *cmd = &t->cmd[0];
     if (cmd[0] == 0) { return; }
-    if (str.eq(cmd, "help")) {
+    str command = cmd.as_str();
+    if (command == "help") {
         t->say_line("help          this text");
         t->say_line("ls [dir]      list the disk, or a directory (bin, apps)");
         t->say_line("cat <file>    print a file");
@@ -230,10 +231,10 @@ void (Terminal *t) run_line(char *line) {
         t->say_line("clear         clear the screen");
         return;
     }
-    if (str.eq(cmd, "ls")) { t->cmd_ls(arg); return; }
-    if (str.eq(cmd, "clear")) { ui.area_clear(t->out); return; }
-    if (str.eq(cmd, "cat")) { t->cmd_cat(arg); return; }
-    if (str.eq(cmd, "run")) { t->cmd_run(arg); return; }
+    if (command == "ls") { t->cmd_ls(arg); return; }
+    if (command == "clear") { ui.area_clear(t->out); return; }
+    if (command == "cat") { t->cmd_cat(arg); return; }
+    if (command == "run") { t->cmd_run(arg); return; }
     t->cmd_run(cmd);
 }
 
