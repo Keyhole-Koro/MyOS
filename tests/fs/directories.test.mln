@@ -1,10 +1,10 @@
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import fs from "../../src/fs/fs.mln";
 import { FsError } from "../../../../contracts/io/fs.contract.mln";
-import { Result } from "../../../../toolchain/MyStdLib/result.mln";
-import { Option } from "../../../../toolchain/MyStdLib/option.mln";
-import { assert_eq } from "../../../../toolchain/MyStdLib/assert.mln";
-import str from "../../../../toolchain/MyStdLib/str.mln";
+import { Result } from "@std/core/result.mln";
+import { Option } from "@std/core/option.mln";
+import { assert_eq } from "@std/testing/assert.mln";
+import str from "@std/text/str.mln";
 
 // Directories: an entry with FLAG_DIR and a parent; paths walk them.
 

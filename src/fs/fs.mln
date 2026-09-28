@@ -5,15 +5,15 @@ import fs_config from "fs_config.mln";
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import mem from "../../../MyKernel/src/mm/mem.mln";
-import bitset from "../../../../toolchain/MyStdLib/collections/bitset.mln";
-import bytes from "../../../../toolchain/MyStdLib/text/bytes.mln";
-import str from "../../../../toolchain/MyStdLib/str.mln";
+import bitset from "@std/collections/bitset.mln";
+import bytes from "@std/text/bytes.mln";
+import str from "@std/text/str.mln";
 import serial from "../../../MyKernel/src/io/serial.mln";
 import ssd from "ssd.mln";
 import { SsdError } from "ssd.mln";
-import { Result } from "../../../../toolchain/MyStdLib/result.mln";
-import { Option } from "../../../../toolchain/MyStdLib/option.mln";
-import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
+import { Result } from "@std/core/result.mln";
+import { Option } from "@std/core/option.mln";
+import { InlineCString } from "@std/text/inline_c_string.mln";
 import { FsError, SeekWhence } from "../../../../contracts/io/fs.contract.mln";
 
 // =========================================================================

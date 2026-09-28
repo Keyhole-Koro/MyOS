@@ -9,9 +9,9 @@ import dom from "dom.mln";
 import { UiEventKind } from "../events.mln";
 import ui_config from "../config.mln";
 import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
-import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
-import { Result } from "../../../../../toolchain/MyStdLib/result.mln";
-import { InlineCString } from "../../../../../toolchain/MyStdLib/text/inline_c_string.mln";
+import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
+import { InlineCString } from "@std/text/inline_c_string.mln";
 import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
 
 /** Result of applying a keyboard edit to a text-input widget. */

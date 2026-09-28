@@ -1,5 +1,5 @@
-import { Option } from "../../../../toolchain/MyStdLib/option.mln";
-import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
 package compositor;
 
 import dom from "dom/dom.mln";

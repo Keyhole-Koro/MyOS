@@ -8,8 +8,8 @@ import theme from "../theme.mln";
 import ui_event from "../events.mln";
 import irq from "../../../../MyKernel/src/arch/irq.mln";
 import { UiEventKind } from "../events.mln";
-import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
-import { Result } from "../../../../../toolchain/MyStdLib/result.mln";
+import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
 import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
 
 // Kernel object tree + UI DOM. See docs/DOM_SPEC.md and MYOS-014.

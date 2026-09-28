@@ -1,11 +1,11 @@
-import assert from "../../../../toolchain/MyStdLib/assert.mln";
+import assert from "@std/testing/assert.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import mem from "../../../MyKernel/src/mm/mem.mln";
 import fs from "../../src/fs/fs.mln";
 import fs_config from "../../src/fs/fs_config.mln";
 import ssd from "../../src/fs/ssd.mln";
 import { FsError, SeekWhence } from "../../../../contracts/io/fs.contract.mln";
-import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { Result } from "@std/core/result.mln";
 
 
 i32 is_invalid_name(Result<i32, FsError>* result) {

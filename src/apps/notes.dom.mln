@@ -3,7 +3,7 @@ package notes;
 import elements from "../../../MyAppFramework/src/elements.mln";
 import ui from "../../../MyAppFramework/src/ui.mln";
 import { app } from "../../../MyAppFramework/src/annotations.mln";
-import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
+import { InlineCString } from "@std/text/inline_c_string.mln";
 
 // "Notes": a small form that exercises keyboard input. Two text fields, a
 // checkbox and a separator, plus a label that echoes what was typed. Every

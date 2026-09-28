@@ -4,17 +4,17 @@ import elements from "../../../MyAppFramework/src/elements.mln";
 import ui from "../../../MyAppFramework/src/ui.mln";
 import { app, timer, key, on_close } from "../../../MyAppFramework/src/annotations.mln";
 import terminal from "../../../MyAppFramework/src/terminal.mln";
-import fs from "../../../../toolchain/MyStdLib/hosted/fs.mln";
-import process from "../../../../toolchain/MyStdLib/hosted/process.mln";
-import str from "../../../../toolchain/MyStdLib/str.mln";
-import { InlineString } from "../../../../toolchain/MyStdLib/text/inline_string.mln";
-import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
-import { Result, result_take_ok } from "../../../../toolchain/MyStdLib/result.mln";
+import fs from "@std/hosted/fs.mln";
+import process from "@std/hosted/process.mln";
+import str from "@std/text/str.mln";
+import { InlineString } from "@std/text/inline_string.mln";
+import { InlineCString } from "@std/text/inline_c_string.mln";
+import { Result, result_take_ok } from "@std/core/result.mln";
 import { FsError } from "../../../../contracts/io/fs.contract.mln";
 import { SpawnError } from "../../../../contracts/process/spawn.contract.mln";
 import { LoaderError } from "../../../../contracts/process/loader.contract.mln";
 import { ProcessControlError, ProcessExitStatus } from "../../../../contracts/process/control.contract.mln";
-import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+import { Option } from "@std/core/option.mln";
 
 // Terminal: a read-only TextArea for output and a command line. Lines typed
 // while a user process is attached go to its stdin; otherwise they are

@@ -2,7 +2,7 @@ package ssd;
 
 import mem from "../../../MyKernel/src/mm/mem.mln";
 import { wfi_cpu } from "../../../MyKernel/src/arch/wfi.masm";
-import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { Result } from "@std/core/result.mln";
 
 // Block-device driver for the emulated SSD. Memory-mapped registers must match
 // constants.rs in the emulator. A command is issued by latching the block

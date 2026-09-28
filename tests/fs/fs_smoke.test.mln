@@ -1,8 +1,8 @@
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import fs from "../../src/fs/fs.mln";
 import { FsError } from "../../../../contracts/io/fs.contract.mln";
-import { Result } from "../../../../toolchain/MyStdLib/result.mln";
-import { assert_eq } from "../../../../toolchain/MyStdLib/assert.mln";
+import { Result } from "@std/core/result.mln";
+import { assert_eq } from "@std/testing/assert.mln";
 
 // Write one byte to a plain byte buffer (caller buffers are byte arrays).
 void set_byte(i32 addr, i32 value) {

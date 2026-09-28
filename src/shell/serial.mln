@@ -4,9 +4,9 @@ import debug from "../../../MyKernel/src/debug/debug.mln";
 import fs from "../fs/fs.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import serial from "../../../MyKernel/src/io/serial.mln";
-import str from "../../../../toolchain/MyStdLib/str.mln";
-import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
-import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+import str from "@std/text/str.mln";
+import { InlineCString } from "@std/text/inline_c_string.mln";
+import { Option } from "@std/core/option.mln";
 
 /**
  * Blocks until a character is available from the serial input queue, sleeping between polls.

@@ -16,7 +16,7 @@ import shell_protocol from "../shell/protocol.mln";
 import app_events from "events.mln";
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
-import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+import { Option } from "@std/core/option.mln";
 
 i32 g_requests = 0;   // apps -> server
 

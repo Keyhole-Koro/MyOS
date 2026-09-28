@@ -9,14 +9,14 @@ import loader from "../../../MyKernel/src/kernel/loader.mln";
 import process from "../../../MyKernel/src/kernel/process.mln";
 import { ProcessState, ProcessError } from "../../../MyKernel/src/kernel/process.mln";
 import { LoaderError } from "../../../../contracts/process/loader.contract.mln";
-import { Result, result_take_ok } from "../../../../toolchain/MyStdLib/result.mln";
-import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+import { Result, result_take_ok } from "@std/core/result.mln";
+import { Option } from "@std/core/option.mln";
 import { SpawnError, SpawnFsOperation, SpawnFilesystemError, SpawnReadMismatch } from "../../../../contracts/process/spawn.contract.mln";
 import { ProcessControlError, ProcessExitStatus } from "../../../../contracts/process/control.contract.mln";
 import { FsError, SeekWhence } from "../../../../contracts/io/fs.contract.mln";
 import fs from "../fs/fs.mln";
-import str from "../../../../toolchain/MyStdLib/str.mln";
-import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
+import str from "@std/text/str.mln";
+import { InlineCString } from "@std/text/inline_c_string.mln";
 import dom_widgets from "../ui/dom/dom_widgets.mln";
 import dom from "../ui/dom/dom.mln";
 

@@ -8,8 +8,8 @@ import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
 import dom_widgets from "dom_widgets.mln";
 import dom from "dom.mln";
 import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
-import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
-import { InlineCString } from "../../../../../toolchain/MyStdLib/text/inline_c_string.mln";
+import { Option } from "@std/core/option.mln";
+import { InlineCString } from "@std/text/inline_c_string.mln";
 // --- renderer ---------------------------------------------------------------------------------
 // Walk the UI subtree and paint each node with graphics.*. The renderer and
 // the window manager are one: z-order is sibling order (later siblings on

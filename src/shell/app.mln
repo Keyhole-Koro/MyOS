@@ -2,23 +2,23 @@ package app;
 
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
-import str from "../../../../toolchain/MyStdLib/str.mln";
-import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
+import str from "@std/text/str.mln";
+import { InlineCString } from "@std/text/inline_c_string.mln";
 import dom from "../ui/dom/dom.mln";
 import dom_widgets from "../ui/dom/dom_widgets.mln";
 import dom_render from "../ui/dom/dom_render.mln";
 import compositor from "../ui/compositor.mln";
 import graphics from "../ui/graphics.mln";
-import annotations from "../../../../toolchain/MyStdLib/meta/annotations.mln";
-import { Annotations } from "../../../../toolchain/MyStdLib/meta/annotations.mln";
+import annotations from "@std/meta/annotations.mln";
+import { Annotations } from "@std/meta/annotations.mln";
 import fs from "../fs/fs.mln";
 import { FsError } from "../../../../contracts/io/fs.contract.mln";
 import { SpawnError } from "../../../../contracts/process/spawn.contract.mln";
 import { ProcessControlError, ProcessExitStatus } from "../../../../contracts/process/control.contract.mln";
 import console from "../proc/console.mln";
-import mbin from "../../../../toolchain/MyStdLib/format/mbin.mln";
-import { Result, result_take_ok } from "../../../../toolchain/MyStdLib/result.mln";
-import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+import mbin from "@std/format/mbin.mln";
+import { Result, result_take_ok } from "@std/core/result.mln";
+import { Option } from "@std/core/option.mln";
 import { ShellEventKind } from "events.mln";
 
 // The shell: the registry of installed apps and the instances running on

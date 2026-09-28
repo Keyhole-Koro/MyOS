@@ -1,12 +1,12 @@
 import dom_elements from "dom_elements.mln";
-import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
+import { Option } from "@std/core/option.mln";
 package dom_automation;
 
 import dom from "dom.mln";
 import automation_transport from "../../meta/automation_transport.mln";
 import debug from "../../../../MyKernel/src/debug/debug.mln";
-import str from "../../../../../toolchain/MyStdLib/str.mln";
-import { InlineString } from "../../../../../toolchain/MyStdLib/text/inline_string.mln";
+import str from "@std/text/str.mln";
+import { InlineString } from "@std/text/inline_string.mln";
 
 // Human-readable tree dump (the kernel debug shell's `dump` command) and the
 // machine-readable JSON snapshot for the MYOS-004 UI automation bridge.

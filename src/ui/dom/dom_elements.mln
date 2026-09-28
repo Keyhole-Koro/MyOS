@@ -8,8 +8,8 @@ import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
 import dom_widgets from "dom_widgets.mln";
 import dom from "dom.mln";
 import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
-import { Option } from "../../../../../toolchain/MyStdLib/option.mln";
-import { Result } from "../../../../../toolchain/MyStdLib/result.mln";
+import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
 import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
 // --- UI node create helpers ------------------------------------------------------------------
 // Each sets kind + role + bounds + text + default state (visible/enabled) in one

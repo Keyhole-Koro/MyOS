@@ -17,7 +17,7 @@ import heap from "../../../MyKernel/src/mm/heap.mln";
 import { NodeStyle } from "dom/dom.mln";
 import { Request } from "../../../../contracts/myapp/message.contract.mln";
 import { UiOp } from "../../../../contracts/myapp/ui.contract.mln";
-import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { Result } from "@std/core/result.mln";
 import { UiError } from "../../../../contracts/ui/widget.contract.mln";
 
 /**

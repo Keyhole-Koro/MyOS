@@ -1,4 +1,4 @@
-import assert from "../../../../toolchain/MyStdLib/assert.mln";
+import assert from "@std/testing/assert.mln";
 import dom from "../../src/ui/dom/dom.mln";
 import dom_elements from "../../src/ui/dom/dom_elements.mln";
 import dom_widgets from "../../src/ui/dom/dom_widgets.mln";
@@ -6,8 +6,8 @@ import dom_render from "../../src/ui/dom/dom_render.mln";
 import graphics from "../../src/ui/graphics.mln";
 import theme from "../../src/ui/theme.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
-import { Option } from "../../../../toolchain/MyStdLib/option.mln";
-import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
 import { UiError } from "../../../../contracts/ui/widget.contract.mln";
 
 // Pins the interaction contract the compositor relies on: it holds no node ids

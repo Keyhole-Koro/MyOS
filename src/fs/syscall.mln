@@ -10,9 +10,9 @@
 package fs_syscall;
 
 import mem from "../../../MyKernel/src/mm/mem.mln";
-import str from "../../../../toolchain/MyStdLib/str.mln";
-import { Result } from "../../../../toolchain/MyStdLib/result.mln";
-import { Option } from "../../../../toolchain/MyStdLib/option.mln";
+import str from "@std/text/str.mln";
+import { Result } from "@std/core/result.mln";
+import { Option } from "@std/core/option.mln";
 import { OsService, OsServiceError } from "../../../../contracts/myos/services.contract.mln";
 import { FsError } from "../../../../contracts/io/fs.contract.mln";
 import {
@@ -22,7 +22,7 @@ import {
 } from "../../../../contracts/myos/fs-args.contract.mln";
 import fs from "fs.mln";
 import user_memory from "../syscall/user_memory.mln";
-import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
+import { InlineCString } from "@std/text/inline_c_string.mln";
 
 InlineCString<64> g_path;
 char g_io[512];

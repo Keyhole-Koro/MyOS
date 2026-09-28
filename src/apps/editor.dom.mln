@@ -3,10 +3,10 @@ package editor;
 import elements from "../../../MyAppFramework/src/elements.mln";
 import ui from "../../../MyAppFramework/src/ui.mln";
 import { app, open, key } from "../../../MyAppFramework/src/annotations.mln";
-import fs from "../../../../toolchain/MyStdLib/hosted/fs.mln";
-import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import fs from "@std/hosted/fs.mln";
+import { Result } from "@std/core/result.mln";
 import { FsError } from "../../../../contracts/io/fs.contract.mln";
-import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
+import { InlineCString } from "@std/text/inline_c_string.mln";
 
 // Text editor: a TextArea over one file on the MFS disk. Save rewrites the
 // file (MFS writes are append-only, so the file is removed and recreated).

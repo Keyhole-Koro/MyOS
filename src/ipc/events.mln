@@ -14,8 +14,8 @@ import { EventKind, TransportSignal } from "../../../../contracts/myapp/message.
 import ui_event from "../ui/events.mln";
 import { UiEventKind } from "../ui/events.mln";
 import { ShellEventKind } from "../shell/events.mln";
-import { Option } from "../../../../toolchain/MyStdLib/option.mln";
-import str from "../../../../toolchain/MyStdLib/str.mln";
+import { Option } from "@std/core/option.mln";
+import str from "@std/text/str.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 
 i32 OWNERS_MAX = 16;

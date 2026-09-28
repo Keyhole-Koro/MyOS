@@ -4,8 +4,8 @@ import display_config from "display_config.mln";
 import ui_config from "config.mln";
 import font from "font8x8.mln";
 import font_sans from "font_sans.mln";
-import str from "../../../../toolchain/MyStdLib/str.mln";
-import { InlineString } from "../../../../toolchain/MyStdLib/text/inline_string.mln";
+import str from "@std/text/str.mln";
+import { InlineString } from "@std/text/inline_string.mln";
 
 export i32 VRAM_BASE = 0x30000000;
 

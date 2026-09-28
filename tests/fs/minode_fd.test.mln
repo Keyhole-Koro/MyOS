@@ -1,8 +1,8 @@
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import fs from "../../src/fs/fs.mln";
 import { FsError, SeekWhence } from "../../../../contracts/io/fs.contract.mln";
-import { Result } from "../../../../toolchain/MyStdLib/result.mln";
-import { assert_eq } from "../../../../toolchain/MyStdLib/assert.mln";
+import { Result } from "@std/core/result.mln";
+import { assert_eq } from "@std/testing/assert.mln";
 
 
 void set_byte(i32 addr, i32 value) {

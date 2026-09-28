@@ -9,14 +9,14 @@ package os_call_router;
 import syscall from "../../../MyKernel/src/kernel/syscall.mln";
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import { OsService, OsServiceError } from "../../../../contracts/myos/services.contract.mln";
-import { Result } from "../../../../toolchain/MyStdLib/result.mln";
+import { Result } from "@std/core/result.mln";
 import user_memory from "user_memory.mln";
 import request_gateway from "../ipc/gateway.mln";
 import fs_syscall from "../fs/syscall.mln";
 import process_syscall from "../proc/syscall.mln";
 import app_events from "../ipc/events.mln";
 import app from "../shell/app.mln";
-import { InlineCString } from "../../../../toolchain/MyStdLib/text/inline_c_string.mln";
+import { InlineCString } from "@std/text/inline_c_string.mln";
 
 InlineCString<128> g_log_line;
 
