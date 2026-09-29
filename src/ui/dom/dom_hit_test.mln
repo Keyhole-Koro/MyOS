@@ -1,0 +1,76 @@
+package dom_hit_test;
+
+import dom from "dom.mln";
+import { Option } from "@std/core/option.mln";
+
+// Read-only pointer-to-node lookup. The DOM owns the tree and its state;
+// this module owns the traversal policy used by input dispatch and automation.
+
+/** Checks whether a point is inside a node's bounding rectangle. */
+export bool node_contains(i32 node_id, i32 px, i32 py) {
+    i32 x = dom.node_x(node_id);
+    i32 y = dom.node_y(node_id);
+    i32 width = dom.node_w(node_id);
+    i32 height = dom.node_h(node_id);
+    if (width == 0) { return false; }
+    if (height == 0) { return false; }
+    if (px < x) { return false; }
+    if (py < y) { return false; }
+    if (px >= x + width) { return false; }
+    if (py >= y + height) { return false; }
+    return true;
+}
+
+/** Finds the topmost visible, hit-testable node within a subtree. */
+export i32 hit_test(i32 node_id, i32 px, i32 py) {
+    if (!dom.node_exists(node_id)) { return 0; }
+    if (!dom.is_visible(node_id)) { return 0; }
+
+    bool inside = node_contains(node_id, px, py);
+    i32 found = 0;
+    if (inside) {
+        if (dom.is_hit_testable(node_id)) { found = node_id; }
+    }
+
+    // Children of a clipping container cannot be hit outside its bounds.
+    if (!inside) {
+        if (dom.clips_children_id(node_id)) { return 0; }
+    }
+
+    i32 child_id = dom.first_child(node_id);
+    while (child_id != 0) {
+        i32 child_hit = hit_test(child_id, px, py);
+        if (child_hit != 0) { found = child_hit; }
+        child_id = dom.next_sibling(child_id);
+    }
+    return found;
+}
+
+/** Finds the topmost interactive UI node at a display position. */
+export Option<i32> find_at(i32 x, i32 y) {
+    i32 menu_id = dom.get_g_menu_id();
+    if (menu_id != 0) {
+        i32 menu_hit = hit_test(menu_id, x, y);
+        if (menu_hit != 0) { return Some(menu_hit); }
+    }
+
+    i32 taskbar_id = dom.taskbar_id();
+    if (taskbar_id != 0) {
+        i32 taskbar_hit = hit_test(taskbar_id, x, y);
+        if (taskbar_hit != 0) { return Some(taskbar_hit); }
+    }
+
+    i32 child_id = dom.first_child(dom.desktop_id());
+    i32 found = 0;
+    while (child_id != 0) {
+        if (child_id != taskbar_id) {
+            if (child_id != menu_id) {
+                i32 hit = hit_test(child_id, x, y);
+                if (hit != 0) { found = hit; }
+            }
+        }
+        child_id = dom.next_sibling(child_id);
+    }
+    if (found == 0) { return None; }
+    return Some(found);
+}

@@ -1,7 +1,10 @@
 import assert from "@std/testing/assert.mln";
 import dom from "../../src/ui/dom/dom.mln";
+import dom_hit_test from "../../src/ui/dom/dom_hit_test.mln";
+import desktop from "../../src/ui/desktop.mln";
 import dom_elements from "../../src/ui/dom/dom_elements.mln";
 import dom_widgets from "../../src/ui/dom/dom_widgets.mln";
+import dom_window_chrome from "../../src/ui/dom/dom_window_chrome.mln";
 import dom_render from "../../src/ui/dom/dom_render.mln";
 import graphics from "../../src/ui/graphics.mln";
 import theme from "../../src/ui/theme.mln";
@@ -72,7 +75,7 @@ i32 active_or_zero() {
 // Click wherever the pointer is, the way the compositor does: hit-test first,
 // then dispatch to whatever came back.
 i32 click_at(i32 x, i32 y) {
-    i32 hit = hit_or_zero(dom.find_at(x, y));
+    i32 hit = hit_or_zero(dom_hit_test.find_at(x, y));
     if (hit != 0) {
         dom.dispatch_click(hit);
         dom.drain_events();
@@ -85,7 +88,7 @@ i32 click_at(i32 x, i32 y) {
 }*/
 void dom_hit_dispatch() {
     heap.init();
-    dom.init();
+    desktop.init();
 
     // The public scalar boundary keeps DOM's Node representation private.
     i32 none_sentinel = dom.node_exists(0) == 0;
@@ -171,21 +174,21 @@ void dom_hit_dispatch() {
 
     // Window chrome: the title bar is the drag handle and the disc at its
     // left is the close button; neither is a child node.
-    assert.assert_true(dom_widgets.titlebar_hit(win, 200 * scale, 10 * scale), "title bar hit");
-    assert.assert_true(dom_widgets.close_button_hit(win, 16 * scale, (tb / 2) * scale), "close button hit");
-    assert.assert_false(dom_widgets.titlebar_hit(win, 16 * scale, (tb / 2) * scale), "close button is not drag handle");
-    assert.assert_false(dom_widgets.titlebar_hit(win, 200 * scale, (tb + 5) * scale), "content is not the title bar");
+    assert.assert_true(dom_window_chrome.titlebar_hit(win, 200 * scale, 10 * scale), "title bar hit");
+    assert.assert_true(dom_window_chrome.close_button_hit(win, 16 * scale, (tb / 2) * scale), "close button hit");
+    assert.assert_false(dom_window_chrome.titlebar_hit(win, 16 * scale, (tb / 2) * scale), "close button is not drag handle");
+    assert.assert_false(dom_window_chrome.titlebar_hit(win, 200 * scale, (tb + 5) * scale), "content is not the title bar");
 
     // Focus and z-order: a second window appended later paints on top and
     // wins the hit test where they overlap; focusing the first raises it.
     i32 win2 = require_node(dom_elements.create_window("W2", 300, 200, 300, 200));
     require_append(dom.append_child(dom.desktop_id(), win2));
-    i32 overlap = hit_or_zero(dom.find_at(350 * scale, (tb + 250) * scale));
+    i32 overlap = hit_or_zero(dom_hit_test.find_at(350 * scale, (tb + 250) * scale));
     assert.assert_true(overlap == win2, "later window is on top");
     dom_widgets.focus_window(win);
     assert.assert_true(active_or_zero() == win, "focus_window activates");
     assert.assert_true(dom.get_state_flag(win, 16), "active window has STATE_FOCUSED");
-    overlap = hit_or_zero(dom.find_at(350 * scale, (tb + 250) * scale));
+    overlap = hit_or_zero(dom_hit_test.find_at(350 * scale, (tb + 250) * scale));
     assert.assert_true(overlap == win, "focused window was raised");
 
     // Moving a window carries its subtree along.

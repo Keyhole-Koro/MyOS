@@ -786,7 +786,7 @@ export i32 dispatch_key(i32 owner, i32 code, i32 mods) {
 
 // Read the disk and wire the shell to the desktop: taskbar launcher,
 // desktop menu, the keyboard filter and the reaper. Call once after
-// dom.init() and fs.init().
+// desktop.init() and fs.init().
 /**
  * Scans installed applications and connects the shell to desktop events and launch UI.
  * Call once after DOM and filesystem initialization.

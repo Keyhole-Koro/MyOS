@@ -1,10 +1,8 @@
 package dom;
 
-import debug from "../../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../../MyKernel/src/mm/heap.mln";
 import scheduler from "../../../../MyKernel/src/kernel/scheduler.mln";
-import graphics from "../graphics.mln";
-import theme from "../theme.mln";
+import ui_metrics from "../ui_metrics.mln";
 import ui_event from "../events.mln";
 import irq from "../../../../MyKernel/src/arch/irq.mln";
 import { UiEventKind } from "../events.mln";
@@ -74,7 +72,7 @@ export enum NodeState {
     HOVERED      = 0b0000100,
     PRESSED      = 0b0001000,
     FOCUSED      = 0b0010000, // keyboard focus, or the active window
-    HIT_TESTABLE = 0b0100000, // find_at may return this node
+    HIT_TESTABLE = 0b0100000, // dom_hit_test.find_at may return this node
     CHECKED      = 0b1000000, // Checkbox
     MAXIMIZED    = 128,       // Window fills the desktop; sx..sh hold the restore bounds
     MINIMIZED    = 256,       // Window hidden to the taskbar
@@ -314,12 +312,7 @@ export i32 BASE_DISPLAY_HEIGHT = 768;
  * @return Scaling factor (>= 1).
  */
 export i32 ui_scale() {
-    i32 sx = graphics.display_width() / BASE_DISPLAY_WIDTH;
-    i32 sy = graphics.display_height() / BASE_DISPLAY_HEIGHT;
-    i32 scale = sx;
-    if (sy < scale) { scale = sy; }
-    if (scale < 1) { scale = 1; }
-    return scale;
+    return ui_metrics.scale_for(BASE_DISPLAY_WIDTH, BASE_DISPLAY_HEIGHT);
 }
 
 /**
@@ -793,8 +786,8 @@ export void damage_union_into(i32 i, i32 x0, i32 y0, i32 x1, i32 y1) {
  * @param h Rectangle height.
  */
 export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
-    i32 display_width = graphics.display_width();
-    i32 display_height = graphics.display_height();
+    i32 display_width = ui_metrics.display_width();
+    i32 display_height = ui_metrics.display_height();
     i32 x0 = x;
     i32 y0 = y;
     i32 x1 = x + w;
@@ -838,8 +831,8 @@ export void node_extent(Node *n) {
     i32 h = n->h;
     if (n->kind == NodeKind::WINDOW) {
         i32 s = ui_scale();
-        i32 size = theme.shadow_size() * s;
-        i32 off = theme.shadow_offset() * s;
+        i32 size = ui_metrics.window_shadow_size() * s;
+        i32 off = ui_metrics.window_shadow_offset() * s;
         x = x - size;
         y = y - size;
         w = w + 2 * size;
@@ -899,7 +892,7 @@ export i32 text_width_of(Node *n) {
     if (n->text == 0) { return 0; }
     i32 bold = text_bold(n);
     i32 s = ui_scale();
-    return graphics.text_width((char*)n->text, bold, s);
+    return ui_metrics.text_width((char*)n->text, bold, s);
 }
 
 /**
@@ -910,7 +903,7 @@ export i32 text_width_of(Node *n) {
 export i32 text_height_of(Node *n) {
     i32 bold = text_bold(n);
     i32 s = ui_scale();
-    return graphics.text_height(bold, s);
+    return ui_metrics.text_height(bold, s);
 }
 
 // --- layout ---------------------------------------------------------------------------------
@@ -1454,7 +1447,7 @@ export void content_origin(Node *parent) {
     g_ext_x = parent->x;
     g_ext_y = parent->y;
     if (parent->kind == NodeKind::WINDOW) {
-        g_ext_y = g_ext_y + theme.titlebar_h() * ui_scale();
+        g_ext_y = g_ext_y + ui_metrics.titlebar_height() * ui_scale();
     }
 }
 
@@ -1828,173 +1821,9 @@ export bool clips_children(Node *n) {
     return false;
 }
 
-// --- hit-test --------------------------------------------------------------------------------------
-
-/**
- * Checks whether a point (px, py) is inside a node's bounding rectangle.
- * @param n Pointer to DOM Node.
- * @param px Target X coordinate.
- * @param py Target Y coordinate.
- * @return True if point is inside node bounds, false otherwise.
- */
-export bool node_contains(Node *n, i32 px, i32 py) {
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 w = n->w;
-    i32 h = n->h;
-    if (w == 0) { return false; }
-    if (h == 0) { return false; }
-    if (px < x) { return false; }
-    if (py < y) { return false; }
-    if (px >= x + w) { return false; }
-    if (py >= y + h) { return false; }
-    return true;
-}
-
-/**
- * Finds topmost hit-testable and visible node within a subtree at (px, py).
- * @param node_id Root of subtree to hit-test.
- * @param px Target X coordinate.
- * @param py Target Y coordinate.
- * @return Hit DOM Node ID, or 0 if no match.
- */
-export i32 hit_test(i32 node_id, i32 px, i32 py) {
-    Node *n = node_ptr(node_id);
-    if (n == 0) { return 0; }
-    if ((n->state & NodeState::VISIBLE) == 0) { return 0; }
-
-    bool inside = node_contains(n, px, py);
-    i32 found = 0;
-    if (inside) {
-        if (n->state & NodeState::HIT_TESTABLE) {
-            found = node_id;
-        }
-    }
-
-    // Children of a clipping container cannot be hit outside it.
-    if (!inside) {
-        if (clips_children(n)) { return 0; }
-    }
-
-    i32 child_id = n->first_child;
-    while (child_id != 0) {
-        i32 child_hit = hit_test(child_id, px, py);
-        if (child_hit != 0) {
-            found = child_hit;
-        }
-        child_id = next_sibling(child_id);
-    }
-    return found;
-}
-
-/**
- * Finds the topmost interactive UI node at display position (x, y).
- * Searches menus, taskbar, and desktop windows/widgets in z-order.
- * @param x Screen X coordinate.
- * @param y Screen Y coordinate.
- * @return Topmost DOM Node ID, or 0 if background.
- */
-export Option<i32> find_at(i32 x, i32 y) {
-    if (g_menu_id != 0) {
-        i32 m = hit_test(g_menu_id, x, y);
-        if (m != 0) { return Some(m); }
-    }
-    if (g_taskbar_id != 0) {
-        i32 tb = hit_test(g_taskbar_id, x, y);
-        if (tb != 0) { return Some(tb); }
-    }
-    i32 child_id = first_child(g_desktop_node_id);
-    i32 found = 0;
-    while (child_id != 0) {
-        if (child_id != g_taskbar_id) {
-            if (child_id != g_menu_id) {
-                i32 hit = hit_test(child_id, x, y);
-                if (hit != 0) {
-                    found = hit;
-                }
-            }
-        }
-        child_id = next_sibling(child_id);
-    }
-    if (found == 0) { return None; }
-    return Some(found);
-}
-
-// --- init ------------------------------------------------------------------------------------------
-
-i32 require_system_node(Result<i32, UiError> result) {
-    return case result of {
-        Ok(id) -> id;
-        Err(_) -> ({ debug.panic("dom: failed to construct system DOM"); 0; });
-    };
-}
-
-void require_system_append(Result<_, UiError> result) {
-    case result of {
-        Ok(_) -> _;
-        Err(_) -> ({ debug.panic("dom: failed to link system DOM"); });
-    };
-}
-
-/**
- * Initializes graphics subsystem and constructs the initial DOM tree hierarchy.
- */
-export void init() {
-    graphics.init();
-    i32 root = require_system_node(create_node(NodeKind::ROOT, "root"));
-    g_root_node_id = root;
-    set_role(root, NodeRole::ROOT);
-
-    i32 sys = require_system_node(create_node(NodeKind::SYSTEM, "system"));
-    require_system_append(append_child(root, sys));
-
-    i32 proc = require_system_node(create_node(NodeKind::PROCESS, "process"));
-    require_system_append(append_child(sys, proc));
-
-    i32 dev = require_system_node(create_node(NodeKind::DEVICE, "device"));
-    require_system_append(append_child(sys, dev));
-
-    i32 fs_node = require_system_node(create_node(NodeKind::DIRECTORY, "fs"));
-    require_system_append(append_child(dev, fs_node));
-
-    i32 ui = require_system_node(create_node(NodeKind::UI, "ui"));
-    require_system_append(append_child(sys, ui));
-
-    i32 desktop = require_system_node(create_node(NodeKind::DESKTOP, "desktop"));
-    require_system_append(append_child(ui, desktop));
-    g_desktop_node_id = desktop;
-    set_role(desktop, NodeRole::DESKTOP);
-
-    i32 timers = require_system_node(create_node(NodeKind::UI, "timers"));
-    require_system_append(append_child(ui, timers));
-    g_timers_node_id = timers;
-    g_timer_count = 0;
-
-    g_active_window = 0;
-    g_focus_id = 0;
-    g_taskbar_id = 0;
-}
-
-/**
- * Creates and docks the taskbar at the bottom of the desktop screen.
- * @return Taskbar DOM Node ID.
- */
-export Result<i32, UiError> create_taskbar() {
-    if (g_taskbar_id != 0) { return Ok(g_taskbar_id); }
-    i32 s = ui_scale();
-    i32 h = theme.taskbar_h() * s;
-    i32 dw = graphics.display_width();
-    i32 dh = graphics.display_height();
-    i32 id = case create_node(NodeKind::TASKBAR, "taskbar") of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
-    set_role(id, NodeRole::TOOLBAR);
-    set_text(id, "taskbar");
-    set_bounds(id, 0, dh - h, dw, h);
-    set_state_flag(id, NodeState::VISIBLE, 1);
-    set_state_flag(id, NodeState::HIT_TESTABLE, 1);
-    case append_child(g_desktop_node_id, id) of {
-        Ok(_) -> _;
-        Err(e) -> ({ remove_node(id); return Err(e); });
-    };
-    g_taskbar_id = id;
-    return Ok(id);
+/** Checks whether the node with the given ID clips its children. */
+export bool clips_children_id(i32 id) {
+    Node *node = node_ptr(id);
+    if (node == 0) { return false; }
+    return clips_children(node);
 }

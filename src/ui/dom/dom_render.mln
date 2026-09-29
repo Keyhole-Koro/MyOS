@@ -6,6 +6,7 @@ import graphics from "../graphics.mln";
 import theme from "../theme.mln";
 import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
 import dom_widgets from "dom_widgets.mln";
+import dom_window_chrome from "dom_window_chrome.mln";
 import dom from "dom.mln";
 import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
 import { Option } from "@std/core/option.mln";
@@ -76,15 +77,15 @@ export void draw_window(Node *n) {
 
     // Title-bar buttons: close, minimize, maximize discs; their glyphs
     // (x, -, +) appear while the pointer is over the window.
-    i32 cx = dom_widgets.close_button_cx(n);
-    i32 cy = dom_widgets.close_button_cy(n);
-    i32 cr = dom_widgets.close_button_r();
+    i32 cx = dom_window_chrome.close_button_cx(n->id);
+    i32 cy = dom_window_chrome.button_cy(n->id);
+    i32 cr = dom_window_chrome.button_radius();
     i32 ring = theme.close_button_ring();
     i32 g = theme.close_glyph();
     i32 k = cr / 2;
     i32 which = 1;
     while (which <= 3) {
-        i32 bx = dom_widgets.tb_button_cx(n, which);
+        i32 bx = dom_window_chrome.button_cx(n->id, which);
         i32 face = theme.close_button();
         if (which == 2) { face = theme.minimize_button(); }
         if (which == 3) { face = theme.maximize_button(); }
@@ -124,7 +125,7 @@ export void draw_window(Node *n) {
         i32 title_color = theme.text_primary();
         if (active == 0) { title_color = theme.text_secondary(); }
         i32 th = graphics.text_height(1, s);
-        i32 inset = 2 * (dom_widgets.tb_button_cx(n, 3) - x);
+        i32 inset = 2 * (dom_window_chrome.button_cx(n->id, 3) - x);
         graphics.push_clip(x + inset, y, w - 2 * inset, tb);
         graphics.draw_label_centered(x, y + (tb - th) / 2, w, (char*)n->text, title_color, 1, s);
         graphics.pop_clip();
@@ -678,22 +679,6 @@ export TaskbarTarget taskbar_target_at(i32 px, i32 py) {
         win = next_window_after(win);
     }
     return TaskbarTarget::Miss;
-}
-
-/**
- * Handles mouse click on the taskbar, focusing clicked window or running launcher.
- * @param px Click X coordinate.
- * @param py Click Y coordinate.
- */
-export void taskbar_click(i32 px, i32 py) {
-    case taskbar_target_at(px, py) of {
-        Window(target) -> dom_widgets.focus_window(target);
-        Launcher -> ({
-            i32 handler = dom.get_g_launcher();
-            if (handler != 0) { handler(); }
-        });
-        Miss -> 0;
-    };
 }
 
 /**

@@ -2,8 +2,8 @@ package dom_elements;
 import debug from "../../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../../MyKernel/src/mm/heap.mln";
 import scheduler from "../../../../MyKernel/src/kernel/scheduler.mln";
-import graphics from "../graphics.mln";
 import theme from "../theme.mln";
+import ui_metrics from "../ui_metrics.mln";
 import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
 import dom_widgets from "dom_widgets.mln";
 import dom from "dom.mln";
@@ -194,8 +194,8 @@ export Result<i32, UiError> create_checkbox(char *label, i32 x, i32 y, i32 check
     dom.set_role(id, NodeRole::CHECKBOX);
     i32 s = dom.ui_scale();
     i32 box = theme.checkbox_size() * s;
-    i32 tw = graphics.text_width(label, 0, s);
-    i32 th = graphics.text_height(0, s);
+    i32 tw = ui_metrics.text_width(label, 0, s);
+    i32 th = ui_metrics.text_height(0, s);
     i32 h = box;
     if (th > h) { h = th; }
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), box + 8 * s + tw, h);

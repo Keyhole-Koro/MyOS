@@ -1,0 +1,46 @@
+package ui_metrics;
+
+import graphics from "graphics.mln";
+import theme from "theme.mln";
+
+// Small geometry and text-measurement boundary for UI modules. Rendering
+// stays in graphics/theme; layout code asks this module for the measurements
+// it needs without depending on either implementation directly.
+
+/** Returns the physical display width in pixels. */
+export i32 display_width() { return graphics.display_width(); }
+
+/** Returns the physical display height in pixels. */
+export i32 display_height() { return graphics.display_height(); }
+
+/** Computes the integer scale for a logical UI design size. */
+export i32 scale_for(i32 base_width, i32 base_height) {
+    i32 sx = display_width() / base_width;
+    i32 sy = display_height() / base_height;
+    i32 scale = sx;
+    if (sy < scale) { scale = sy; }
+    if (scale < 1) { scale = 1; }
+    return scale;
+}
+
+/** Measures text width using the active graphics font. */
+export i32 text_width(char *text, i32 bold, i32 scale) {
+    return graphics.text_width(text, bold, scale);
+}
+
+/** Returns one line of text height using the active graphics font. */
+export i32 text_height(i32 bold, i32 scale) {
+    return graphics.text_height(bold, scale);
+}
+
+/** Returns the logical titlebar height from the active theme. */
+export i32 titlebar_height() { return theme.titlebar_h(); }
+
+/** Returns the logical taskbar height from the active theme. */
+export i32 taskbar_height() { return theme.taskbar_h(); }
+
+/** Returns the logical window shadow extent from the active theme. */
+export i32 window_shadow_size() { return theme.shadow_size(); }
+
+/** Returns the logical window shadow offset from the active theme. */
+export i32 window_shadow_offset() { return theme.shadow_offset(); }

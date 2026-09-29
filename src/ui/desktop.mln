@@ -1,0 +1,94 @@
+package desktop;
+
+import debug from "../../../MyKernel/src/debug/debug.mln";
+import dom from "dom/dom.mln";
+import graphics from "graphics.mln";
+import ui_metrics from "ui_metrics.mln";
+import { NodeKind, NodeRole, NodeState } from "dom/dom.mln";
+import { Result } from "@std/core/result.mln";
+import { UiError } from "../../../../contracts/ui/widget.contract.mln";
+
+// Owns the initial OS/UI tree and desktop chrome. The DOM package owns node
+// storage and mutation; this package builds the system hierarchy through that
+// public API and can depend on display and theme services without reversing
+// the dependency back into dom.
+
+i32 require_system_node(Result<i32, UiError> result) {
+    return case result of {
+        Ok(id) -> id;
+        Err(_) -> ({ debug.panic("desktop: failed to construct system DOM"); 0; });
+    };
+}
+
+void require_system_append(Result<_, UiError> result) {
+    case result of {
+        Ok(_) -> _;
+        Err(_) -> ({ debug.panic("desktop: failed to link system DOM"); });
+    };
+}
+
+/** Initializes graphics and constructs the initial system and desktop tree. */
+export void init() {
+    graphics.init();
+
+    i32 root = require_system_node(dom.create_node(NodeKind::ROOT, "root"));
+    dom.set_g_root_node_id(root);
+    dom.set_role(root, NodeRole::ROOT);
+
+    i32 sys = require_system_node(dom.create_node(NodeKind::SYSTEM, "system"));
+    require_system_append(dom.append_child(root, sys));
+
+    i32 proc = require_system_node(dom.create_node(NodeKind::PROCESS, "process"));
+    require_system_append(dom.append_child(sys, proc));
+
+    i32 dev = require_system_node(dom.create_node(NodeKind::DEVICE, "device"));
+    require_system_append(dom.append_child(sys, dev));
+
+    i32 fs_node = require_system_node(dom.create_node(NodeKind::DIRECTORY, "fs"));
+    require_system_append(dom.append_child(dev, fs_node));
+
+    i32 ui = require_system_node(dom.create_node(NodeKind::UI, "ui"));
+    require_system_append(dom.append_child(sys, ui));
+
+    i32 desktop_node = require_system_node(dom.create_node(NodeKind::DESKTOP, "desktop"));
+    require_system_append(dom.append_child(ui, desktop_node));
+    dom.set_g_desktop_node_id(desktop_node);
+    dom.set_role(desktop_node, NodeRole::DESKTOP);
+
+    i32 timers = require_system_node(dom.create_node(NodeKind::UI, "timers"));
+    require_system_append(dom.append_child(ui, timers));
+    dom.set_g_timers_node_id(timers);
+    dom.set_g_timer_count(0);
+
+    dom.set_g_active_window(0);
+    dom.set_g_focus_id(0);
+    dom.set_g_taskbar_id(0);
+}
+
+/** Creates and docks the taskbar at the bottom of the desktop screen. */
+export Result<i32, UiError> create_taskbar() {
+    i32 current = dom.taskbar_id();
+    if (current != 0) { return Ok(current); }
+
+    i32 scale = dom.ui_scale();
+    i32 height = ui_metrics.taskbar_height() * scale;
+    i32 display_width = ui_metrics.display_width();
+    i32 display_height = ui_metrics.display_height();
+    i32 id = case dom.create_node(NodeKind::TASKBAR, "taskbar") of {
+        Ok(value) -> value;
+        Err(error) -> ({ return Err(error); });
+    };
+
+    dom.set_role(id, NodeRole::TOOLBAR);
+    dom.set_text(id, "taskbar");
+    dom.set_bounds(id, 0, display_height - height, display_width, height);
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
+    case dom.append_child(dom.desktop_id(), id) of {
+        Ok(_) -> _;
+        Err(error) -> ({ dom.remove_node(id); return Err(error); });
+    };
+
+    dom.set_g_taskbar_id(id);
+    return Ok(id);
+}

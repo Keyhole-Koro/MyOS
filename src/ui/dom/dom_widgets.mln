@@ -2,8 +2,7 @@ package dom_widgets;
 import debug from "../../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../../MyKernel/src/mm/heap.mln";
 import scheduler from "../../../../MyKernel/src/kernel/scheduler.mln";
-import graphics from "../graphics.mln";
-import theme from "../theme.mln";
+import ui_metrics from "../ui_metrics.mln";
 import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
 import dom from "dom.mln";
 import { UiEventKind } from "../events.mln";
@@ -202,128 +201,11 @@ export void maximize_window(i32 win) {
     n->sy = n->y;
     n->sw = n->w;
     n->sh = n->h;
-    i32 dw = graphics.display_width();
-    i32 dh = graphics.display_height() - taskbar_height();
+    i32 dw = ui_metrics.display_width();
+    i32 dh = ui_metrics.display_height() - taskbar_height();
     dom.move_node(win, -n->x, -n->y);
     resize_window(win, dw, dh);
     dom.set_state_flag(win, NodeState::MAXIMIZED, 1);
-}
-
-// Chrome geometry, in display pixels. Three discs sit at the left of the
-// title bar -- close, minimize, maximize -- and the rest of the bar is the
-// drag handle. A resize grip occupies the bottom-right corner.
-i32 TB_BUTTON_CLOSE = 1;
-i32 TB_BUTTON_MINIMIZE = 2;
-i32 TB_BUTTON_MAXIMIZE = 3;
-
-/**
- * Computes the center X coordinate of the close button on a window's title bar.
- * @param w Pointer to Window Node.
- * @return Center X coordinate in display pixels.
- */
-export i32 close_button_cx(Node *w) {
-    i32 s = dom.ui_scale();
-    return w->x + 16 * s;
-}
-
-/**
- * Computes the center X coordinate of title bar button index `which` (1=close, 2=minimize, 3=maximize).
- * @param w Pointer to Window Node.
- * @param which Titlebar button index (1-3).
- * @return Center X coordinate in display pixels.
- */
-export i32 tb_button_cx(Node *w, i32 which) {
-    i32 s = dom.ui_scale();
-    return w->x + (16 + 20 * (which - 1)) * s;
-}
-
-/**
- * Computes the center Y coordinate of title bar buttons on a window.
- * @param w Pointer to Window Node.
- * @return Center Y coordinate in display pixels.
- */
-export i32 close_button_cy(Node *w) {
-    i32 s = dom.ui_scale();
-    i32 tb = theme.titlebar_h() * s;
-    return w->y + tb / 2;
-}
-
-/**
- * Returns radius of title bar buttons in display pixels.
- * @return Radius in pixels.
- */
-export i32 close_button_r() {
-    return 7 * dom.ui_scale();
-}
-
-/**
- * Hit tests a point against title bar control buttons (1=close, 2=minimize, 3=maximize, 0=none).
- * @param win Window DOM Node ID.
- * @param px Target X coordinate.
- * @param py Target Y coordinate.
- * @return Button index hit (1, 2, 3) or 0 if none.
- */
-export i32 titlebar_button_hit(i32 win, i32 px, i32 py) {
-    Node *w = dom.node_ptr(win);
-    if (w == 0) { return 0; }
-    i32 dy = py - close_button_cy(w);
-    i32 r = close_button_r() + 3 * dom.ui_scale(); // a little slack
-    i32 which = 1;
-    while (which <= 3) {
-        i32 dx = px - tb_button_cx(w, which);
-        if (dx * dx + dy * dy <= r * r) { return which; }
-        which++;
-    }
-    return 0;
-}
-
-/**
- * Checks if a point hits a window's close button.
- * @param win Window DOM Node ID.
- * @param px Target X coordinate.
- * @param py Target Y coordinate.
- * @return True if close button hit, false otherwise.
- */
-export bool close_button_hit(i32 win, i32 px, i32 py) {
-    if (titlebar_button_hit(win, px, py) == 1) { return true; }
-    return false;
-}
-
-/**
- * Checks if a point hits the bottom-right corner resize grip of a window.
- * @param win Window DOM Node ID.
- * @param px Target X coordinate.
- * @param py Target Y coordinate.
- * @return True if resize grip hit, false otherwise.
- */
-export bool resize_grip_hit(i32 win, i32 px, i32 py) {
-    Node *w = dom.node_ptr(win);
-    if (w == 0) { return false; }
-    i32 g = ui_config.GRIP_SIZE * dom.ui_scale();
-    if (px < w->x + w->w - g) { return false; }
-    if (py < w->y + w->h - g) { return false; }
-    if (px >= w->x + w->w) { return false; }
-    if (py >= w->y + w->h) { return false; }
-    return true;
-}
-
-/**
- * Checks if a point hits a window's draggable title bar (excluding control buttons).
- * @param win Window DOM Node ID.
- * @param px Target X coordinate.
- * @param py Target Y coordinate.
- * @return True if title bar hit, false otherwise.
- */
-export bool titlebar_hit(i32 win, i32 px, i32 py) {
-    Node *w = dom.node_ptr(win);
-    if (w == 0) { return false; }
-    if (titlebar_button_hit(win, px, py)) { return false; }
-    i32 tb = theme.titlebar_h() * dom.ui_scale();
-    if (px < w->x) { return false; }
-    if (px >= w->x + w->w) { return false; }
-    if (py < w->y) { return false; }
-    if (py >= w->y + tb) { return false; }
-    return true;
 }
 
 // --- keyboard --------------------------------------------------------------------------------
@@ -523,7 +405,7 @@ export i32 text_area_line_count(i32 id) {
 export i32 visible_lines(Node *n) {
     i32 s = dom.ui_scale();
     i32 pad = 8 * s;
-    i32 lh = graphics.text_height(0, s);
+    i32 lh = ui_metrics.text_height(0, s);
     i32 rows = (n->h - 2 * pad) / lh;
     if (rows < 1) { rows = 1; }
     return rows;
@@ -894,7 +776,7 @@ export Option<i32> list_row_at(i32 id, i32 px, i32 py) {
     if (n == 0) { return None; }
     i32 s = dom.ui_scale();
     i32 pad = 8 * s;
-    i32 lh = graphics.text_height(0, s);
+    i32 lh = ui_metrics.text_height(0, s);
     i32 rel = py - n->y - pad;
     if (rel < 0) { return None; }
     i32 row = rel / lh + n->scroll;
@@ -1013,10 +895,10 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, char *items, i32 handler, i3
         }
         i++;
     }
-    i32 lh = graphics.text_height(0, s);
+    i32 lh = ui_metrics.text_height(0, s);
     i32 pad = 8 * s;
     i32 h = count * lh + 2 * pad;
-    i32 w = graphics.text_width(items, 0, s);
+    i32 w = ui_metrics.text_width(items, 0, s);
     // text_width measures the whole string; a rough width from the longest
     // item is enough for a menu, so measure per line instead.
     w = 0;
@@ -1025,12 +907,12 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, char *items, i32 handler, i3
     while (1) {
         if (items[j] == 10) {
             items[j] = (char)0;
-            i32 lw = graphics.text_width(&items[start], 0, s);
+            i32 lw = ui_metrics.text_width(&items[start], 0, s);
             items[j] = (char)10;
             if (lw > w) { w = lw; }
             start = j + 1;
         } else if (items[j] == 0) {
-            i32 lw = graphics.text_width(&items[start], 0, s);
+            i32 lw = ui_metrics.text_width(&items[start], 0, s);
             if (lw > w) { w = lw; }
             break;
         }
@@ -1038,8 +920,8 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, char *items, i32 handler, i3
     }
     w = w + 4 * pad;
     if (w < 140 * s) { w = 140 * s; }
-    i32 dw = graphics.display_width();
-    i32 dh = graphics.display_height();
+    i32 dw = ui_metrics.display_width();
+    i32 dh = ui_metrics.display_height();
     if (x + w > dw) { x = dw - w; }
     if (y + h > dh) { y = dh - h; }
     if (x < 0) { x = 0; }
@@ -1066,7 +948,7 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, char *items, i32 handler, i3
     dom.set_state_flag(id, NodeState::VISIBLE, 1);
     dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
     // Appended to the desktop like a window, but painted last (see
-    // paint_desktop) and hit-tested first (see find_at).
+    // paint_desktop) and hit-tested first (see dom_hit_test.find_at).
     case dom.append_child(dom.get_g_desktop_node_id(), id) of {
         Ok(_) -> _;
         Err(e) -> ({ dom.remove_node(id); return Err(e); });

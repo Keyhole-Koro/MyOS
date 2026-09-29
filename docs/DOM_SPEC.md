@@ -1,15 +1,30 @@
 # Kernel DOM 仕様（ISSUE-006 実装時の詰め）
 
 このドキュメントは [ISSUE-006 DOM 的 OS オブジェクトモデル](../../../issues/tickets/dom-like-os.md)
-の「実装時に詰める点」を、既存コード（`src/ui/dom.mln`、MyLang の言語機能、
+の「実装時に詰める点」を、既存コード（`src/ui/dom/dom.mln`、MyLang の言語機能、
 `MyKernel` の heap API）に整合する形で確定させるためのもの。
 
 ここで決めた内容が固まったら、`dom.mln` の実装をこの仕様に合わせて拡張する。
 ISSUE-024（UI automation）が要求する `role` / `text` / `bounds` / `state` も本仕様に含める。
 
-## 現状（2026-07-09 時点）
+## 現在の UI モジュール境界（2026-09-29）
 
-`src/ui/dom.mln` に既に以下がある。
+UI の実装は `src/ui/` 以下にあり、責務と依存方向を次のように分けている。
+
+- `desktop.mln` は graphics の初期化、OS/desktop ツリー、taskbar の組み立てを担当する。`dom` に依存する。
+- `dom/dom.mln` は Node の保存、ツリー操作、状態変更、DOM 共通の読み取り API を担当する。
+- `dom/dom_hit_test.mln` は hit-test の走査順を担当し、Node の読み取りは `dom` の scalar API を使う。
+- `ui_metrics.mln` は display size、scale、text measurement、theme の寸法値をまとめる。layout と widget modules はここを使う。
+- `dom/dom_window_chrome.mln` は window control と titlebar の純粋な geometry query を担当する。compositor などの呼び出し元はこの API を直接使う。
+- `dom/dom_render.mln` は scene の描画と taskbar の hit target 判定を担当する。クリック後の focus や handler 実行は `compositor.mln` が行う。
+- `dom/dom_widgets.mln` は window と widget の状態変更、入力処理を担当する。widgets の種類ごとの分割は、状態の所有者と API 境界を保てる形で進める。
+- `protocol.mln` / `protocol_elements.mln` は UI IPC の受付と要素生成への変換を担当する。
+
+`dom.mln` と `dom_widgets.mln` は表示寸法や文字計測を `ui_metrics` 経由で参照し、描画 API には直接依存しない。残る大きな単位は widget 群の種類別分割で、状態の所有場所を曖昧にしない単位から進める。`font_sans.mln` は生成物なので手で分割しない。
+
+## 初期実装時の現状（2026-07-09 時点）
+
+当時の `src/ui/dom/dom.mln` に以下があった。
 
 - `Node { id, kind, name, parent, first_child, next_sibling }`（`heap.alloc(16)` で確保）
 - `create_node(kind, name)` / `append_child(parent, child)` / `get_node(id)`
@@ -212,7 +227,7 @@ export i32 create_column(i32 x, i32 y, i32 w, i32 h,
                          i32 padding, i32 gap);
 
 // hit-test（automation の click / mouse 配送で使う）
-export i32 find_at(i32 x, i32 y);  // 最前面の当たりノード id。なければ 0
+export Option<i32> dom_hit_test.find_at(i32 x, i32 y);
 
 // 削除
 export void remove_node(i32 id);   // 子も再帰削除、slot 無効化（ID 再利用しない）
@@ -383,15 +398,14 @@ void draw_node(Node *n) {
 ```c
 // (x,y) を含む最前面の UI ノード id を返す。なければ 0。
 // 後の兄弟が手前なので、子は逆順に見て最初に当たったものを採用する。
-export i32 find_at(i32 x, i32 y) {
-    return hit_test(g_root_node_id, x, y);
-}
+// `dom_hit_test` traverses DOM through the read-only accessors in `dom`.
+export Option<i32> dom_hit_test.find_at(i32 x, i32 y);
 ```
 
 呼ぶ側:
 
 ```c
-i32 hit = dom.find_at(mx, my);
+i32 hit = case dom_hit_test.find_at(mx, my) of { Some(id) -> id; None -> 0; };
 if (hit != 0) {
     Node *n = dom.get_node(hit);
     if (n->role == ROLE_BUTTON) {
@@ -442,7 +456,7 @@ id=9 を特定 → bounds 中心 (195,160) に mouse 注入、という流れが
 | `set_state_flag(id, flag, on)` | state bit を立てる/落とす | hover/press/focus 更新 |
 | `get_state_flag(id, flag)` | state bit を読む（0/1） | renderer / 判定 |
 | `get_node(id)` | Node* を得る（無効なら 0） | 全般 |
-| `find_at(x, y)` | 座標→最前面ノード id | mouse 配送 / click |
+| `dom_hit_test.find_at(x, y)` | 座標→最前面ノード id | mouse 配送 / click |
 | `remove_node(id)` | 子ごと削除、slot 無効化 | UI 作り直し |
 | `dump()` | 人間可読ツリー出力 | デバッグ |
 | `snapshot()` | JSON Lines 出力 | automation |
@@ -485,7 +499,7 @@ id=9 を特定 → bounds 中心 (195,160) に mouse 注入、という流れが
 | CHECKBOX 16 | checkbox | `Checkbox(text,x,y,checked,onClick)` | 角丸ボックス + チェック |
 | SEPARATOR 17 | separator | `Separator(x,y,w)` | 1px 線 |
 | PANEL 18 | – | `Panel(x,y,w,h,radius)` | 角丸カード。子をクリップ |
-| TASKBAR 19 | toolbar | `dom.create_taskbar()` | ランチャー・ウィンドウ一覧・時計 |
+| TASKBAR 19 | toolbar | `desktop.create_taskbar()` | ランチャー・ウィンドウ一覧・時計 |
 
 `Node` は 80 バイト（`color / on_key / on_change / cap / len / cursor /
 radius / on_tick / interval / next_due` を追加）。`state` に `STATE_CHECKED`

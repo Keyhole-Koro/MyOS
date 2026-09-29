@@ -3,6 +3,7 @@ import heap from "../../../MyKernel/src/mm/heap.mln";
 import dom_widgets from "../ui/dom/dom_widgets.mln";
 import dom_render from "../ui/dom/dom_render.mln";
 import dom from "../ui/dom/dom.mln";
+import desktop from "../ui/desktop.mln";
 import dom_automation from "../ui/dom/dom_automation.mln";
 import graphics from "../ui/graphics.mln";
 import fs from "../fs/fs.mln";
@@ -96,8 +97,8 @@ void kernel_init() {
     kernel_arch_init();
     enable_kernel_paging();
 
-    dom.init();
-    case dom.create_taskbar() of {
+    desktop.init();
+    case desktop.create_taskbar() of {
         Ok(_) -> _;
         Err(_) -> ({ debug.panic("kernel: taskbar creation failed"); });
     };

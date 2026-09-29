@@ -1,0 +1,76 @@
+package dom_window_chrome;
+
+import dom from "dom.mln";
+import ui_config from "../config.mln";
+import ui_metrics from "../ui_metrics.mln";
+
+// Pure display-space geometry for window controls. Window state and mutation
+// remain in dom/dom_widgets; this module only answers coordinate queries.
+
+/** Computes the center X coordinate of the close button. */
+export i32 close_button_cx(i32 win) {
+    return dom.node_x(win) + 16 * dom.ui_scale();
+}
+
+/** Computes the center X coordinate of titlebar button 1, 2, or 3. */
+export i32 button_cx(i32 win, i32 which) {
+    return dom.node_x(win) + (16 + 20 * (which - 1)) * dom.ui_scale();
+}
+
+/** Computes the center Y coordinate of titlebar buttons. */
+export i32 button_cy(i32 win) {
+    i32 scale = dom.ui_scale();
+    return dom.node_y(win) + ui_metrics.titlebar_height() * scale / 2;
+}
+
+/** Returns the titlebar button radius in display pixels. */
+export i32 button_radius() { return 7 * dom.ui_scale(); }
+
+/** Returns the titlebar control button at a display point, or zero. */
+export i32 button_hit(i32 win, i32 px, i32 py) {
+    if (!dom.node_exists(win)) { return 0; }
+    i32 dy = py - button_cy(win);
+    i32 radius = button_radius() + 3 * dom.ui_scale();
+    i32 which = 1;
+    while (which <= 3) {
+        i32 dx = px - button_cx(win, which);
+        if (dx * dx + dy * dy <= radius * radius) { return which; }
+        which++;
+    }
+    return 0;
+}
+
+/** Checks whether a display point hits the close button. */
+export bool close_button_hit(i32 win, i32 px, i32 py) {
+    return button_hit(win, px, py) == 1;
+}
+
+/** Checks whether a display point hits the bottom-right resize grip. */
+export bool resize_grip_hit(i32 win, i32 px, i32 py) {
+    if (!dom.node_exists(win)) { return false; }
+    i32 x = dom.node_x(win);
+    i32 y = dom.node_y(win);
+    i32 width = dom.node_w(win);
+    i32 height = dom.node_h(win);
+    i32 grip = ui_config.GRIP_SIZE * dom.ui_scale();
+    if (px < x + width - grip) { return false; }
+    if (py < y + height - grip) { return false; }
+    if (px >= x + width) { return false; }
+    if (py >= y + height) { return false; }
+    return true;
+}
+
+/** Checks whether a display point hits the draggable titlebar area. */
+export bool titlebar_hit(i32 win, i32 px, i32 py) {
+    if (!dom.node_exists(win)) { return false; }
+    if (button_hit(win, px, py) != 0) { return false; }
+    i32 x = dom.node_x(win);
+    i32 y = dom.node_y(win);
+    i32 width = dom.node_w(win);
+    i32 titlebar_height = ui_metrics.titlebar_height() * dom.ui_scale();
+    if (px < x) { return false; }
+    if (px >= x + width) { return false; }
+    if (py < y) { return false; }
+    if (py >= y + titlebar_height) { return false; }
+    return true;
+}
