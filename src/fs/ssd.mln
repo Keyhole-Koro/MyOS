@@ -17,14 +17,14 @@ i32 SSD_STATUS_ADDR = 0x2400001C; // R: 0=idle, 1=busy, 2=done, 0xFF=error
 
 /** Hardware command values accepted by the SSD command register. */
 enum SsdCommand {
-    SSD_CMD_READ,
-    SSD_CMD_WRITE
+    SSD_CMD_READ = 1,
+    SSD_CMD_WRITE = 2
 }
 
 /** Non-error status values returned by the SSD status register. */
 enum SsdStatus {
-    SSD_STATUS_BUSY,
-    SSD_STATUS_DONE
+    SSD_STATUS_BUSY = 1,
+    SSD_STATUS_DONE = 2
 }
 
 /** Failure values returned when a storage-device transfer does not complete successfully. */
