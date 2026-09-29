@@ -3,6 +3,7 @@ package app;
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import str from "@std/text/str.mln";
+import { ParseIntError } from "@std/text/str.mln";
 import { InlineCString } from "@std/text/inline_c_string.mln";
 import dom from "../ui/dom/dom.mln";
 import dom_widgets from "../ui/dom/dom_widgets.mln";
@@ -10,11 +11,12 @@ import dom_render from "../ui/dom/dom_render.mln";
 import compositor from "../ui/compositor.mln";
 import graphics from "../ui/graphics.mln";
 import annotations from "@std/meta/annotations.mln";
-import { Annotations } from "@std/meta/annotations.mln";
+import { Annotations, AnnotationError } from "@std/meta/annotations.mln";
 import fs from "../fs/fs.mln";
 import { FsError } from "../../../../contracts/io/fs.contract.mln";
 import { SpawnError } from "../../../../contracts/process/spawn.contract.mln";
 import { ProcessControlError, ProcessExitStatus } from "../../../../contracts/process/control.contract.mln";
+import { AppError, KeyClaimError } from "../../../../contracts/myapp/lifecycle.contract.mln";
 import console from "../proc/console.mln";
 import mbin from "@std/format/mbin.mln";
 import { Result, result_take_ok } from "@std/core/result.mln";
@@ -23,8 +25,8 @@ import { ShellEventKind } from "events.mln";
 
 // The shell: the registry of installed apps and the instances running on
 // the desktop. This is the OS side of the application framework -- apps
-// never call it; they link against the SDK (system/MyAppFramework) and
-// this is what gives `@app` its meaning (docs/design/os-app-boundaries.md).
+// never call it; they link against the SDK (system/MyAppFramework), which
+// gives `@app` its meaning.
 //
 // An installed app is an executable on the disk whose header carries an
 // @app row (the compiler recorded it; install() reads it with MyStdLib's
@@ -157,7 +159,11 @@ void scan_disk() {
         Result<i32, FsError> opened = fs.open(scan_path.as_ptr());
         i32 fd = 0;
         if (result_take_ok<i32, FsError>(&opened, &fd)) {
-            char *image = (char*)heap.alloc(size);
+            i32 image_address = case heap.alloc(size) of {
+                Ok(pointer) -> pointer;
+                Err(_) -> 0;
+            };
+            char *image = (char*)image_address;
             if (image != 0) {
                 Result<i32, FsError> read_result = fs.read(fd, (i32)image, size);
                 i32 got = 0;
@@ -167,13 +173,31 @@ void scan_disk() {
                         Annotations rows = annotations.in_image(image);
                         rows.on("app", (char*)0);
                         if (rows.next()) {
-                            char *type = keep(rows.type());
-                            Annotations opens = annotations.in_image(image);
-                            opens.on("open", type);
-                            i32 has_open = 0;
-                            if (opens.next()) { has_open = 1; }
-                            register_app(keep(scan_path.as_ptr()), type, rows.arg(0), keep(rows.text(1)), has_open);
-                            debug.printf("app: installed %s (%s)\n", (i32)type, (i32)(scan_path.as_ptr()));
+                            Result<char*, AnnotationError> type_result = rows.type();
+                            case type_result of {
+                                Ok(type_text) -> ({
+                                    char *type = keep(type_text);
+                                    Result<i32, AnnotationError> single_result = rows.arg(0);
+                                    Result<char*, AnnotationError> name_result = rows.text(1);
+                                    case single_result of {
+                                        Ok(single) -> ({
+                                            case name_result of {
+                                                Ok(label) -> ({
+                                                    Annotations opens = annotations.in_image(image);
+                                                    opens.on("open", type);
+                                                    i32 has_open = 0;
+                                                    if (opens.next()) { has_open = 1; }
+                                                    register_app(keep(scan_path.as_ptr()), type, single, keep(label), has_open);
+                                                    debug.printf("app: installed %s (%s)\n", (i32)type, (i32)(scan_path.as_ptr()));
+                                                });
+                                                Err(_) -> _;
+                                            };
+                                        });
+                                        Err(_) -> _;
+                                    };
+                                });
+                                Err(_) -> _;
+                            };
                         }
                     }
                 }
@@ -295,18 +319,12 @@ export i32 owner_of_window(i32 win) {
 
 // Start an instance of app `a`: spawn its executable. Its window arrives
 // later, as a MAIN_WINDOW request (window_ready below).
-/** Failure cases when reserving an app instance slot or spawning its process. */
-enum MountError {
-    NoFreeSlot,
-    SpawnFailed,
-}
-
-Result<i32, MountError> mount(i32 a) {
+Result<i32, AppError> mount(i32 a) {
     i32 slot = case free_slot() of {
         Some(v) -> v;
         None -> ({
             debug.println("app: too many instances");
-            return Err(MountError::NoFreeSlot);
+            return Err(AppError::NoFreeSlot);
         });
     };
     Result<i32, SpawnError> spawned = console.spawn_file((char*)registry[a].path);
@@ -314,7 +332,7 @@ Result<i32, MountError> mount(i32 a) {
         Ok(value) -> value;
         Err(_) -> ({
             debug.printf("app: cannot start %s\n", registry[a].path);
-            return Err(MountError::SpawnFailed);
+            return Err(AppError::SpawnFailed);
         });
     };
     AppInstance instance;
@@ -466,64 +484,66 @@ void reap_exited(i32 owner, i32 id, i32 arg) {
 
 // Start the app at `index`; a single-instance app that is already running is
 // brought to the front instead. Returns the running instance's window, or
-// 0 when the instance is only starting (its window comes with MAIN_WINDOW).
+// None while a newly started instance waits for MAIN_WINDOW.
 /**
  * Launches an installed app, or focuses its existing instance when single-instance.
  * @param index Zero-based application registry index.
- * @return Existing main window ID when available; otherwise 0 while starting or on failure.
+ * @return Ok(Some(window)) when a main window exists, Ok(None) while it starts,
+ *         or Err when the index is invalid or launching fails.
  */
-export i32 launch(i32 index) {
-    if (index < 0) { return 0; }
-    if (index >= registry_count) { return 0; }
+export Result<Option<i32>, AppError> launch(i32 index) {
+    if (index < 0 || index >= registry_count) { return Err(AppError::InvalidIndex(index)); }
     if (registry[index].single != 0) {
         case slot_of_app(index) of {
             Some(slot) -> ({
                 AppInstance instance = case instances[slot] of {
                     Some(value) -> value;
-                    None -> ({ return 0; });
+                    None -> ({ return Err(AppError::InstanceUnavailable); });
                 };
-                i32 window = case instance.win of {
-                    Some(value) -> value;
-                    None -> 0;
+                case instance.win of {
+                    Some(window) -> ({ dom_widgets.focus_window(window); return Ok(Some(window)); });
+                    None -> ({ return Ok(None); });
                 };
-                if (window != 0) { dom_widgets.focus_window(window); }
-                return window;
             });
             None -> _;
         };
     }
-    case mount(index) of { Ok(_) -> _; Err(_) -> _; };
-    return 0;
+    return case mount(index) of {
+        Ok(_) -> Ok(None);
+        Err(error) -> Err(error);
+    };
 }
 
 /**
  * Launches an installed application by its launcher label.
  * @param name NUL-terminated application label shown in the launcher.
- * @return Existing main window ID when available; otherwise 0 if starting or not found.
+ * @return Ok(Some(window)) when available, Ok(None) while starting, or Err when
+ *         the name is not installed or launching fails.
  */
-export i32 launch_named(char *name) {
+export Result<Option<i32>, AppError> launch_named(char *name) {
     i32 i = 0;
     while (i < registry_count) {
     if (str.eq((char*)registry[i].name, name)) { return launch(i); }
         i++;
     }
-    return 0;
+    return Err(AppError::NotFound);
 }
 
 // Hand `path` to an app with an @open method: the running instance of a
 // single-instance app, otherwise a fresh one, as an OPEN event -- sent at
 // once to a running instance, or as soon as a new one reports its window.
-// Returns the window it went to (0 while the instance is still starting),
-// or 0 when no app opens files.
+// Returns Some(window) when it went to a live window and None while that
+// window is still starting; invalid paths and launch failures are errors.
 /**
  * Routes a file path to the first installed app that declares an @open handler.
  * Queues the path until the app's main window exists when the app is starting.
  * @param path NUL-terminated path to open.
- * @return Target window ID when already available, or 0 while starting/no handler is found.
+ * @return Ok(Some(window)) when delivered immediately, Ok(None) while the app
+ *         starts, or Err when the path, handler, or launch request is invalid.
  */
-export i32 open(char *path) {
+export Result<Option<i32>, AppError> open(char *path) {
     str path_text = str.from_c(path);
-    if (path_text.length > 63) { return 0; }
+    if (path_text.length > 63) { return Err(AppError::PathTooLong(path_text.length)); }
     i32 a = 0;
     while (a < registry_count) {
         if (registry[a].opens != 0) {
@@ -538,7 +558,7 @@ export i32 open(char *path) {
             if (!found) {
                 slot = case mount(a) of {
                     Ok(v) -> v;
-                    Err(_) -> ({ return 0; });
+                    Err(error) -> ({ return Err(error); });
                 };
             }
             InlineCString<64> *open_path = open_path_for(slot);
@@ -546,25 +566,25 @@ export i32 open(char *path) {
             open_path->append(path_text);
             AppInstance instance = case instances[slot] of {
                 Some(value) -> value;
-                None -> ({ return 0; });
+                None -> ({ return Err(AppError::InstanceUnavailable); });
             };
             AppInstance *instance_ptr = &instance;
-            i32 win = case instance_ptr->win of {
-                Some(value) -> value;
-                None -> 0;
+            case instance_ptr->win of {
+                Some(win) -> ({
+                    dom_widgets.focus_window(win);
+                    push_app_event(instance_ptr->pid, win, ShellEventKind::OPEN, 0, 0, open_path->as_ptr());
+                    return Ok(Some(win));
+                });
+                None -> ({
+                    instance_ptr->open = true;
+                    instances[slot] = Some(instance);
+                    return Ok(None);
+                });
             };
-            if (win != 0) {
-                dom_widgets.focus_window(win);
-                push_app_event(instance_ptr->pid, win, ShellEventKind::OPEN, 0, 0, open_path->as_ptr());
-            } else {
-                instance_ptr->open = true;
-                instances[slot] = Some(instance);
-            }
-            return win;
         }
         a++;
     }
-    return 0;
+    return Err(AppError::NoOpenHandler);
 }
 
 // --- launcher menu ---------------------------------------------------------------------------
@@ -651,7 +671,11 @@ Option<i32> named_key(char *word, i32 n) {
     if (word_is(word, n, "pagedown")) { return Some(0x108); }
     if (n >= 2) {
         if (word[0] == 'F') {
-            i32 f = str.atoi(&word[1]);
+            Result<i32, ParseIntError> parsed = str.atoi(&word[1]);
+            i32 f = case parsed of {
+                Ok(value) -> value;
+                Err(_) -> ({ return None; });
+            };
             if (f >= 1) { if (f <= 12) { return Some(0x120 + f); } }
         }
     }
@@ -718,25 +742,26 @@ i32 claim_count = 0;
  * Registers a process keyboard shortcut and returns its event correlation token.
  * @param owner Process ID that owns the shortcut.
  * @param spec NUL-terminated combination such as "Ctrl+S" or "Alt+F4".
- * @return One-based shortcut token, or 0 if the fixed claim table is full.
+ * @return Ok(one-based shortcut token), or Err when the specification is too long
+ *         or the fixed claim table is full.
  */
-export i32 claim_key(i32 owner, char *spec) {
+export Result<i32, KeyClaimError> claim_key(i32 owner, char *spec) {
     str key_spec = str.from_c(spec);
-    if (key_spec.length > 15) { return 0; }
+    if (key_spec.length > 15) { return Err(KeyClaimError::KeySpecTooLong(key_spec.length)); }
     i32 i = 0;
     while (i < claim_count) {
         if (claims[i].owner == 0) { break; }
         i++;
     }
     if (i == claim_count) {
-        if (claim_count >= CLAIMS_MAX) { return 0; }
+        if (claim_count >= CLAIMS_MAX) { return Err(KeyClaimError::TableFull); }
         claim_count++;
     }
     KeyClaim *claim = &claims[i];
     claim->owner = owner;
     claim->spec.clear();
     claim->spec.append(key_spec);
-    return i + 1;
+    return Ok(i + 1);
 }
 
 void release_claims(i32 owner) {

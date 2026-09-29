@@ -97,7 +97,7 @@ export void activate_topmost() {
         if (c == 0) { child_id = 0; }
         else {
             if (c->kind == NodeKind::WINDOW) {
-                if ((c->state & NodeState::MINIMIZED) == 0) { top = child_id; }
+                if (!(c->state & NodeState::MINIMIZED)) { top = child_id; }
             }
             child_id = c->next_sibling;
         }
@@ -613,7 +613,7 @@ export void append_bytes(i32 id, i32 addr, i32 count) {
 export void clear_text_area(i32 id) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
-    if (dom.owns_buffer(n) == 0) { return; }
+    if (!dom.owns_buffer(n)) { return; }
     char *buf = (char*)n->text;
     buf[0] = (char)0;
     n->len = 0;
@@ -931,8 +931,11 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, char *items, i32 handler, i3
     dom.set_role(id, NodeRole::MENU);
     Node *n = dom.node_ptr(id);
     i32 cap = i + 2;
-    char *buf = (char*)heap.alloc(cap);
-    if (buf == 0) { dom.remove_node(id); return Err(UiError::AllocationFailed(cap)); }
+    i32 buffer_address = case heap.alloc(cap) of {
+        Ok(pointer) -> pointer;
+        Err(_) -> ({ dom.remove_node(id); return Err(UiError::AllocationFailed(cap)); });
+    };
+    char *buf = (char*)buffer_address;
     i32 k = 0;
     while (k < i) { buf[k] = items[k]; k++; }
     buf[i] = (char)0;
@@ -1008,7 +1011,7 @@ export void menu_click(i32 px, i32 py) {
  * @return True if focusable, false otherwise.
  */
 export bool is_focusable(Node *n) {
-    if ((n->state & NodeState::VISIBLE) == 0) { return false; }
+    if (!(n->state & NodeState::VISIBLE)) { return false; }
     i32 k = n->kind;
     if (k == NodeKind::TEXT_INPUT) { return true; }
     if (k == NodeKind::TEXT_AREA) { return true; }

@@ -7,21 +7,6 @@
 ここで決めた内容が固まったら、`dom.mln` の実装をこの仕様に合わせて拡張する。
 ISSUE-024（UI automation）が要求する `role` / `text` / `bounds` / `state` も本仕様に含める。
 
-## 現在の UI モジュール境界（2026-09-29）
-
-UI の実装は `src/ui/` 以下にあり、責務と依存方向を次のように分けている。
-
-- `desktop.mln` は graphics の初期化、OS/desktop ツリー、taskbar の組み立てを担当する。`dom` に依存する。
-- `dom/dom.mln` は Node の保存、ツリー操作、状態変更、DOM 共通の読み取り API を担当する。
-- `dom/dom_hit_test.mln` は hit-test の走査順を担当し、Node の読み取りは `dom` の scalar API を使う。
-- `ui_metrics.mln` は display size、scale、text measurement、theme の寸法値をまとめる。layout と widget modules はここを使う。
-- `dom/dom_window_chrome.mln` は window control と titlebar の純粋な geometry query を担当する。compositor などの呼び出し元はこの API を直接使う。
-- `dom/dom_render.mln` は scene の描画と taskbar の hit target 判定を担当する。クリック後の focus や handler 実行は `compositor.mln` が行う。
-- `dom/dom_widgets.mln` は window と widget の状態変更、入力処理を担当する。widgets の種類ごとの分割は、状態の所有者と API 境界を保てる形で進める。
-- `protocol.mln` / `protocol_elements.mln` は UI IPC の受付と要素生成への変換を担当する。
-
-`dom.mln` と `dom_widgets.mln` は表示寸法や文字計測を `ui_metrics` 経由で参照し、描画 API には直接依存しない。残る大きな単位は widget 群の種類別分割で、状態の所有場所を曖昧にしない単位から進める。`font_sans.mln` は生成物なので手で分割しない。
-
 ## 初期実装時の現状（2026-07-09 時点）
 
 当時の `src/ui/dom/dom.mln` に以下があった。
@@ -38,7 +23,8 @@ UI の実装は `src/ui/` 以下にあり、責務と依存方向を次のよう
 
 既存コードから読み取れる MyLang / kernel の制約。仕様はこれに合わせる。
 
-- `heap.alloc(size)` は生ポインタ（`i32`）を返す。`free(ptr)` あり。**`sizeof` は使わない**
+- `heap.alloc(size)` は `Result<i32, AllocationError>` を返す。成功時は `Ok(ptr)`、失敗時は `Err`。
+  `free(ptr)` で解放する。**`sizeof` は使わない**
   慣習（既存コードは `alloc(16)` のようにサイズをハードコード）。
 - `enum` は使える（`scheduler.mln` / `ssd.mln` で使用実績）。値は明示採番する。
 - `bool` 型は使われていない。真偽は **`i32` の 0/1**、または後述の bitmask で表す。

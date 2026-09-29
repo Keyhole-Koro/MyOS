@@ -6,6 +6,7 @@ import fs_config from "../../src/fs/fs_config.mln";
 import ssd from "../../src/fs/ssd.mln";
 import { FsError, SeekWhence } from "../../../../contracts/io/fs.contract.mln";
 import { Result } from "@std/core/result.mln";
+import test_heap from "../alloc_support.mln";
 
 
 i32 is_invalid_name(Result<i32, FsError>* result) {
@@ -102,7 +103,7 @@ void filesystem_error_contracts() {
     Result<i32, FsError> bad_whence = fs.seek(fd, 0, 99);
     assert.assert_true(is_bad_whence(&bad_whence, 99) == 1, "invalid whence preserves payload");
 
-    i32 buffer = heap.alloc(4);
+    i32 buffer = test_heap.alloc_or_zero(4);
     Result<i32, FsError> bad_size = fs.read(fd, buffer, 0);
     assert.assert_true(is_invalid_size(&bad_size, 0) == 1, "zero read length is InvalidSize");
 
@@ -118,7 +119,7 @@ void filesystem_error_contracts() {
     // A bitmap block is only 64 KiB. Mark every bit used in a scratch buffer
     // and install it through the real SSD driver; create() must then surface
     // AllocFailed without allocating a multi-gigabyte disk image.
-    i32 bitmap = heap.alloc(fs_config.BLOCK_SIZE);
+    i32 bitmap = test_heap.alloc_or_zero(fs_config.BLOCK_SIZE);
     i32 offset = 0;
     while (offset < fs_config.BLOCK_SIZE) {
         mem.write_word(bitmap + offset, -1);

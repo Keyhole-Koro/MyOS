@@ -7,6 +7,7 @@ import dom_hit_test from "dom_hit_test.mln";
 import automation_transport from "../../meta/automation_transport.mln";
 import debug from "../../../../MyKernel/src/debug/debug.mln";
 import str from "@std/text/str.mln";
+import { Option } from "@std/core/option.mln";
 import { InlineString } from "@std/text/inline_string.mln";
 
 // Human-readable tree dump (the kernel debug shell's `dump` command) and the
@@ -37,17 +38,23 @@ void print_indent(i32 depth) {
  */
 void dump_props(i32 id) {
     i32 role = dom.role_of(id);
-    i32 w = dom.node_w(id);
-    i32 h = dom.node_h(id);
+    Option<i32> x_result = dom.node_x(id);
+    Option<i32> y_result = dom.node_y(id);
+    Option<i32> width_result = dom.node_w(id);
+    Option<i32> height_result = dom.node_h(id);
+    i32 x = case x_result of { Some(value) -> value; None -> ({ return; }); };
+    i32 y = case y_result of { Some(value) -> value; None -> ({ return; }); };
+    i32 w = case width_result of { Some(value) -> value; None -> ({ return; }); };
+    i32 h = case height_result of { Some(value) -> value; None -> ({ return; }); };
     if (role == 0) {
         if (w == 0) {
             if (h == 0) {
-                if (dom.state_of(id) == 0) { return; }
+                if (!dom.state_of(id)) { return; }
             }
         }
     }
     debug.printf(" [role=%i x=%i y=%i w=%i h=%i",
-                 role, dom.node_x(id), dom.node_y(id), w, h);
+                 role, x, y, w, h);
     if (dom.is_visible(id)) { debug.print(" vis"); }
     if (dom.is_enabled(id)) { debug.print(" en"); }
     if (dom.is_hovered(id)) { debug.print(" ho"); }
@@ -159,7 +166,15 @@ void automation_bool(bool value) {
  * @param id DOM node ID to serialize.
  */
 void automation_node(i32 id) {
-    if (g_automation_first == 0) { automation_transport.putc(','); }
+    Option<i32> x_result = dom.node_x(id);
+    Option<i32> y_result = dom.node_y(id);
+    Option<i32> width_result = dom.node_w(id);
+    Option<i32> height_result = dom.node_h(id);
+    i32 x = case x_result of { Some(value) -> value; None -> ({ return; }); };
+    i32 y = case y_result of { Some(value) -> value; None -> ({ return; }); };
+    i32 width = case width_result of { Some(value) -> value; None -> ({ return; }); };
+    i32 height = case height_result of { Some(value) -> value; None -> ({ return; }); };
+    if (!g_automation_first) { automation_transport.putc(','); }
     g_automation_first = 0;
 
     automation_raw("{\"id\":"); automation_i32(id);
@@ -169,10 +184,10 @@ void automation_node(i32 id) {
     automation_raw(",\"text\":"); automation_json_string(dom.text_of(id));
     automation_raw(",\"testId\":"); automation_json_string(dom.test_id_of(id));
     automation_raw(",\"value\":"); automation_json_string(dom.automation_value_of(id));
-    automation_raw(",\"bounds\":{\"x\":"); automation_i32(dom.node_x(id));
-    automation_raw(",\"y\":"); automation_i32(dom.node_y(id));
-    automation_raw(",\"width\":"); automation_i32(dom.node_w(id));
-    automation_raw(",\"height\":"); automation_i32(dom.node_h(id));
+    automation_raw(",\"bounds\":{\"x\":"); automation_i32(x);
+    automation_raw(",\"y\":"); automation_i32(y);
+    automation_raw(",\"width\":"); automation_i32(width);
+    automation_raw(",\"height\":"); automation_i32(height);
     automation_raw("},\"visible\":"); automation_bool(dom.is_visible(id));
     automation_raw(",\"enabled\":"); automation_bool(dom.is_enabled(id));
     automation_raw(",\"focused\":"); automation_bool(dom.is_focused(id));

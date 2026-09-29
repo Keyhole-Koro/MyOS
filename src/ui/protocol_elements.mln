@@ -46,8 +46,11 @@ Result<_, UiError> tag(i32 id, char *testId) {
 Result<char*, UiError> dup_string(char *s) {
     i32 len = 0;
     while (s[len] != 0) { len++; }
-    char *copy = (char*)heap.alloc(len + 1);
-    if (copy == 0) { return Err(UiError::AllocationFailed(len + 1)); }
+    i32 copy_address = case heap.alloc(len + 1) of {
+        Ok(pointer) -> pointer;
+        Err(_) -> ({ return Err(UiError::AllocationFailed(len + 1)); });
+    };
+    char *copy = (char*)copy_address;
     i32 k = 0;
     while (k <= len) { copy[k] = s[k]; k++; }
     return Ok(copy);

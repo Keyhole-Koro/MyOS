@@ -168,8 +168,11 @@ export Result<i32, UiError> create_text_input(char *placeholder, i32 x, i32 y, i
     dom.set_role(id, NodeRole::TEXTBOX);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     Node *n = dom.node_ptr(id);
-    char *buf = (char*)heap.alloc(capacity);
-    if (buf == 0) { dom.remove_node(id); return Err(UiError::AllocationFailed(capacity)); }
+    i32 buffer_address = case heap.alloc(capacity) of {
+        Ok(pointer) -> pointer;
+        Err(_) -> ({ dom.remove_node(id); return Err(UiError::AllocationFailed(capacity)); });
+    };
+    char *buf = (char*)buffer_address;
     buf[0] = (char)0;
     n->text = buf;
     n->cap = (u16)capacity;
@@ -239,8 +242,11 @@ export Result<i32, UiError> create_text_area(char *name, i32 x, i32 y, i32 w, i3
     dom.set_role(id, NodeRole::TEXTAREA);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     Node *n = dom.node_ptr(id);
-    char *buf = (char*)heap.alloc(capacity);
-    if (buf == 0) { dom.remove_node(id); return Err(UiError::AllocationFailed(capacity)); }
+    i32 buffer_address = case heap.alloc(capacity) of {
+        Ok(pointer) -> pointer;
+        Err(_) -> ({ dom.remove_node(id); return Err(UiError::AllocationFailed(capacity)); });
+    };
+    char *buf = (char*)buffer_address;
     buf[0] = (char)0;
     n->text = buf;
     n->cap = (u16)capacity;
@@ -270,8 +276,11 @@ export Result<i32, UiError> create_list(char *name, i32 x, i32 y, i32 w, i32 h, 
     dom.set_role(id, NodeRole::LIST);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     Node *n = dom.node_ptr(id);
-    char *buf = (char*)heap.alloc(capacity);
-    if (buf == 0) { dom.remove_node(id); return Err(UiError::AllocationFailed(capacity)); }
+    i32 buffer_address = case heap.alloc(capacity) of {
+        Ok(pointer) -> pointer;
+        Err(_) -> ({ dom.remove_node(id); return Err(UiError::AllocationFailed(capacity)); });
+    };
+    char *buf = (char*)buffer_address;
     buf[0] = (char)0;
     n->text = buf;
     n->cap = (u16)capacity;

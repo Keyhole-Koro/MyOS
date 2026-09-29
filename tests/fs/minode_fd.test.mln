@@ -3,6 +3,7 @@ import fs from "../../src/fs/fs.mln";
 import { FsError, SeekWhence } from "../../../../contracts/io/fs.contract.mln";
 import { Result } from "@std/core/result.mln";
 import { assert_eq } from "@std/testing/assert.mln";
+import test_heap from "../alloc_support.mln";
 
 
 void set_byte(i32 addr, i32 value) {
@@ -24,7 +25,7 @@ void minode_and_file_descriptors() {
     fs.init();
 
     // 1. Test standard descriptor (fd = 1 stdout)
-    i32 sbuf = heap.alloc(16);
+    i32 sbuf = test_heap.alloc_or_zero(16);
     set_byte(sbuf + 0, 72);  // H
     set_byte(sbuf + 1, 101); // e
     set_byte(sbuf + 2, 108); // l
@@ -43,7 +44,7 @@ void minode_and_file_descriptors() {
     assert_eq<i32>(stdout_written, 10, "stdout write byte count");
 
     // 2. Test file creation with leading slash path resolution
-    i32 wbuf = heap.alloc(32);
+    i32 wbuf = test_heap.alloc_or_zero(32);
     // "ABCDEFGHIJ"
     i32 i = 0;
     while (i < 10) {
@@ -80,7 +81,7 @@ void minode_and_file_descriptors() {
     assert_eq<i32>(h1 != h2, 1, "concurrent opens receive distinct descriptors");
 
     // Read first 4 bytes from h1 -> "ABCD"
-    i32 rbuf1 = heap.alloc(16);
+    i32 rbuf1 = test_heap.alloc_or_zero(16);
     Result<i32, FsError> n1_res = fs.read(h1, rbuf1, 4);
     i32 n1 = case n1_res of { Ok(v) -> v; Err(e) -> ({ assert_eq<i32>(1, 0, "read h1 first bytes"); 0; }); };
     assert_eq<i32>(n1, 4, "h1 first read byte count");
@@ -91,7 +92,7 @@ void minode_and_file_descriptors() {
     Result<i32, FsError> seek_res = fs.seek(h2, 4, SeekWhence::Set);
     i32 seeked = case seek_res of { Ok(v) -> 1; Err(e) -> 0; };
     assert_eq<i32>(seeked, 1, "seek h2");
-    i32 rbuf2 = heap.alloc(16);
+    i32 rbuf2 = test_heap.alloc_or_zero(16);
     Result<i32, FsError> n2_res = fs.read(h2, rbuf2, 4);
     i32 n2 = case n2_res of { Ok(v) -> v; Err(e) -> ({ assert_eq<i32>(1, 0, "read h2 after seek"); 0; }); };
     assert_eq<i32>(n2, 4, "h2 read byte count");
@@ -99,7 +100,7 @@ void minode_and_file_descriptors() {
     assert_eq<i32>(get_byte(rbuf2 + 3), 'H', "h2 byte 3 after seek");
 
     // Verify h1 offset is still 4, read next 2 bytes from h1 -> "EF"
-    i32 rbuf3 = heap.alloc(16);
+    i32 rbuf3 = test_heap.alloc_or_zero(16);
     Result<i32, FsError> n3_res = fs.read(h1, rbuf3, 2);
     i32 n3 = case n3_res of { Ok(v) -> v; Err(e) -> ({ assert_eq<i32>(1, 0, "read h1 after h2 seek"); 0; }); };
     assert_eq<i32>(n3, 2, "h1 second read byte count");

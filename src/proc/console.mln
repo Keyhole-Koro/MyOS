@@ -10,6 +10,7 @@ import process from "../../../MyKernel/src/kernel/process.mln";
 import { ProcessState, ProcessError } from "../../../MyKernel/src/kernel/process.mln";
 import { LoaderError } from "../../../../contracts/process/loader.contract.mln";
 import { Result, result_take_ok } from "@std/core/result.mln";
+import { AllocationError } from "@std/memory/allocator.mln";
 import { Option } from "@std/core/option.mln";
 import { SpawnError, SpawnFsOperation, SpawnFilesystemError, SpawnReadMismatch } from "../../../../contracts/process/spawn.contract.mln";
 import { ProcessControlError, ProcessExitStatus } from "../../../../contracts/process/control.contract.mln";
@@ -73,7 +74,8 @@ Option<i32> slot_of(i32 pid) {
  * Attaches a process's stdio to a DOM TextArea node.
  * @param pid Target process ID.
  * @param output_id DOM node ID of the TextArea for stdout.
- * @return `true` when bound, or `false` if all console slots are in use.
+ * @return `true` when bound, or `false` if all slots are in use or the stdin
+ * buffer cannot be allocated.
  */
 export bool bind(i32 pid, i32 output_id) {
     i32 i = 0;
@@ -81,7 +83,16 @@ export bool bind(i32 pid, i32 output_id) {
         if (consoles[i].pid == 0) {
             consoles[i].pid = pid;
             consoles[i].output = output_id;
-            if (consoles[i].stdin == 0) { consoles[i].stdin = heap.alloc(STDIN_CAP); }
+            if (consoles[i].stdin == 0) {
+                Result<i32, AllocationError> allocation = heap.alloc(STDIN_CAP);
+                i32 buffer = 0;
+                if (!result_take_ok<i32, AllocationError>(&allocation, &buffer)) {
+                    consoles[i].pid = 0;
+                    consoles[i].output = 0;
+                    return false;
+                }
+                consoles[i].stdin = buffer;
+            }
             consoles[i].in_head = 0;
             consoles[i].in_tail = 0;
             return true;
@@ -224,7 +235,7 @@ Result<i32, SpawnError> open_executable(char *path) {
     i32 has_slash = 0;
     i32 i = 0;
     while (path[i] != 0) { if (path[i] == '/') { has_slash = 1; } i++; }
-    if (has_slash == 0) {
+    if (!has_slash) {
         spawn_path.clear();
         spawn_path.append("bin/");
         spawn_path.append(str.from_c(path));
@@ -269,8 +280,9 @@ export Result<i32, SpawnError> spawn_file(char *path) {
             }));
         });
     };
-    i32 buf = heap.alloc(size);
-    if (buf == 0) {
+    Result<i32, AllocationError> allocation = heap.alloc(size);
+    i32 buf = 0;
+    if (!result_take_ok<i32, AllocationError>(&allocation, &buf)) {
         fs.close(fd);
         return Err(SpawnError::BufferAllocationFailed(size));
     }

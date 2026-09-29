@@ -383,7 +383,7 @@ Result<i32, PathError> split_path(char* path, char* out_name) {
             None -> ({ return Err(PathError::MissingDirectory); });
         };
         i32 off = dir * fs_config.ENTRY_SIZE;
-        if ((buf_word(off + 24) & FLAG_DIR) == 0) {
+        if (!(buf_word(off + 24) & FLAG_DIR)) {
             return Err(PathError::MissingDirectory);
         }
         parent_code = dir + 1;
@@ -514,7 +514,13 @@ export void format() {
  */
 export void init() {
     if (g_buf == 0) {
-        g_buf = heap.alloc(fs_config.BLOCK_SIZE);
+        case heap.alloc(fs_config.BLOCK_SIZE) of {
+            Ok(buffer) -> ({ g_buf = buffer; });
+            Err(_) -> ({
+                debug.panic("fs: out of memory for block buffer");
+                return;
+            });
+        };
     }
 
     fd_table_init();
@@ -547,7 +553,7 @@ export void init() {
 // Make an entry for `path` in its directory: a file, or with FLAG_DIR a
 // directory. Its first data block is allocated and zeroed either way.
 Result<i32, FsError> make_entry(char* path, i32 flags) {
-    if (g_enabled == 0) {
+    if (!g_enabled) {
         return Err(FsError::Disabled);
     }
 
@@ -634,7 +640,7 @@ export Result<i32, FsError> mkdir(char* path) {
  * @return Ok(true) for a directory, Ok(false) for a file, or Err(FsError).
  */
 export Result<bool, FsError> is_dir(i32 idx) {
-    if (g_enabled == 0) { return Err(FsError::Disabled); }
+    if (!g_enabled) { return Err(FsError::Disabled); }
     if (idx < 0 || idx >= fs_config.MAX_FILES) {
         FsError cause = InvalidEntry(idx);
         return Err(cause);
@@ -659,7 +665,7 @@ Result<i32, FsError> dir_code_of(char* path) {
         None -> ({ return Err(FsError::NotFound); });
     };
     i32 off = idx * fs_config.ENTRY_SIZE;
-    if ((buf_word(off + 24) & FLAG_DIR) == 0) {
+    if (!(buf_word(off + 24) & FLAG_DIR)) {
         FsError cause = WrongType(idx);
         return Err(cause);
     }
@@ -672,7 +678,7 @@ Result<i32, FsError> dir_code_of(char* path) {
  * @return Ok(fd) with allocated file descriptor, or Err(FsError).
  */
 export Result<i32, FsError> open(char* path) {
-    if (g_enabled == 0) {
+    if (!g_enabled) {
         return Err(FsError::Disabled);
     }
 
@@ -1124,7 +1130,7 @@ export Result<_, FsError> remove(char* path) {
  * Lists all existing files and their sizes to the serial debug console.
  */
 export void list() {
-    if (g_enabled == 0) { return; }
+    if (!g_enabled) { return; }
     debug.println("--- fs list ---");
     case ssd.read_block(fs_config.ENTRY_BLOCK, g_buf) of {
         Ok(_) -> _;
@@ -1176,7 +1182,7 @@ export Result<Option<i32>, FsError> dir_next_at(char* path, i32 start, char* out
 
 // dir_next for the directory with parent code `parent_code` (index + 1, 0 = root).
 Result<Option<i32>, FsError> dir_next_in(i32 parent_code, i32 start, char* out, i32 cap) {
-    if (g_enabled == 0) { return Err(FsError::Disabled); }
+    if (!g_enabled) { return Err(FsError::Disabled); }
     if (start < 0) { start = 0; }
     case ssd.read_block(fs_config.ENTRY_BLOCK, g_buf) of {
         Ok(_) -> _;
@@ -1208,7 +1214,7 @@ Result<Option<i32>, FsError> dir_next_in(i32 parent_code, i32 start, char* out, 
  * @return Ok(file size), or Err when the filesystem or entry is unavailable.
  */
 export Result<i32, FsError> entry_size(i32 idx) {
-    if (g_enabled == 0) { return Err(FsError::Disabled); }
+    if (!g_enabled) { return Err(FsError::Disabled); }
     if (idx < 0 || idx >= fs_config.MAX_FILES) {
         FsError cause = InvalidEntry(idx);
         return Err(cause);

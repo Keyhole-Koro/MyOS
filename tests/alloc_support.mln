@@ -1,0 +1,12 @@
+package myos_test_alloc;
+
+import heap from "../../MyKernel/src/mm/heap.mln";
+import { Result } from "@std/core/result.mln";
+
+/** Returns a heap pointer for success-only tests, or zero on allocation error. */
+export i32 alloc_or_zero(i32 size) {
+    return case heap.alloc(size) of {
+        Ok(pointer) -> pointer;
+        Err(_) -> 0;
+    };
+}

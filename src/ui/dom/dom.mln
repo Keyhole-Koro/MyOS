@@ -384,13 +384,16 @@ export Result<i32, UiError> create_node(i32 kind, char *name) {
     }
     if (has_owner_slot) { g_owner_nodes_count[oslot] = g_owner_nodes_count[oslot] + 1; }
 
-    Node *n = (Node *)heap.alloc(NODE_SIZE);
-    if (n == 0) {
-        if (has_owner_slot) { g_owner_nodes_count[oslot] = g_owner_nodes_count[oslot] - 1; }
-        g_free_ids[g_free_count] = id;
-        g_free_count = g_free_count + 1;
-        return Err(UiError::AllocationFailed(NODE_SIZE));
-    }
+    i32 node_address = case heap.alloc(NODE_SIZE) of {
+        Ok(pointer) -> pointer;
+        Err(_) -> ({
+            if (has_owner_slot) { g_owner_nodes_count[oslot] = g_owner_nodes_count[oslot] - 1; }
+            g_free_ids[g_free_count] = id;
+            g_free_count = g_free_count + 1;
+            return Err(UiError::AllocationFailed(NODE_SIZE));
+        });
+    };
+    Node *n = (Node *)node_address;
 
     n->id = (u16)id;
     n->kind = (u16)kind;
@@ -596,7 +599,7 @@ i32 g_handoff = 0;   // unlock() passed the lock straight to a waiter
  */
 export void lock() {
     i32 was = irq.save_disable();
-    if (g_lock == 0) {
+    if (!g_lock) {
         g_lock = 1;
         irq.restore(was);
         return;
@@ -656,25 +659,25 @@ export i32 parent_of(i32 id) {
  * @param id DOM node ID.
  * @return X coordinate, or 0 when the node ID is invalid.
  */
-export i32 node_x(i32 id) { Node *n = node_ptr(id); if (n == 0) { return 0; } return n->x; }
+export Option<i32> node_x(i32 id) { Node *n = node_ptr(id); if (n == 0) { return None; } return Some(n->x); }
 /**
  * Returns the absolute Y coordinate of a node in screen pixels.
  * @param id DOM node ID.
  * @return Y coordinate, or 0 when the node ID is invalid.
  */
-export i32 node_y(i32 id) { Node *n = node_ptr(id); if (n == 0) { return 0; } return n->y; }
+export Option<i32> node_y(i32 id) { Node *n = node_ptr(id); if (n == 0) { return None; } return Some(n->y); }
 /**
  * Returns the width of a node in screen pixels.
  * @param id DOM node ID.
  * @return Width, or 0 when the node ID is invalid.
  */
-export i32 node_w(i32 id) { Node *n = node_ptr(id); if (n == 0) { return 0; } return n->w; }
+export Option<i32> node_w(i32 id) { Node *n = node_ptr(id); if (n == 0) { return None; } return Some(n->w); }
 /**
  * Returns the height of a node in screen pixels.
  * @param id DOM node ID.
  * @return Height, or 0 when the node ID is invalid.
  */
-export i32 node_h(i32 id) { Node *n = node_ptr(id); if (n == 0) { return 0; } return n->h; }
+export Option<i32> node_h(i32 id) { Node *n = node_ptr(id); if (n == 0) { return None; } return Some(n->h); }
 
 /**
  * Returns the text content of a node, or null.
@@ -1089,8 +1092,11 @@ export void set_text_copy(i32 id, char *text) {
     if (n == 0) { return; }
     i32 len = 0;
     while (text[len] != 0) { len++; }
-    char *copy = (char*)heap.alloc(len + 1);
-    if (copy == 0) { return; }
+    i32 copy_address = case heap.alloc(len + 1) of {
+        Ok(pointer) -> pointer;
+        Err(_) -> ({ return; });
+    };
+    char *copy = (char*)copy_address;
     i32 k = 0;
     while (k <= len) { copy[k] = text[k]; k++; }
     set_text(id, copy);
@@ -1430,7 +1436,7 @@ export i32 dispatch_click(i32 id) {
     if (n == 0) { return 0; }
     if (n->kind == NodeKind::CHECKBOX) {
         i32 now = n->state & NodeState::CHECKED;
-        set_state_flag(id, NodeState::CHECKED, now == 0);
+        set_state_flag(id, NodeState::CHECKED, !now);
         fire_change(n);
     }
     return emit(n, UiEventKind::CLICK, n->on_click, 0);

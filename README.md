@@ -30,5 +30,4 @@ Desktop app sources live in `src/apps/` for image packaging, but they are SDK
 clients, not part of the MyOS implementation layer. Each is compiled with
 MyAppFramework into its own `/apps/*.mbin` process and may import the
 app-facing `MyAppFramework/src/*.mln` files plus MyStdLib, but not MyOS
-internals. See `system/MyAppFramework/docs/APP_FRAMEWORK.md` for app authoring
-and `docs/design/os-app-boundaries.md` in MyComputer for the enforced boundary.
+internals. See `system/MyAppFramework/docs/APP_FRAMEWORK.md` for app authoring.

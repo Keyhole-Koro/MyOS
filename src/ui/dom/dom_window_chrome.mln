@@ -3,24 +3,35 @@ package dom_window_chrome;
 import dom from "dom.mln";
 import ui_config from "../config.mln";
 import ui_metrics from "../ui_metrics.mln";
+import { Option } from "@std/core/option.mln";
 
 // Pure display-space geometry for window controls. Window state and mutation
 // remain in dom/dom_widgets; this module only answers coordinate queries.
 
-/** Computes the center X coordinate of the close button. */
-export i32 close_button_cx(i32 win) {
-    return dom.node_x(win) + 16 * dom.ui_scale();
+/** Computes the center X coordinate of the close button, or None for an invalid window. */
+export Option<i32> close_button_cx(i32 win) {
+    return button_cx(win, 1);
 }
 
 /** Computes the center X coordinate of titlebar button 1, 2, or 3. */
-export i32 button_cx(i32 win, i32 which) {
-    return dom.node_x(win) + (16 + 20 * (which - 1)) * dom.ui_scale();
+export Option<i32> button_cx(i32 win, i32 which) {
+    Option<i32> x_result = dom.node_x(win);
+    i32 x = case x_result of {
+        Some(value) -> value;
+        None -> ({ return None; });
+    };
+    return Some(x + (16 + 20 * (which - 1)) * dom.ui_scale());
 }
 
 /** Computes the center Y coordinate of titlebar buttons. */
-export i32 button_cy(i32 win) {
+export Option<i32> button_cy(i32 win) {
     i32 scale = dom.ui_scale();
-    return dom.node_y(win) + ui_metrics.titlebar_height() * scale / 2;
+    Option<i32> y_result = dom.node_y(win);
+    i32 y = case y_result of {
+        Some(value) -> value;
+        None -> ({ return None; });
+    };
+    return Some(y + ui_metrics.titlebar_height() * scale / 2);
 }
 
 /** Returns the titlebar button radius in display pixels. */
@@ -29,11 +40,21 @@ export i32 button_radius() { return 7 * dom.ui_scale(); }
 /** Returns the titlebar control button at a display point, or zero. */
 export i32 button_hit(i32 win, i32 px, i32 py) {
     if (!dom.node_exists(win)) { return 0; }
-    i32 dy = py - button_cy(win);
+    Option<i32> cy_result = button_cy(win);
+    i32 cy = case cy_result of {
+        Some(value) -> value;
+        None -> ({ return 0; });
+    };
+    i32 dy = py - cy;
     i32 radius = button_radius() + 3 * dom.ui_scale();
     i32 which = 1;
     while (which <= 3) {
-        i32 dx = px - button_cx(win, which);
+        Option<i32> cx_result = button_cx(win, which);
+        i32 cx = case cx_result of {
+            Some(value) -> value;
+            None -> ({ return 0; });
+        };
+        i32 dx = px - cx;
         if (dx * dx + dy * dy <= radius * radius) { return which; }
         which++;
     }
@@ -48,10 +69,14 @@ export bool close_button_hit(i32 win, i32 px, i32 py) {
 /** Checks whether a display point hits the bottom-right resize grip. */
 export bool resize_grip_hit(i32 win, i32 px, i32 py) {
     if (!dom.node_exists(win)) { return false; }
-    i32 x = dom.node_x(win);
-    i32 y = dom.node_y(win);
-    i32 width = dom.node_w(win);
-    i32 height = dom.node_h(win);
+    Option<i32> x_result = dom.node_x(win);
+    Option<i32> y_result = dom.node_y(win);
+    Option<i32> width_result = dom.node_w(win);
+    Option<i32> height_result = dom.node_h(win);
+    i32 x = case x_result of { Some(value) -> value; None -> ({ return false; }); };
+    i32 y = case y_result of { Some(value) -> value; None -> ({ return false; }); };
+    i32 width = case width_result of { Some(value) -> value; None -> ({ return false; }); };
+    i32 height = case height_result of { Some(value) -> value; None -> ({ return false; }); };
     i32 grip = ui_config.GRIP_SIZE * dom.ui_scale();
     if (px < x + width - grip) { return false; }
     if (py < y + height - grip) { return false; }
@@ -64,9 +89,12 @@ export bool resize_grip_hit(i32 win, i32 px, i32 py) {
 export bool titlebar_hit(i32 win, i32 px, i32 py) {
     if (!dom.node_exists(win)) { return false; }
     if (button_hit(win, px, py) != 0) { return false; }
-    i32 x = dom.node_x(win);
-    i32 y = dom.node_y(win);
-    i32 width = dom.node_w(win);
+    Option<i32> x_result = dom.node_x(win);
+    Option<i32> y_result = dom.node_y(win);
+    Option<i32> width_result = dom.node_w(win);
+    i32 x = case x_result of { Some(value) -> value; None -> ({ return false; }); };
+    i32 y = case y_result of { Some(value) -> value; None -> ({ return false; }); };
+    i32 width = case width_result of { Some(value) -> value; None -> ({ return false; }); };
     i32 titlebar_height = ui_metrics.titlebar_height() * dom.ui_scale();
     if (px < x) { return false; }
     if (px >= x + width) { return false; }

@@ -53,7 +53,7 @@ export void draw_window(Node *n) {
     i32 shadow = theme.shadow_size() * s;
     i32 shadow_off = theme.shadow_offset() * s;
     i32 shadow_a = theme.shadow_alpha();
-    if (active == 0) { shadow_a = theme.shadow_alpha_inactive(); }
+    if (!active) { shadow_a = theme.shadow_alpha_inactive(); }
     graphics.draw_shadow(x, y, w, h, r, shadow, shadow_off, shadow_a);
 
     i32 bg = theme.window_bg();
@@ -62,7 +62,7 @@ export void draw_window(Node *n) {
     // Title bar: rounded on top, squared off where it meets the content.
     i32 tb_top = theme.titlebar_top();
     i32 tb_bottom = theme.titlebar_bottom();
-    if (active == 0) {
+    if (!active) {
         tb_top = theme.titlebar_inactive();
         tb_bottom = tb_top;
     }
@@ -77,19 +77,31 @@ export void draw_window(Node *n) {
 
     // Title-bar buttons: close, minimize, maximize discs; their glyphs
     // (x, -, +) appear while the pointer is over the window.
-    i32 cx = dom_window_chrome.close_button_cx(n->id);
-    i32 cy = dom_window_chrome.button_cy(n->id);
+    Option<i32> close_x_result = dom_window_chrome.close_button_cx(n->id);
+    i32 cx = case close_x_result of {
+        Some(value) -> value;
+        None -> ({ return; });
+    };
+    Option<i32> button_y_result = dom_window_chrome.button_cy(n->id);
+    i32 cy = case button_y_result of {
+        Some(value) -> value;
+        None -> ({ return; });
+    };
     i32 cr = dom_window_chrome.button_radius();
     i32 ring = theme.close_button_ring();
     i32 g = theme.close_glyph();
     i32 k = cr / 2;
     i32 which = 1;
     while (which <= 3) {
-        i32 bx = dom_window_chrome.button_cx(n->id, which);
+        Option<i32> button_x_result = dom_window_chrome.button_cx(n->id, which);
+        i32 bx = case button_x_result of {
+            Some(value) -> value;
+            None -> ({ return; });
+        };
         i32 face = theme.close_button();
         if (which == 2) { face = theme.minimize_button(); }
         if (which == 3) { face = theme.maximize_button(); }
-        if (active == 0) { face = theme.close_button_inactive(); }
+        if (!active) { face = theme.close_button_inactive(); }
         graphics.fill_disc(bx, cy, cr, face);
         graphics.draw_round_rect(bx - cr, cy - cr, 2 * cr, 2 * cr, cr, s, ring);
         if (hovered != 0) {
@@ -123,9 +135,14 @@ export void draw_window(Node *n) {
     // Title, centred, kept clear of the buttons.
     if (n->text != 0) {
         i32 title_color = theme.text_primary();
-        if (active == 0) { title_color = theme.text_secondary(); }
+        if (!active) { title_color = theme.text_secondary(); }
         i32 th = graphics.text_height(1, s);
-        i32 inset = 2 * (dom_window_chrome.button_cx(n->id, 3) - x);
+        Option<i32> third_button_result = dom_window_chrome.button_cx(n->id, 3);
+        i32 third_button_x = case third_button_result of {
+            Some(value) -> value;
+            None -> ({ return; });
+        };
+        i32 inset = 2 * (third_button_x - x);
         graphics.push_clip(x + inset, y, w - 2 * inset, tb);
         graphics.draw_label_centered(x, y + (tb - th) / 2, w, (char*)n->text, title_color, 1, s);
         graphics.pop_clip();
@@ -133,7 +150,7 @@ export void draw_window(Node *n) {
 
     // Border last so it sits over the title bar edge.
     i32 border = theme.window_border();
-    if (active == 0) { border = theme.window_border_inactive(); }
+    if (!active) { border = theme.window_border_inactive(); }
     graphics.draw_round_rect(x, y, w, h, r, s, border);
 }
 
@@ -346,7 +363,7 @@ export void draw_list(Node *n) {
     if (n->sel != 0) { sel = Some(n->sel - 1); }
     i32 hl = theme.accent();
     i32 hl_fg = theme.on_accent();
-    if (focused == 0) {
+    if (!focused) {
         hl = theme.button_face_pressed();
         hl_fg = theme.text_primary();
     }
@@ -766,7 +783,7 @@ export void render(i32 node_id) {
 
     Node *n = dom.node_ptr(node_id);
     if (n == 0) { return; }
-    if ((n->state & NodeState::VISIBLE) == 0) { return; }
+    if (!(n->state & NodeState::VISIBLE)) { return; }
 
     bool in_damage = node_in_damage(n);
     if (in_damage) {

@@ -6,6 +6,7 @@ import font from "font8x8.mln";
 import font_sans from "font_sans.mln";
 import str from "@std/text/str.mln";
 import { InlineString } from "@std/text/inline_string.mln";
+import { Option } from "@std/core/option.mln";
 
 export i32 VRAM_BASE = 0x30000000;
 
@@ -478,16 +479,16 @@ export void put_pixel(i32 x, i32 y, i32 color) {
  * Reads a pixel color back from the back buffer.
  * @param x Screen X coordinate.
  * @param y Screen Y coordinate.
- * @return 32-bit pixel color, or 0 if outside display bounds.
+ * @return Some(32-bit pixel color), or None when outside display bounds.
  */
-export i32 get_pixel(i32 x, i32 y) {
-    if (x < 0) { return 0; }
-    if (y < 0) { return 0; }
-    if (x >= display_config.width()) { return 0; }
-    if (y >= display_config.height()) { return 0; }
+export Option<i32> get_pixel(i32 x, i32 y) {
+    if (x < 0) { return None; }
+    if (y < 0) { return None; }
+    if (x >= display_config.width()) { return None; }
+    if (y >= display_config.height()) { return None; }
     i32 addr = VRAM_BASE + (y * display_config.width() + x) * 4;
     i32* ptr = (i32*)addr;
-    return *ptr;
+    return Some(*ptr);
 }
 
 /**

@@ -260,8 +260,16 @@ void on_motion(i32 ex, i32 ey) {
         else if (dy != 0) { dom.move_node(g_drag_win, dx, dy); }
     }
     if (g_resize_win != 0) {
-        i32 w = dom.node_w(g_resize_win) + dx;
-        i32 h = dom.node_h(g_resize_win) + dy;
+        Option<i32> width_result = dom.node_w(g_resize_win);
+        i32 w = case width_result of {
+            Some(value) -> value + dx;
+            None -> ({ g_resize_win = 0; return; });
+        };
+        Option<i32> height_result = dom.node_h(g_resize_win);
+        i32 h = case height_result of {
+            Some(value) -> value + dy;
+            None -> ({ g_resize_win = 0; return; });
+        };
         dom_widgets.resize_window(g_resize_win, w, h);
     }
     g_drag_last_x = ex;
@@ -304,7 +312,7 @@ export void run() {
             i32 er = btn & 2;
 
             if (eb) {
-                if (prev_left == 0) {
+                if (!prev_left) {
                     on_press(ex, ey);
                 } else {
                     on_motion(ex, ey);
@@ -317,7 +325,7 @@ export void run() {
             prev_left = eb;
 
             if (er) {
-                if (prev_right == 0) { on_right_press(ex, ey); }
+                if (!prev_right) { on_right_press(ex, ey); }
             }
             prev_right = er;
 

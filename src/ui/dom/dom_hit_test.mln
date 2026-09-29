@@ -8,10 +8,14 @@ import { Option } from "@std/core/option.mln";
 
 /** Checks whether a point is inside a node's bounding rectangle. */
 export bool node_contains(i32 node_id, i32 px, i32 py) {
-    i32 x = dom.node_x(node_id);
-    i32 y = dom.node_y(node_id);
-    i32 width = dom.node_w(node_id);
-    i32 height = dom.node_h(node_id);
+    Option<i32> x_result = dom.node_x(node_id);
+    Option<i32> y_result = dom.node_y(node_id);
+    Option<i32> width_result = dom.node_w(node_id);
+    Option<i32> height_result = dom.node_h(node_id);
+    i32 x = case x_result of { Some(value) -> value; None -> ({ return false; }); };
+    i32 y = case y_result of { Some(value) -> value; None -> ({ return false; }); };
+    i32 width = case width_result of { Some(value) -> value; None -> ({ return false; }); };
+    i32 height = case height_result of { Some(value) -> value; None -> ({ return false; }); };
     if (width == 0) { return false; }
     if (height == 0) { return false; }
     if (px < x) { return false; }

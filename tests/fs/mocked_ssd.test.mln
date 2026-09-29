@@ -8,6 +8,7 @@ import ssd from "../../src/fs/ssd.mln";
 import { FsError } from "../../../../contracts/io/fs.contract.mln";
 import { Result } from "@std/core/result.mln";
 import { SsdError } from "../../src/fs/ssd.mln";
+import test_heap from "../alloc_support.mln";
 
 // Four blocks are enough for MFS metadata plus the first allocated data block.
 i32 g_ram_disk = 0;
@@ -55,7 +56,7 @@ i32 result_value(Result<i32, FsError>* result) {
 /*@Test "filesystem runs against a fake RAM SSD" { step: 50000000; }*/
 void filesystem_runs_against_a_fake_ram_ssd() {
     heap.init();
-    g_ram_disk = heap.alloc(fs_config.BLOCK_SIZE * 4);
+    g_ram_disk = test_heap.alloc_or_zero(fs_config.BLOCK_SIZE * 4);
     assert.assert_true(g_ram_disk != 0, "RAM SSD backing allocation succeeds");
 
     // heap memory is not part of the test contract; start with an explicitly
@@ -90,7 +91,7 @@ void filesystem_runs_against_a_fake_ram_ssd() {
     assert.assert_true(mock.called_with(ssd.read_block, fs_config.BITMAP_BLOCK, mock.any()),
                        "create reads the allocation bitmap through the fake");
 
-    i32 source = heap.alloc(4);
+    i32 source = test_heap.alloc_or_zero(4);
     char* source_bytes = (char*)source;
     source_bytes[0] = 'T';
     source_bytes[1] = 'E';
@@ -103,7 +104,7 @@ void filesystem_runs_against_a_fake_ram_ssd() {
     Result<i32, FsError> reopened = fs.open("ram-file");
     i32 read_fd = result_value(&reopened);
     assert.assert_true(read_fd >= 3, "fake SSD reopens persisted entry");
-    i32 destination = heap.alloc(4);
+    i32 destination = test_heap.alloc_or_zero(4);
     Result<i32, FsError> read = fs.read(read_fd, destination, 4);
     assert.assert_true(result_value(&read) == 4, "fake SSD restores file data");
     char* destination_bytes = (char*)destination;
