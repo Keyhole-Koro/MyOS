@@ -3,6 +3,8 @@ package counter;
 import elements from "../../../MyAppFramework/src/elements.mln";
 import ui from "../../../MyAppFramework/src/ui.mln";
 import { app } from "../../../MyAppFramework/src/annotations.mln";
+import { Result } from "@std/core/result.mln";
+import { UiError } from "../../../../contracts/ui/widget.contract.mln";
 
 // Click counter demo app, and the smallest example of the app framework.
 //
@@ -86,5 +88,7 @@ void (ref mut Counter c) reset(i32 id) {
  */
 void (ref mut Counter c) step_changed(i32 id) {
     c.step = 1;
-    if (ui.is_checked(id)) { c.step = 2; }
+    Result<bool, UiError> checked = ui.is_checked(id);
+    bool on = case checked of { Ok(value) -> value; Err(_) -> false; };
+    if (on) { c.step = 2; }
 }

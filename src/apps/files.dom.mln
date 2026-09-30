@@ -142,28 +142,29 @@ void (Files *f) refresh(i32 id) {
 // Whether the selected row is a directory ("name/" or "..").
 /**
  * Tests whether the selected row represents a directory or the parent entry.
- * @return 1 for a directory or parent row; 0 for a file or unavailable selection.
+ * @return Ok(true) for a directory or parent row, Ok(false) for a file or no selection,
+ *         or Err when the list query fails.
  */
-i32 (Files *f) selected_is_dir() {
+Result<bool, UiError> (Files *f) selected_is_dir() {
     Result<Option<i32>, UiError> selected = ui.list_selected(f->list);
     i32 row = case selected of {
         Ok(v) -> case v of {
             Some(n) -> n;
-            None -> ({ return 0; });
+            None -> ({ return Ok(false); });
         };
-        Err(_) -> ({ return 0; });
+        Err(e) -> ({ return Err(e); });
     };
     InlineCString<48> item = InlineCString<48> {};
     item.clear();
     Result<i32, UiError> copied = ui.list_item(f->list, row, item.as_ptr(), item.data.length);
     case copied of {
         Ok(_) -> _;
-        Err(_) -> ({ return 0; });
+        Err(e) -> ({ return Err(e); });
     };
     item.sync_from_ptr();
-    if (item.len() == 2 && item.data[0] == '.' && item.data[1] == '.') { return 1; }
-    if (!item.is_empty() && item.data[item.len() - 1] == '/') { return 1; }
-    return 0;
+    if (item.len() == 2 && item.data[0] == '.' && item.data[1] == '.') { return Ok(true); }
+    if (!item.is_empty() && item.data[item.len() - 1] == '/') { return Ok(true); }
+    return Ok(false);
 }
 
 // Enter the selected directory (".." goes up), and show it.
@@ -235,7 +236,12 @@ void (Files *f) select(i32 id) {
 void (Files *f) open(i32 id) {
     char *name = f->selected_name();
     if (name == 0) { ui.set_text(f->status, "select a file first"); return; }
-    if (f->selected_is_dir()) { f->enter(name); return; }
+    Result<bool, UiError> is_dir = f->selected_is_dir();
+    bool directory = case is_dir of {
+        Ok(value) -> value;
+        Err(_) -> ({ ui.set_text(f->status, "could not read selected item"); return; });
+    };
+    if (directory) { f->enter(name); return; }
     ui.open(f->path_of(name));
 }
 

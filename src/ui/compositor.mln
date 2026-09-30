@@ -14,6 +14,16 @@ import mouse from "../../../MyKernel/src/io/mouse.mln";
 import keyboard from "../../../MyKernel/src/io/keyboard.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import irq from "../../../MyKernel/src/arch/irq.mln";
+import { UiError } from "../../../../contracts/ui/widget.contract.mln";
+
+i32 window_id_or_zero(i32 id) {
+    Result<Option<i32>, UiError> result = dom.window_of(id);
+    return case result of {
+        Ok(Some(win)) -> win;
+        Ok(None) -> 0;
+        Err(_) -> 0;
+    };
+}
 
 // Work owned by outer boundary endpoints that must run on this task. Boot wires
 // the callback; the compositor does not depend on request transport.
@@ -127,7 +137,7 @@ void on_press(i32 ex, i32 ey) {
     };
 
     // Anything inside a window activates that window first.
-    i32 win = dom.window_of(hit);
+    i32 win = window_id_or_zero(hit);
     if (win != 0) {
         dom_widgets.focus_window(win);
     }
@@ -147,14 +157,19 @@ void on_press(i32 ex, i32 ey) {
     if (hit == win) {
         // The window itself: title-bar buttons, drag handle, resize grip,
         // or just focus.
-        i32 button = dom_window_chrome.button_hit(win, ex, ey);
-        if (button == 1) {
-            g_hot_id = 0;
-            dom_widgets.close_window(win);
-            return;
-        }
-        if (button == 2) { dom_widgets.minimize_window(win); return; }
-        if (button == 3) { dom_widgets.maximize_window(win); return; }
+        Option<i32> button = dom_window_chrome.button_hit(win, ex, ey);
+        case button of {
+            Some(value) -> ({
+                if (value == 1) {
+                    g_hot_id = 0;
+                    dom_widgets.close_window(win);
+                    return;
+                }
+                if (value == 2) { dom_widgets.minimize_window(win); return; }
+                if (value == 3) { dom_widgets.maximize_window(win); return; }
+            });
+            None -> _;
+        };
         if (dom_window_chrome.resize_grip_hit(win, ex, ey)) {
             g_resize_win = win;
             g_drag_last_x = ex;
@@ -208,7 +223,7 @@ void on_right_press(i32 ex, i32 ey) {
         });
     };
     if (hit == dom.taskbar_id()) { return; }
-    i32 win = dom.window_of(hit);
+    i32 win = window_id_or_zero(hit);
     if (win != 0) {
         dom_widgets.focus_window(win);
         if (dom_widgets.is_maximized(win)) {

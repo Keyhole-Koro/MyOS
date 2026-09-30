@@ -565,7 +565,9 @@ checked/hitTestableを含める。host側は`MyOS` / strict `Locator` / `expect`
   全削除。`dom_widgets.close_window` は `on_close` があればキューに積んで戻り、
   ノードの削除はシェル（`shell/app.mln`）に任せる。
 - **キーフィルタ**: `dom.set_key_filter(fn)`。`dispatch_key_event` が DOWN の先頭で
-  `fn(owner_of(active_window), code, mods)` を呼び、1 なら widget に渡さない
+  active window の owner を解決して `fn(owner, code, mods)` を呼ぶ。`owner_of` は
+  `Result<i32, UiError>` を返し、system-owned node の owner 0 と無効 ID を区別する。
+  callback が true を返すと widget にイベントを渡さない
   （`@key` ショートカット。シェルが claim 表を照合して KEY イベントにする）。
 - **所有ノードのイベント**: `dom.emit(n, kind, handler, arg)`。`owner != 0` なら
   UI 内部の `ui_event` port に積み、`ipc/events.mln` が protocol の `Event` に

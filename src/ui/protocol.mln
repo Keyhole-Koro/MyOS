@@ -16,6 +16,7 @@ import dom_widgets from "dom/dom_widgets.mln";
 import graphics from "graphics.mln";
 import irq from "../../../MyKernel/src/arch/irq.mln";
 import protocol_elements from "protocol_elements.mln";
+import { NodeKind } from "dom/dom.mln";
 import { Request } from "../../../../contracts/myapp/message.contract.mln";
 import { UiOp } from "../../../../contracts/myapp/ui.contract.mln";
 
@@ -26,7 +27,7 @@ import { UiOp } from "../../../../contracts/myapp/ui.contract.mln";
  * ensuring proper resource ownership for windows and child elements.
  *
  * @param m Pointer to Request structure.
- * @return Legacy scalar result for scalar operations; typed operations write
+ * @return Legacy scalar result for value operations; fallible queries write
  *         their Result through Request.result_out.
  */
 export i32 handle(Request *m) {
@@ -47,15 +48,31 @@ i32 run_request(Request *m) {
     i32 op = m->op;
     i32 id = m->a0;
     if (op == UiOp::SET_TEXT)       { set_text(id, m->s0); return 0; }
-    if (op == UiOp::TEXT_COPY)      { return text_copy(id, (char*)m->a1, m->a2); }
-    if (op == UiOp::IS_CHECKED)     { if (is_checked(id)) { return 1; } return 0; }
+    if (op == UiOp::TEXT_COPY) {
+        Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
+        *out = text_copy(id, (char*)m->a1, m->a2);
+        return 0;
+    }
+    if (op == UiOp::IS_CHECKED) {
+        Result<bool, UiError> *out = (Result<bool, UiError>*)m->result_out;
+        *out = is_checked(id);
+        return 0;
+    }
     if (op == UiOp::SET_CHECKED)    { set_checked(id, m->a1); return 0; }
     if (op == UiOp::INPUT_SET)      { input_set(id, m->s0); return 0; }
     if (op == UiOp::AREA_APPEND)    { area_append(id, m->s0); return 0; }
     if (op == UiOp::AREA_CLEAR)     { area_clear(id); return 0; }
-    if (op == UiOp::AREA_LINES)     { return area_lines(id); }
+    if (op == UiOp::AREA_LINES) {
+        Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
+        *out = area_lines(id);
+        return 0;
+    }
     if (op == UiOp::LIST_SET_ITEMS) { list_set_items(id, m->s0); return 0; }
-    if (op == UiOp::LIST_COUNT)     { return list_count(id); }
+    if (op == UiOp::LIST_COUNT) {
+        Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
+        *out = list_count(id);
+        return 0;
+    }
     if (op == UiOp::LIST_SELECTED) {
         Result<Option<i32>, UiError> *out = (Result<Option<i32>, UiError>*)m->result_out;
         *out = dom_widgets.list_selected(id);
@@ -114,12 +131,14 @@ void set_text(i32 id, char *s) { dom.set_text_copy(id, s); }
  * @param id UI node ID.
  * @param out Destination buffer.
  * @param cap Maximum capacity of buffer in bytes (including null terminator).
- * @return Number of bytes copied.
+ * @return Ok(number of bytes copied), or Err for an invalid node or capacity.
  */
-i32 text_copy(i32 id, char *out, i32 cap) {
+Result<i32, UiError> text_copy(i32 id, char *out, i32 cap) {
+    if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
+    if (cap <= 0) { return Err(UiError::InvalidCapacity(cap)); }
     char *t = dom.text_of(id);
-    if (t == 0) { out[0] = (char)0; return 0; }
-    return str.ncopy(out, t, cap);
+    if (t == 0) { out[0] = (char)0; return Ok(0); }
+    return Ok(str.ncopy(out, t, cap));
 }
 
 // --- widgets --------------------------------------------------------------------------------
@@ -128,9 +147,17 @@ i32 text_copy(i32 id, char *out, i32 cap) {
  * Checks whether a checkbox node is checked.
  *
  * @param id UI node ID.
- * @return True if checked, false otherwise.
+ * @return Ok(true/false) for a Checkbox, or Err for an invalid ID or wrong node kind.
  */
-bool is_checked(i32 id) { return dom.is_checked(id); }
+Result<bool, UiError> is_checked(i32 id) {
+    Option<i32> kind = dom.kind_of(id);
+    i32 value = case kind of {
+        Some(v) -> v;
+        None -> ({ return Err(UiError::NodeNotFound(id)); });
+    };
+    if (value != NodeKind::CHECKBOX) { return Err(UiError::WrongNodeKind(id)); }
+    return Ok(dom.is_checked(id));
+}
 
 /**
  * Sets the checked state of a checkbox node.
@@ -174,9 +201,9 @@ void area_clear(i32 id) { dom_widgets.clear_text_area(id); }
  * Returns the line count of a multi-line text area.
  *
  * @param id UI node ID.
- * @return Number of lines.
+ * @return Ok(line count), or Err for an invalid ID or wrong node kind.
  */
-i32 area_lines(i32 id) { return dom_widgets.text_area_line_count(id); }
+Result<i32, UiError> area_lines(i32 id) { return dom_widgets.text_area_line_count(id); }
 
 /**
  * Replaces the item list of a list widget with newline-separated strings.
@@ -190,9 +217,9 @@ void list_set_items(i32 id, char *items) { dom_widgets.list_set_items(id, items)
  * Returns the number of items in a list widget.
  *
  * @param id UI node ID.
- * @return Item count.
+ * @return Ok(item count), or Err for an invalid ID or wrong node kind.
  */
-i32 list_count(i32 id) { return dom_widgets.list_count(id); }
+Result<i32, UiError> list_count(i32 id) { return dom_widgets.list_count(id); }
 
 // --- focus and windows ------------------------------------------------------------------------
 
@@ -229,10 +256,7 @@ void close(i32 win) {
  * @return Enclosing window node ID, or 0 if none found.
  */
 Result<Option<i32>, UiError> window_of(i32 id) {
-    if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    i32 win = dom.window_of(id);
-    if (win == 0) { return Ok(None); }
-    return Ok(Some(win));
+    return dom.window_of(id);
 }
 
 /**
@@ -243,7 +267,13 @@ Result<Option<i32>, UiError> window_of(i32 id) {
  */
 Result<i32, UiError> window_x(i32 win) {
     if (!dom.node_exists(win)) { return Err(UiError::NodeNotFound(win)); }
-    if (dom.window_of(win) != win) { return Err(UiError::WrongNodeKind(win)); }
+    Result<Option<i32>, UiError> enclosing = dom.window_of(win);
+    bool is_window = case enclosing of {
+        Ok(Some(value)) -> value == win;
+        Ok(None) -> false;
+        Err(_) -> false;
+    };
+    if (!is_window) { return Err(UiError::WrongNodeKind(win)); }
     Option<i32> x_result = dom.node_x(win);
     i32 x = case x_result of {
         Some(value) -> value;
@@ -260,7 +290,13 @@ Result<i32, UiError> window_x(i32 win) {
  */
 Result<i32, UiError> window_y(i32 win) {
     if (!dom.node_exists(win)) { return Err(UiError::NodeNotFound(win)); }
-    if (dom.window_of(win) != win) { return Err(UiError::WrongNodeKind(win)); }
+    Result<Option<i32>, UiError> enclosing = dom.window_of(win);
+    bool is_window = case enclosing of {
+        Ok(Some(value)) -> value == win;
+        Ok(None) -> false;
+        Err(_) -> false;
+    };
+    if (!is_window) { return Err(UiError::WrongNodeKind(win)); }
     Option<i32> y_result = dom.node_y(win);
     i32 y = case y_result of {
         Some(value) -> value;

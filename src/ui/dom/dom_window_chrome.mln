@@ -37,13 +37,13 @@ export Option<i32> button_cy(i32 win) {
 /** Returns the titlebar button radius in display pixels. */
 export i32 button_radius() { return 7 * dom.ui_scale(); }
 
-/** Returns the titlebar control button at a display point, or zero. */
-export i32 button_hit(i32 win, i32 px, i32 py) {
-    if (!dom.node_exists(win)) { return 0; }
+/** Returns the titlebar control button at a display point, or None when no button is hit. */
+export Option<i32> button_hit(i32 win, i32 px, i32 py) {
+    if (!dom.node_exists(win)) { return None; }
     Option<i32> cy_result = button_cy(win);
     i32 cy = case cy_result of {
         Some(value) -> value;
-        None -> ({ return 0; });
+        None -> ({ return None; });
     };
     i32 dy = py - cy;
     i32 radius = button_radius() + 3 * dom.ui_scale();
@@ -52,18 +52,18 @@ export i32 button_hit(i32 win, i32 px, i32 py) {
         Option<i32> cx_result = button_cx(win, which);
         i32 cx = case cx_result of {
             Some(value) -> value;
-            None -> ({ return 0; });
+            None -> ({ return None; });
         };
         i32 dx = px - cx;
-        if (dx * dx + dy * dy <= radius * radius) { return which; }
+        if (dx * dx + dy * dy <= radius * radius) { return Some(which); }
         which++;
     }
-    return 0;
+    return None;
 }
 
 /** Checks whether a display point hits the close button. */
 export bool close_button_hit(i32 win, i32 px, i32 py) {
-    return button_hit(win, px, py) == 1;
+    return case button_hit(win, px, py) of { Some(which) -> which == 1; None -> false; };
 }
 
 /** Checks whether a display point hits the bottom-right resize grip. */
@@ -88,7 +88,7 @@ export bool resize_grip_hit(i32 win, i32 px, i32 py) {
 /** Checks whether a display point hits the draggable titlebar area. */
 export bool titlebar_hit(i32 win, i32 px, i32 py) {
     if (!dom.node_exists(win)) { return false; }
-    if (button_hit(win, px, py) != 0) { return false; }
+    case button_hit(win, px, py) of { Some(_) -> ({ return false; }); None -> _; };
     Option<i32> x_result = dom.node_x(win);
     Option<i32> y_result = dom.node_y(win);
     Option<i32> width_result = dom.node_w(win);

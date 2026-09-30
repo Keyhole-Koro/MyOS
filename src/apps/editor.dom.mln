@@ -6,6 +6,7 @@ import { app, open, key } from "../../../MyAppFramework/src/annotations.mln";
 import fs from "@std/hosted/fs.mln";
 import { Result } from "@std/core/result.mln";
 import { FsError } from "../../../../contracts/io/fs.contract.mln";
+import { UiError } from "../../../../contracts/ui/widget.contract.mln";
 import { InlineCString } from "@std/text/inline_c_string.mln";
 
 // Text editor: a TextArea over one file on the MFS disk. Save rewrites the
@@ -94,11 +95,19 @@ void (Editor *e) open(char *path) {
  */
 void (Editor *e) save(i32 id) {
     char *path = e->save_name.as_ptr();
-    ui.text_copy(e->name, path, e->save_name.data.length);
+    Result<i32, UiError> name_copy = ui.text_copy(e->name, path, e->save_name.data.length);
+    case name_copy of {
+        Ok(_) -> _;
+        Err(_) -> ({ ui.set_text(e->status, "save failed: filename unavailable"); return; });
+    };
     e->save_name.sync_from_ptr();
     if (path[0] == 0) { ui.set_text(e->status, "enter a file name first"); return; }
     char *text = e->save_text.as_ptr();
-    i32 len = ui.text_copy(e->area, text, e->save_text.data.length);
+    Result<i32, UiError> text_copy = ui.text_copy(e->area, text, e->save_text.data.length);
+    i32 len = case text_copy of {
+        Ok(value) -> value;
+        Err(_) -> ({ ui.set_text(e->status, "save failed: editor text unavailable"); return; });
+    };
     e->save_text.sync_from_ptr();
     // Bind the Result: a discarded aggregate return has no out-pointer.
     Result<_, FsError> removed = fs.remove(path);

@@ -26,9 +26,9 @@ InlineCString<128> g_line;
  *
  * @param service Service code (PROC_SPAWN, PROC_BIND, PROC_UNBIND, PROC_EXITED, PROC_REAP, PROC_FEED).
  * @param args Virtual address of argument structure in caller's memory.
- * @return Ok(transport status), or Err(UnknownService).
+ * @return Ok(_) when the request was handled, or Err(UnknownService).
  */
-export Result<i32, OsServiceError> handle(i32 service, i32 args) {
+export Result<_, OsServiceError> handle(i32 service, i32 args) {
     if (service == OsService::PROC_SPAWN) {
         ProcSpawnArgs<Result<i32, SpawnError>> request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
@@ -44,19 +44,19 @@ export Result<i32, OsServiceError> handle(i32 service, i32 args) {
             (char*)(&result),
             sizeof(Result<i32, SpawnError>)
         );
-        return Ok(0);
+        return Ok(_);
     }
     if (service == OsService::PROC_BIND) {
         ProcBindArgs request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
         console.bind(request.pid, request.output_node);
-        return Ok(0);
+        return Ok(_);
     }
     if (service == OsService::PROC_UNBIND) {
         ProcUnbindArgs request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
         console.unbind(request.pid);
-        return Ok(0);
+        return Ok(_);
     }
     if (service == OsService::PROC_EXITED) {
         ProcExitedArgs<Result<bool, ProcessControlError>> request;
@@ -67,7 +67,7 @@ export Result<i32, OsServiceError> handle(i32 service, i32 args) {
             (char*)(&result),
             sizeof(Result<bool, ProcessControlError>)
         );
-        return Ok(0);
+        return Ok(_);
     }
     if (service == OsService::PROC_REAP) {
         ProcReapArgs<Result<ProcessExitStatus, ProcessControlError>> request;
@@ -78,7 +78,7 @@ export Result<i32, OsServiceError> handle(i32 service, i32 args) {
             (char*)(&result),
             sizeof(Result<ProcessExitStatus, ProcessControlError>)
         );
-        return Ok(0);
+        return Ok(_);
     }
     if (service == OsService::PROC_FEED) {
         ProcFeedArgs request;
@@ -86,7 +86,7 @@ export Result<i32, OsServiceError> handle(i32 service, i32 args) {
         user_memory.copy_in_string((i32)request.line, g_line.as_ptr(), g_line.data.length);
         g_line.sync_from_ptr();
         console.feed_line(request.pid, g_line.as_ptr());
-        return Ok(0);
+        return Ok(_);
     }
     return Err(OsServiceError::UnknownService(service));
 }

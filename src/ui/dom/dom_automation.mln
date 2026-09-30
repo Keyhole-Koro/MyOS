@@ -8,13 +8,23 @@ import automation_transport from "../../meta/automation_transport.mln";
 import debug from "../../../../MyKernel/src/debug/debug.mln";
 import str from "@std/text/str.mln";
 import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
 import { InlineString } from "@std/text/inline_string.mln";
+import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
 
 // Human-readable tree dump (the kernel debug shell's `dump` command) and the
 // machine-readable JSON snapshot for the MYOS-004 UI automation bridge.
 // Split out of dom.mln: neither reads nor mutates tree state, they only walk
 // it through dom's exported accessors -- kept dom.mln itself readable as it
 // grew past 3000 lines.
+
+i32 child_id_or_zero(Result<Option<i32>, UiError> result) {
+    return case result of {
+        Ok(Some(id)) -> id;
+        Ok(None) -> 0;
+        Err(_) -> 0;
+    };
+}
 
 // --- human-readable dump -----------------------------------------------------------------
 
@@ -37,7 +47,10 @@ void print_indent(i32 depth) {
  * @param id DOM node ID.
  */
 void dump_props(i32 id) {
-    i32 role = dom.role_of(id);
+    Result<i32, UiError> role_result = dom.role_of(id);
+    i32 role = case role_result of { Ok(value) -> value; Err(_) -> ({ return; }); };
+    Result<i32, UiError> state_result = dom.state_of(id);
+    i32 state = case state_result of { Ok(value) -> value; Err(_) -> ({ return; }); };
     Option<i32> x_result = dom.node_x(id);
     Option<i32> y_result = dom.node_y(id);
     Option<i32> width_result = dom.node_w(id);
@@ -49,7 +62,7 @@ void dump_props(i32 id) {
     if (role == 0) {
         if (w == 0) {
             if (h == 0) {
-                if (!dom.state_of(id)) { return; }
+                if (!state) { return; }
             }
         }
     }
@@ -86,10 +99,10 @@ void dump_node(i32 id, i32 depth) {
     dump_props(id);
     debug.println("");
 
-    i32 child_id = dom.first_child(id);
+    i32 child_id = child_id_or_zero(dom.first_child(id));
     while (child_id != 0) {
         dump_node(child_id, depth + 1);
-        child_id = dom.next_sibling(child_id);
+        child_id = child_id_or_zero(dom.next_sibling(child_id));
     }
 }
 
@@ -174,12 +187,20 @@ void automation_node(i32 id) {
     i32 y = case y_result of { Some(value) -> value; None -> ({ return; }); };
     i32 width = case width_result of { Some(value) -> value; None -> ({ return; }); };
     i32 height = case height_result of { Some(value) -> value; None -> ({ return; }); };
+    Result<Option<i32>, UiError> parent_result = dom.parent_of(id);
+    i32 parent = case parent_result of {
+        Ok(Some(value)) -> value;
+        Ok(None) -> 0;
+        Err(_) -> ({ return; });
+    };
+    Result<i32, UiError> role_result = dom.role_of(id);
+    i32 role = case role_result of { Ok(value) -> value; Err(_) -> ({ return; }); };
     if (!g_automation_first) { automation_transport.putc(','); }
     g_automation_first = 0;
 
     automation_raw("{\"id\":"); automation_i32(id);
-    automation_raw(",\"parent\":"); automation_i32(dom.parent_of(id));
-    automation_raw(",\"role\":"); automation_json_string(dom_elements.role_name(dom.role_of(id)));
+    automation_raw(",\"parent\":"); automation_i32(parent);
+    automation_raw(",\"role\":"); automation_json_string(dom_elements.role_name(role));
     automation_raw(",\"name\":"); automation_json_string(dom.name_of(id));
     automation_raw(",\"text\":"); automation_json_string(dom.text_of(id));
     automation_raw(",\"testId\":"); automation_json_string(dom.test_id_of(id));
@@ -195,10 +216,10 @@ void automation_node(i32 id) {
     automation_raw(",\"hitTestable\":"); automation_bool(dom.is_hit_testable(id));
     automation_transport.putc('}');
 
-    i32 child = dom.first_child(id);
+    i32 child = child_id_or_zero(dom.first_child(id));
     while (child != 0) {
         automation_node(child);
-        child = dom.next_sibling(child);
+        child = child_id_or_zero(dom.next_sibling(child));
     }
 }
 

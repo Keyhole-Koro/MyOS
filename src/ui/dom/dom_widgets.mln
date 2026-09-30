@@ -13,6 +13,37 @@ import { Result } from "@std/core/result.mln";
 import { InlineCString } from "@std/text/inline_c_string.mln";
 import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
 
+i32 child_id_or_zero(Result<Option<i32>, UiError> result) {
+    return case result of {
+        Ok(Some(id)) -> id;
+        Ok(None) -> 0;
+        Err(_) -> 0;
+    };
+}
+
+i32 window_id_or_zero(i32 id) {
+    Result<Option<i32>, UiError> result = dom.window_of(id);
+    return case result of {
+        Ok(Some(win)) -> win;
+        Ok(None) -> 0;
+        Err(_) -> 0;
+    };
+}
+
+i32 owner_id_or_zero(i32 id) {
+    Result<i32, UiError> result = dom.owner_of(id);
+    return case result of { Ok(owner) -> owner; Err(_) -> 0; };
+}
+
+i32 close_handler_or_zero(i32 id) {
+    Result<Option<i32>, UiError> result = dom.on_close_of(id);
+    return case result of {
+        Ok(Some(handler)) -> handler;
+        Ok(None) -> 0;
+        Err(_) -> 0;
+    };
+}
+
 /** Result of applying a keyboard edit to a text-input widget. */
 export enum EditResult {
     Unhandled,
@@ -80,7 +111,7 @@ export void focus_window(i32 win) {
         if (dom.get_g_active_window() != 0) { dom.set_state_flag(dom.get_g_active_window(), NodeState::FOCUSED, 0); }
         dom.set_g_active_window(win);
         dom.set_state_flag(win, NodeState::FOCUSED, 1);
-        if (dom.window_of(dom.get_g_focus_id()) != win) { set_focus(0); }
+        if (window_id_or_zero(dom.get_g_focus_id()) != win) { set_focus(0); }
         dom.damage_node(dom.get_g_taskbar_id()); // the active entry's highlight moved
     }
     dom.bring_to_front(win);
@@ -91,7 +122,7 @@ export void focus_window(i32 win) {
  */
 export void activate_topmost() {
     i32 top = 0;
-    i32 child_id = dom.first_child(dom.get_g_desktop_node_id());
+    i32 child_id = child_id_or_zero(dom.first_child(dom.get_g_desktop_node_id()));
     while (child_id != 0) {
         Node *c = dom.node_ptr(child_id);
         if (c == 0) { child_id = 0; }
@@ -115,9 +146,9 @@ export void activate_topmost() {
  * @param win DOM node ID of the window to close.
  */
 export void close_window(i32 win) {
-    i32 handler = dom.on_close_of(win);
+    i32 handler = close_handler_or_zero(win);
     if (handler != 0) {
-        dom.push_event(handler, dom.owner_of(win), win, 0);
+        dom.push_event(handler, owner_id_or_zero(win), win, 0);
         return;
     }
     dom.remove_node(win);
@@ -154,7 +185,7 @@ export void minimize_window(i32 win) {
     if (n == 0) { return; }
     dom.set_state_flag(win, NodeState::MINIMIZED, 1);
     dom.set_state_flag(win, NodeState::VISIBLE, 0);
-    if (dom.window_of(dom.get_g_focus_id()) == win) { set_focus(0); }
+    if (window_id_or_zero(dom.get_g_focus_id()) == win) { set_focus(0); }
     if (dom.get_g_active_window() == win) {
         dom.set_state_flag(win, NodeState::FOCUSED, 0);
         dom.set_g_active_window(0);
@@ -389,12 +420,13 @@ export i32 line_len_at(Node *n, i32 start) {
 /**
  * Returns total line count of a TextArea node.
  * @param id DOM Node ID.
- * @return Total number of lines.
+ * @return Ok(line count), or Err when the node is missing or is not a TextArea.
  */
-export i32 text_area_line_count(i32 id) {
+export Result<i32, UiError> text_area_line_count(i32 id) {
     Node *n = dom.node_ptr(id);
-    if (n == 0) { return 0; }
-    return line_of(n, n->len) + 1;
+    if (n == 0) { return Err(UiError::NodeNotFound(id)); }
+    if (n->kind != NodeKind::TEXT_AREA) { return Err(UiError::WrongNodeKind(id)); }
+    return Ok(line_of(n, n->len) + 1);
 }
 
 /**
@@ -701,13 +733,14 @@ export Result<Option<i32>, UiError> list_selected(i32 id) {
 /**
  * Returns total row count of a List node.
  * @param id DOM Node ID of List.
- * @return Total number of rows.
+ * @return Ok(row count), or Err when the node is missing or is not a List.
  */
-export i32 list_count(i32 id) {
+export Result<i32, UiError> list_count(i32 id) {
     Node *n = dom.node_ptr(id);
-    if (n == 0) { return 0; }
-    if (n->len == 0) { return 0; }
-    return line_of(n, n->len) + 1;
+    if (n == 0) { return Err(UiError::NodeNotFound(id)); }
+    if (n->kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
+    if (n->len == 0) { return Ok(0); }
+    return Ok(line_of(n, n->len) + 1);
 }
 
 /**
@@ -723,7 +756,12 @@ export Result<i32, UiError> list_item(i32 id, i32 index, char *out, i32 cap) {
     if (n == 0) { return Err(UiError::NodeNotFound(id)); }
     if (n->kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
     if (cap <= 0) { return Err(UiError::InvalidCapacity(cap)); }
-    if (index < 0 || index >= list_count(id)) {
+    Result<i32, UiError> count_result = list_count(id);
+    i32 count = case count_result of {
+        Ok(value) -> value;
+        Err(e) -> ({ return Err(e); });
+    };
+    if (index < 0 || index >= count) {
         out[0] = (char)0;
         return Err(UiError::InvalidIndex(index));
     }
@@ -748,7 +786,8 @@ export Result<i32, UiError> list_item(i32 id, i32 index, char *out, i32 cap) {
 export void list_select(i32 id, i32 index) {
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
-    i32 count = list_count(id);
+    i32 count = line_of(n, n->len) + 1;
+    if (n->len == 0) { count = 0; }
     if (index < 0) { n->sel = 0; }
     else if (index >= count) { n->sel = 0; }
     else {
@@ -780,7 +819,10 @@ export Option<i32> list_row_at(i32 id, i32 px, i32 py) {
     i32 rel = py - n->y - pad;
     if (rel < 0) { return None; }
     i32 row = rel / lh + n->scroll;
-    if (row >= list_count(id)) { return None; }
+    if (n->kind != NodeKind::LIST) { return None; }
+    i32 count = line_of(n, n->len) + 1;
+    if (n->len == 0) { count = 0; }
+    if (row >= count) { return None; }
     return Some(row);
 }
 
@@ -814,7 +856,8 @@ export EditResult list_handle(Node *n, i32 type, i32 code) {
     if (type != EVT_DOWN) { return EditResult::Unhandled; }
     i32 id = n->id;
     i32 sel = n->sel - 1;
-    i32 count = list_count(id);
+    i32 count = line_of(n, n->len) + 1;
+    if (n->len == 0) { count = 0; }
     if (count == 0) { return EditResult::Unhandled; }
     if (code == KEY_UP) {
         if (sel > 0) { list_select(id, sel - 1); } else { list_select(id, 0); }
@@ -1041,7 +1084,7 @@ export void collect_focusable(i32 id) {
     i32 child = n->first_child;
     while (child != 0) {
         collect_focusable(child);
-        child = dom.next_sibling(child);
+        child = child_id_or_zero(dom.next_sibling(child));
     }
 }
 
@@ -1105,10 +1148,13 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
             return;
         }
         // App shortcuts (@key) for the active window's app go first.
-        i32 filter = dom.key_filter();
+        i32 filter = case dom.key_filter() of { Some(value) -> value; None -> 0; };
         if (filter != 0) {
-            i32 claimed = filter(dom.owner_of(dom.get_g_active_window()), code, mods);
-            if (claimed) { return; }
+            Result<i32, UiError> owner = dom.owner_of(dom.get_g_active_window());
+            case owner of {
+                Ok(value) -> ({ if (filter(value, code, mods)) { return; } });
+                Err(_) -> _;
+            };
         }
     }
     Node *n = dom.node_ptr(dom.get_g_focus_id());

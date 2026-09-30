@@ -445,12 +445,12 @@ export Result<i32, UiError> create_node(i32 kind, char *name) {
 /**
  * Returns the process that owns a DOM node.
  * @param id DOM node ID.
- * @return Owner process ID, or 0 for an invalid or system-owned node.
+ * @return Ok(owner), including owner 0 for system-owned nodes, or Err for an invalid ID.
  */
-export i32 owner_of(i32 id) {
+export Result<i32, UiError> owner_of(i32 id) {
     Node *n = node_ptr(id);
-    if (n == 0) { return 0; }
-    return n->owner;
+    if (n == 0) { return Err(UiError::NodeNotFound(id)); }
+    return Ok(n->owner);
 }
 
 /**
@@ -478,9 +478,12 @@ export void set_key_filter(i32 handler) { g_key_filter = handler; }
 
 /**
  * Returns the currently installed key-filter callback.
- * @return Callback function pointer, or 0 if no filter is installed.
+ * @return Callback function pointer, or None if no filter is installed.
  */
-export i32 key_filter() { return g_key_filter; }
+export Option<i32> key_filter() {
+    if (g_key_filter == 0) { return None; }
+    return Some(g_key_filter);
+}
 
 /**
  * Returns the app process ID whose view or event handler is currently running.
@@ -537,9 +540,8 @@ export void push_event(i32 handler, i32 owner, i32 id, i32 arg) {
  * Checks whether the DOM event queue contains a handler call.
  * @return 1 when an event is pending, otherwise 0.
  */
-export i32 has_events() {
-    if (g_event_head == g_event_tail) { return 0; }
-    return 1;
+export bool has_events() {
+    return g_event_head != g_event_tail;
 }
 
 /**
@@ -550,14 +552,14 @@ export i32 has_events() {
  * @param arg Event-specific integer argument.
  * @return 1 when an app event or callback was delivered/queued, otherwise 0.
  */
-export i32 emit(Node *n, i32 kind, i32 handler, i32 arg) {
+export bool emit(Node *n, i32 kind, i32 handler, i32 arg) {
     if (n->owner != 0) {
         ui_event.emit(n->owner, n->id, kind, arg);
-        return 1;
+        return true;
     }
-    if (handler == 0) { return 0; }
+    if (handler == 0) { return false; }
     push_event(handler, 0, n->id, arg);
-    return 1;
+    return true;
 }
 
 /**
@@ -646,36 +648,37 @@ export Option<i32> kind_of(i32 id) {
 /**
  * Returns the parent node ID of a node.
  * @param id DOM Node ID.
- * @return Parent Node ID, or 0 if root or detached.
+ * @return Ok(Some(parent)), Ok(None) for root or detached nodes, or Err for an invalid ID.
  */
-export i32 parent_of(i32 id) {
+export Result<Option<i32>, UiError> parent_of(i32 id) {
     Node *n = node_ptr(id);
-    if (n == 0) { return 0; }
-    return n->parent;
+    if (n == 0) { return Err(UiError::NodeNotFound(id)); }
+    if (n->parent == 0) { return Ok(None); }
+    return Ok(Some(n->parent));
 }
 
 /**
  * Returns the absolute X coordinate of a node in screen pixels.
  * @param id DOM node ID.
- * @return X coordinate, or 0 when the node ID is invalid.
+ * @return Some(X coordinate), or None when the node ID is invalid.
  */
 export Option<i32> node_x(i32 id) { Node *n = node_ptr(id); if (n == 0) { return None; } return Some(n->x); }
 /**
  * Returns the absolute Y coordinate of a node in screen pixels.
  * @param id DOM node ID.
- * @return Y coordinate, or 0 when the node ID is invalid.
+ * @return Some(Y coordinate), or None when the node ID is invalid.
  */
 export Option<i32> node_y(i32 id) { Node *n = node_ptr(id); if (n == 0) { return None; } return Some(n->y); }
 /**
  * Returns the width of a node in screen pixels.
  * @param id DOM node ID.
- * @return Width, or 0 when the node ID is invalid.
+ * @return Some(width), or None when the node ID is invalid.
  */
 export Option<i32> node_w(i32 id) { Node *n = node_ptr(id); if (n == 0) { return None; } return Some(n->w); }
 /**
  * Returns the height of a node in screen pixels.
  * @param id DOM node ID.
- * @return Height, or 0 when the node ID is invalid.
+ * @return Some(height), or None when the node ID is invalid.
  */
 export Option<i32> node_h(i32 id) { Node *n = node_ptr(id); if (n == 0) { return None; } return Some(n->h); }
 
@@ -693,12 +696,12 @@ export char* text_of(i32 id) {
 /**
  * Returns the accessibility / automation role of a node.
  * @param id DOM Node ID.
- * @return NodeRole value.
+ * @return Ok(NodeRole value), or Err for an invalid ID.
  */
-export i32 role_of(i32 id) {
+export Result<i32, UiError> role_of(i32 id) {
     Node *n = node_ptr(id);
-    if (n == 0) { return 0; }
-    return n->role;
+    if (n == 0) { return Err(UiError::NodeNotFound(id)); }
+    return Ok(n->role);
 }
 
 /**
@@ -757,12 +760,12 @@ export char* automation_value_of(i32 id) {
  * @param by1 Second rectangle bottom.
  * @return 1 if rectangles touch or overlap, 0 otherwise.
  */
-export i32 rects_touch(i32 ax0, i32 ay0, i32 ax1, i32 ay1, i32 bx0, i32 by0, i32 bx1, i32 by1) {
-    if (ax1 < bx0) { return 0; }
-    if (bx1 < ax0) { return 0; }
-    if (ay1 < by0) { return 0; }
-    if (by1 < ay0) { return 0; }
-    return 1;
+export bool rects_touch(i32 ax0, i32 ay0, i32 ax1, i32 ay1, i32 bx0, i32 by0, i32 bx1, i32 by1) {
+    if (ax1 < bx0) { return false; }
+    if (bx1 < ax0) { return false; }
+    if (ay1 < by0) { return false; }
+    if (by1 < ay0) { return false; }
+    return true;
 }
 
 /**
@@ -862,9 +865,8 @@ export void damage_node(i32 id) {
  * Checks whether any damaged regions exist.
  * @return 1 if damage regions exist, 0 otherwise.
  */
-export i32 has_damage() {
-    if (g_damage_count > 0) { return 1; }
-    return 0;
+export bool has_damage() {
+    return g_damage_count > 0;
 }
 
 /**
@@ -879,11 +881,10 @@ export void clear_damage() {
 /**
  * Checks if a node uses bold text styling.
  * @param n Pointer to DOM Node.
- * @return 1 if bold, 0 otherwise.
+ * @return True if bold, false otherwise.
  */
-export i32 text_bold(Node *n) {
-    if (n->style & NodeStyle::BOLD) { return 1; }
-    return 0;
+export bool text_bold(Node *n) {
+    return (n->style & NodeStyle::BOLD) != 0;
 }
 
 /**
@@ -893,7 +894,8 @@ export i32 text_bold(Node *n) {
  */
 export i32 text_width_of(Node *n) {
     if (n->text == 0) { return 0; }
-    i32 bold = text_bold(n);
+    i32 bold = 0;
+    if (text_bold(n)) { bold = 1; }
     i32 s = ui_scale();
     return ui_metrics.text_width((char*)n->text, bold, s);
 }
@@ -904,7 +906,8 @@ export i32 text_width_of(Node *n) {
  * @return Rendered text height in pixels.
  */
 export i32 text_height_of(Node *n) {
-    i32 bold = text_bold(n);
+    i32 bold = 0;
+    if (text_bold(n)) { bold = 1; }
     i32 s = ui_scale();
     return ui_metrics.text_height(bold, s);
 }
@@ -1341,12 +1344,12 @@ export bool is_pressed(i32 id) { return get_state_flag(id, NodeState::PRESSED); 
 /**
  * Returns raw state bitmask of a node.
  * @param id DOM Node ID.
- * @return State flags bitmask.
+ * @return Ok(state flags), or Err for an invalid ID.
  */
-export i32 state_of(i32 id) {
+export Result<i32, UiError> state_of(i32 id) {
     Node *n = node_ptr(id);
-    if (n == 0) { return 0; }
-    return n->state;
+    if (n == 0) { return Err(UiError::NodeNotFound(id)); }
+    return Ok(n->state);
 }
 
 /**
@@ -1364,12 +1367,13 @@ export void set_on_click(i32 id, i32 handler) {
 /**
  * Returns the click handler function pointer of a node.
  * @param id DOM Node ID.
- * @return Function pointer to click handler, or 0.
+ * @return Ok(Some(handler)) when registered, Ok(None) when absent, or Err for an invalid ID.
  */
-export i32 get_on_click(i32 id) {
+export Result<Option<i32>, UiError> get_on_click(i32 id) {
     Node *n = node_ptr(id);
-    if (n == 0) { return 0; }
-    return n->on_click;
+    if (n == 0) { return Err(UiError::NodeNotFound(id)); }
+    if (n->on_click == 0) { return Ok(None); }
+    return Ok(Some(n->on_click));
 }
 
 /**
@@ -1408,12 +1412,13 @@ export void set_on_close(i32 id, i32 handler) {
 /**
  * Returns a node's registered close handler function pointer, if any.
  * @param id DOM Node ID.
- * @return Close handler function pointer, or 0 when none is registered or the ID is invalid.
+ * @return Ok(Some(handler)) when registered, Ok(None) when absent, or Err for an invalid ID.
  */
-export i32 on_close_of(i32 id) {
+export Result<Option<i32>, UiError> on_close_of(i32 id) {
     Node *n = node_ptr(id);
-    if (n == 0) { return 0; }
-    return n->on_close;
+    if (n == 0) { return Err(UiError::NodeNotFound(id)); }
+    if (n->on_close == 0) { return Ok(None); }
+    return Ok(Some(n->on_close));
 }
 
 /**
@@ -1431,9 +1436,9 @@ export void fire_change(Node *n) {
  * @param id DOM node ID that was clicked.
  * @return 1 when an app event or handler was queued, otherwise 0.
  */
-export i32 dispatch_click(i32 id) {
+export bool dispatch_click(i32 id) {
     Node *n = node_ptr(id);
-    if (n == 0) { return 0; }
+    if (n == 0) { return false; }
     if (n->kind == NodeKind::CHECKBOX) {
         i32 now = n->state & NodeState::CHECKED;
         set_state_flag(id, NodeState::CHECKED, !now);
@@ -1558,13 +1563,13 @@ export void bring_to_front(i32 id) {
  * @param n Pointer to DOM Node.
  * @return 1 if node owns text buffer, 0 otherwise.
  */
-export i32 owns_buffer(Node *n) {
+export bool owns_buffer(Node *n) {
     i32 k = n->kind;
-    if (k == NodeKind::TEXT_INPUT) { return 1; }
-    if (k == NodeKind::TEXT_AREA) { return 1; }
-    if (k == NodeKind::LIST) { return 1; }
-    if (k == NodeKind::MENU) { return 1; }
-    return 0;
+    if (k == NodeKind::TEXT_INPUT) { return true; }
+    if (k == NodeKind::TEXT_AREA) { return true; }
+    if (k == NodeKind::LIST) { return true; }
+    if (k == NodeKind::MENU) { return true; }
+    return false;
 }
 
 /**
@@ -1645,39 +1650,42 @@ export i32 taskbar_id() {
 /**
  * Returns the node ID of the first child of a node.
  * @param id DOM Node ID.
- * @return First child DOM Node ID, or 0 if none.
+ * @return Ok(Some(child)), Ok(None) if there are no children, or Err for an invalid ID.
  */
-export i32 first_child(i32 id) {
+export Result<Option<i32>, UiError> first_child(i32 id) {
     Node *n = node_ptr(id);
-    if (n == 0) { return 0; }
-    return n->first_child;
+    if (n == 0) { return Err(UiError::NodeNotFound(id)); }
+    if (n->first_child == 0) { return Ok(None); }
+    return Ok(Some(n->first_child));
 }
 
 /**
  * Returns the node ID of the next sibling of a node.
  * @param id DOM Node ID.
- * @return Next sibling DOM Node ID, or 0 if none.
+ * @return Ok(Some(sibling)), Ok(None) if this is the last sibling, or Err for an invalid ID.
  */
-export i32 next_sibling(i32 id) {
+export Result<Option<i32>, UiError> next_sibling(i32 id) {
     Node *n = node_ptr(id);
-    if (n == 0) { return 0; }
-    return n->next_sibling;
+    if (n == 0) { return Err(UiError::NodeNotFound(id)); }
+    if (n->next_sibling == 0) { return Ok(None); }
+    return Ok(Some(n->next_sibling));
 }
 
 /**
  * Returns the enclosing WINDOW node ID for a given node.
  * @param id DOM Node ID.
- * @return Window DOM Node ID, or 0 if not inside a window.
+ * @return Ok(Some(window)) when inside a window, Ok(None) otherwise, or Err for an invalid ID.
  */
-export i32 window_of(i32 id) {
+export Result<Option<i32>, UiError> window_of(i32 id) {
+    if (node_ptr(id) == 0) { return Err(UiError::NodeNotFound(id)); }
     i32 cur = id;
     while (cur != 0) {
         Node *n = node_ptr(cur);
-        if (n == 0) { return 0; }
-        if (n->kind == NodeKind::WINDOW) { return cur; }
+        if (n == 0) { return Err(UiError::NodeNotFound(cur)); }
+        if (n->kind == NodeKind::WINDOW) { return Ok(Some(cur)); }
         cur = n->parent;
     }
-    return 0;
+    return Ok(None);
 }
 
 

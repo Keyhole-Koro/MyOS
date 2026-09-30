@@ -15,6 +15,7 @@ import { SpawnError } from "../../../../contracts/process/spawn.contract.mln";
 import { LoaderError } from "../../../../contracts/process/loader.contract.mln";
 import { ProcessControlError, ProcessExitStatus } from "../../../../contracts/process/control.contract.mln";
 import { Option } from "@std/core/option.mln";
+import { UiError } from "../../../../contracts/ui/widget.contract.mln";
 
 // Terminal: a read-only TextArea for output and a command line. Lines typed
 // while a user process is attached go to its stdin; otherwise they are
@@ -250,7 +251,11 @@ void (Terminal *t) run_line(char *line) {
  * @param id DOM node ID supplied by the key/button event.
  */
 void (Terminal *t) submit(i32 id) {
-    ui.text_copy(t->input, t->line_buf.as_ptr(), t->line_buf.data.length);
+    Result<i32, UiError> copied = ui.text_copy(t->input, t->line_buf.as_ptr(), t->line_buf.data.length);
+    case copied of {
+        Ok(_) -> _;
+        Err(_) -> ({ t->say_line("cannot read command input"); return; });
+    };
     t->line_buf.sync_from_ptr();
     ui.input_set(t->input, "");
     t->run_line(t->line_buf.as_ptr());
