@@ -10,7 +10,7 @@ import app from "app.mln";
 import { AppError, KeyClaimError, AppOp } from "../../../../contracts/myapp/lifecycle.contract.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
-import { Request } from "../../../../contracts/myapp/message.contract.mln";
+import { Request, RequestStatus } from "../../../../contracts/myapp/message.contract.mln";
 
 /**
  * Dispatches an application host request to the shell subsystem.
@@ -19,37 +19,22 @@ import { Request } from "../../../../contracts/myapp/message.contract.mln";
  * AppOp::MAIN_WINDOW (register main window handle), and AppOp::EXIT (notify app exit).
  *
  * @param m Pointer to Request descriptor.
- * @return Operation result or 0.
+ * @return Request dispatch status.
  */
-export i32 handle(Request *m) {
-    // Typed requests write Result values through result_out. Requests without
-    // a destination retain the older scalar window/token response.
+export RequestStatus handle(Request *m) {
     if (m->op == AppOp::OPEN) {
-        if (m->result_out != 0) {
-            Result<Option<i32>, AppError> *out = (Result<Option<i32>, AppError>*)m->result_out;
-            *out = app.open(m->s0);
-            return 0;
-        }
-        Result<Option<i32>, AppError> opened = app.open(m->s0);
-        return case opened of {
-            Ok(Some(window)) -> window;
-            Ok(None) -> 0;
-            Err(_) -> 0;
-        };
+        if (m->result_out == 0) { return RequestStatus::MISSING_RESULT; }
+        Result<Option<i32>, AppError> *out = (Result<Option<i32>, AppError>*)m->result_out;
+        *out = app.open(m->s0);
+        return RequestStatus::OK;
     }
     if (m->op == AppOp::CLAIM_KEY) {
-        if (m->result_out != 0) {
-            Result<i32, KeyClaimError> *out = (Result<i32, KeyClaimError>*)m->result_out;
-            *out = app.claim_key(m->owner, m->s0);
-            return 0;
-        }
-        Result<i32, KeyClaimError> claimed = app.claim_key(m->owner, m->s0);
-        return case claimed of {
-            Ok(token) -> token;
-            Err(_) -> 0;
-        };
+        if (m->result_out == 0) { return RequestStatus::MISSING_RESULT; }
+        Result<i32, KeyClaimError> *out = (Result<i32, KeyClaimError>*)m->result_out;
+        *out = app.claim_key(m->owner, m->s0);
+        return RequestStatus::OK;
     }
-    if (m->op == AppOp::MAIN_WINDOW) { app.window_ready(m->owner, m->a0); return 0; }
-    if (m->op == AppOp::EXIT)        { app.instance_exited(m->owner); return 0; }
-    return 0;
+    if (m->op == AppOp::MAIN_WINDOW) { app.window_ready(m->owner, m->a0); return RequestStatus::OK; }
+    if (m->op == AppOp::EXIT)        { app.instance_exited(m->owner); return RequestStatus::OK; }
+    return RequestStatus::INVALID_OPERATION;
 }

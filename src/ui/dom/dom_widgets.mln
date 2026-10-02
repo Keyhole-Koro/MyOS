@@ -11,7 +11,9 @@ import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { InlineCString } from "@std/text/inline_c_string.mln";
+import ascii from "@std/text/ascii.mln";
 import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
+import { KeyEventType, KeyModifier, KeyCode } from "../../../../../contracts/input/keyboard.contract.mln";
 
 i32 child_id_or_zero(Result<Option<i32>, UiError> result) {
     return case result of {
@@ -58,7 +60,7 @@ export enum EditResult {
  * @return Taskbar height in pixels.
  */
 export i32 taskbar_height() {
-    Node *n = dom.node_ptr(dom.get_g_taskbar_id());
+    Node *n = dom.node_ptr(dom.taskbar_id());
     if (n == 0) { return 0; }
     return n->h;
 }
@@ -68,8 +70,8 @@ export i32 taskbar_height() {
  * @return Active window Node ID.
  */
 export Option<i32> active_window() {
-    if (dom.get_g_active_window() == 0) { return None; }
-    return Some(dom.get_g_active_window());
+    if (dom.active_window_id() == 0) { return None; }
+    return Some(dom.active_window_id());
 }
 
 /**
@@ -77,8 +79,8 @@ export Option<i32> active_window() {
  * @return Focused Node ID, or 0 if none.
  */
 export Option<i32> focused_node() {
-    if (dom.get_g_focus_id() == 0) { return None; }
-    return Some(dom.get_g_focus_id());
+    if (dom.focus_id() == 0) { return None; }
+    return Some(dom.focus_id());
 }
 
 /**
@@ -86,12 +88,12 @@ export Option<i32> focused_node() {
  * @param id DOM Node ID to focus, or 0 to clear focus.
  */
 export void set_focus(i32 id) {
-    if (id == dom.get_g_focus_id()) { return; }
-    if (dom.get_g_focus_id() != 0) { dom.set_state_flag(dom.get_g_focus_id(), NodeState::FOCUSED, 0); }
-    dom.set_g_focus_id(0);
+    if (id == dom.focus_id()) { return; }
+    if (dom.focus_id() != 0) { dom.set_state_flag(dom.focus_id(), NodeState::FOCUSED, 0); }
+    dom.set_focus_id(0);
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
-    dom.set_g_focus_id(id);
+    dom.set_focus_id(id);
     dom.set_state_flag(id, NodeState::FOCUSED, 1);
 }
 
@@ -107,12 +109,12 @@ export void focus_window(i32 win) {
         dom.set_state_flag(win, NodeState::MINIMIZED, 0);
         dom.set_state_flag(win, NodeState::VISIBLE, 1);
     }
-    if (dom.get_g_active_window() != win) {
-        if (dom.get_g_active_window() != 0) { dom.set_state_flag(dom.get_g_active_window(), NodeState::FOCUSED, 0); }
-        dom.set_g_active_window(win);
+    if (dom.active_window_id() != win) {
+        if (dom.active_window_id() != 0) { dom.set_state_flag(dom.active_window_id(), NodeState::FOCUSED, 0); }
+        dom.set_active_window_id(win);
         dom.set_state_flag(win, NodeState::FOCUSED, 1);
-        if (window_id_or_zero(dom.get_g_focus_id()) != win) { set_focus(0); }
-        dom.damage_node(dom.get_g_taskbar_id()); // the active entry's highlight moved
+        if (window_id_or_zero(dom.focus_id()) != win) { set_focus(0); }
+        dom.damage_node(dom.taskbar_id()); // the active entry's highlight moved
     }
     dom.bring_to_front(win);
 }
@@ -122,7 +124,7 @@ export void focus_window(i32 win) {
  */
 export void activate_topmost() {
     i32 top = 0;
-    i32 child_id = child_id_or_zero(dom.first_child(dom.get_g_desktop_node_id()));
+    i32 child_id = child_id_or_zero(dom.first_child(dom.desktop_id()));
     while (child_id != 0) {
         Node *c = dom.node_ptr(child_id);
         if (c == 0) { child_id = 0; }
@@ -134,8 +136,8 @@ export void activate_topmost() {
         }
     }
     if (top != 0) { focus_window(top); }
-    else { dom.set_g_active_window(0); }
-    dom.damage_node(dom.get_g_taskbar_id());
+    else { dom.set_active_window_id(0); }
+    dom.damage_node(dom.taskbar_id());
 }
 
 // The user closed a window. A window with an on_close handler is handed to
@@ -185,13 +187,13 @@ export void minimize_window(i32 win) {
     if (n == 0) { return; }
     dom.set_state_flag(win, NodeState::MINIMIZED, 1);
     dom.set_state_flag(win, NodeState::VISIBLE, 0);
-    if (window_id_or_zero(dom.get_g_focus_id()) == win) { set_focus(0); }
-    if (dom.get_g_active_window() == win) {
+    if (window_id_or_zero(dom.focus_id()) == win) { set_focus(0); }
+    if (dom.active_window_id() == win) {
         dom.set_state_flag(win, NodeState::FOCUSED, 0);
-        dom.set_g_active_window(0);
+        dom.set_active_window_id(0);
         activate_topmost();
     }
-    dom.damage_node(dom.get_g_taskbar_id());
+    dom.damage_node(dom.taskbar_id());
     dom.touch();
 }
 
@@ -241,24 +243,6 @@ export void maximize_window(i32 win) {
 
 // --- keyboard --------------------------------------------------------------------------------
 
-i32 KEY_BACKSPACE = 8;
-i32 KEY_TAB = 9;
-i32 KEY_ENTER = 13;
-i32 KEY_ESCAPE = 27;
-i32 KEY_SPACE = 32;
-i32 KEY_DELETE = 127;
-i32 KEY_LEFT = 0x101;
-i32 KEY_RIGHT = 0x102;
-i32 KEY_UP = 0x103;
-i32 KEY_DOWN = 0x104;
-i32 KEY_HOME = 0x105;
-i32 KEY_END = 0x106;
-i32 KEY_PAGE_UP = 0x107;
-i32 KEY_PAGE_DOWN = 0x108;
-i32 MOD_SHIFT = 1;
-i32 EVT_DOWN = 1;
-i32 EVT_CHAR = 3;
-
 /**
  * Inserts a character into a text buffer at current cursor position.
  * @param n Pointer to DOM Node.
@@ -303,24 +287,22 @@ export void input_delete_at(Node *n, i32 at) {
 /**
  * Handles default editing keyboard events for a single-line TextInput node.
  * @param n Pointer to TextInput Node.
- * @param type Keyboard event type (EVT_CHAR or EVT_DOWN).
+ * @param type KeyEventType value from the shared keyboard contract.
  * @param code Key code or ASCII character.
  * @return EditResult enum indicating outcome (Changed, Moved, Unhandled).
  */
 export EditResult input_handle(Node *n, i32 type, i32 code) {
     i32 cur = n->cursor;
     i32 len = n->len;
-    if (type == EVT_CHAR) {
-        if (code >= 0x20) {
-            if (code <= 0x7E) {
-                input_insert(n, code);
-                return EditResult::Changed;
-            }
+    if (type == KeyEventType::CHAR) {
+        if (ascii.is_printable(code)) {
+            input_insert(n, code);
+            return EditResult::Changed;
         }
         return EditResult::Unhandled;
     }
-    if (type != EVT_DOWN) { return EditResult::Unhandled; }
-    if (code == KEY_BACKSPACE) {
+    if (type != KeyEventType::DOWN) { return EditResult::Unhandled; }
+    if (code == KeyCode::BACKSPACE) {
         if (cur > 0) {
             input_delete_at(n, cur - 1);
             n->cursor = (u16)(cur - 1);
@@ -328,20 +310,20 @@ export EditResult input_handle(Node *n, i32 type, i32 code) {
         }
         return EditResult::Unhandled;
     }
-    if (code == KEY_DELETE) {
+    if (code == KeyCode::DELETE) {
         if (cur < len) { input_delete_at(n, cur); return EditResult::Changed; }
         return EditResult::Unhandled;
     }
-    if (code == KEY_LEFT) {
+    if (code == KeyCode::LEFT) {
         if (cur > 0) { n->cursor = (u16)(cur - 1); }
         return EditResult::Moved;
     }
-    if (code == KEY_RIGHT) {
+    if (code == KeyCode::RIGHT) {
         if (cur < len) { n->cursor = (u16)(cur + 1); }
         return EditResult::Moved;
     }
-    if (code == KEY_HOME) { n->cursor = 0; return EditResult::Moved; }
-    if (code == KEY_END) { n->cursor = (u16)len; return EditResult::Moved; }
+    if (code == KeyCode::HOME) { n->cursor = 0; return EditResult::Moved; }
+    if (code == KeyCode::END) { n->cursor = (u16)len; return EditResult::Moved; }
     return EditResult::Unhandled;
 }
 
@@ -476,7 +458,7 @@ export void text_area_goto_line(Node *n, i32 line) {
 /**
  * Handles multi-line editing and navigation keyboard events for a TextArea node.
  * @param n Pointer to TextArea Node.
- * @param type Keyboard event type (EVT_CHAR or EVT_DOWN).
+ * @param type KeyEventType value from the shared keyboard contract.
  * @param code Key code or ASCII character.
  * @param mods Active modifier keys bitmask.
  * @return EditResult enum indicating outcome (Changed, Moved, Unhandled).
@@ -485,25 +467,23 @@ export EditResult text_area_handle(Node *n, i32 type, i32 code, i32 mods) {
     bool ro = is_readonly(n);
     i32 cur = n->cursor;
     i32 len = n->len;
-    if (type == EVT_CHAR) {
+    if (type == KeyEventType::CHAR) {
         if (ro) { return EditResult::Unhandled; }
-        if (code >= 0x20) {
-            if (code <= 0x7E) {
-                input_insert(n, code);
-                text_area_reveal_cursor(n);
-                return EditResult::Changed;
-            }
+        if (ascii.is_printable(code)) {
+            input_insert(n, code);
+            text_area_reveal_cursor(n);
+            return EditResult::Changed;
         }
         return EditResult::Unhandled;
     }
-    if (type != EVT_DOWN) { return EditResult::Unhandled; }
-    if (code == KEY_ENTER) {
+    if (type != KeyEventType::DOWN) { return EditResult::Unhandled; }
+    if (code == KeyCode::ENTER) {
         if (ro) { return EditResult::Unhandled; }
         input_insert(n, 10);
         text_area_reveal_cursor(n);
         return EditResult::Changed;
     }
-    if (code == KEY_BACKSPACE) {
+    if (code == KeyCode::BACKSPACE) {
         if (ro) { return EditResult::Unhandled; }
         if (cur > 0) {
             input_delete_at(n, cur - 1);
@@ -513,7 +493,7 @@ export EditResult text_area_handle(Node *n, i32 type, i32 code, i32 mods) {
         }
         return EditResult::Unhandled;
     }
-    if (code == KEY_DELETE) {
+    if (code == KeyCode::DELETE) {
         if (ro) { return EditResult::Unhandled; }
         if (cur < len) {
             input_delete_at(n, cur);
@@ -521,41 +501,41 @@ export EditResult text_area_handle(Node *n, i32 type, i32 code, i32 mods) {
         }
         return EditResult::Unhandled;
     }
-    if (code == KEY_LEFT) {
+    if (code == KeyCode::LEFT) {
         if (cur > 0) { n->cursor = (u16)(cur - 1); }
         text_area_reveal_cursor(n);
         return EditResult::Moved;
     }
-    if (code == KEY_RIGHT) {
+    if (code == KeyCode::RIGHT) {
         if (cur < len) { n->cursor = (u16)(cur + 1); }
         text_area_reveal_cursor(n);
         return EditResult::Moved;
     }
-    if (code == KEY_UP) {
+    if (code == KeyCode::UP) {
         text_area_goto_line(n, line_of(n, cur) - 1);
         text_area_reveal_cursor(n);
         return EditResult::Moved;
     }
-    if (code == KEY_DOWN) {
+    if (code == KeyCode::DOWN) {
         text_area_goto_line(n, line_of(n, cur) + 1);
         text_area_reveal_cursor(n);
         return EditResult::Moved;
     }
-    if (code == KEY_PAGE_UP) {
+    if (code == KeyCode::PAGE_UP) {
         text_area_goto_line(n, line_of(n, cur) - visible_lines(n));
         text_area_reveal_cursor(n);
         return EditResult::Moved;
     }
-    if (code == KEY_PAGE_DOWN) {
+    if (code == KeyCode::PAGE_DOWN) {
         text_area_goto_line(n, line_of(n, cur) + visible_lines(n));
         text_area_reveal_cursor(n);
         return EditResult::Moved;
     }
-    if (code == KEY_HOME) {
+    if (code == KeyCode::HOME) {
         n->cursor = (u16)line_start(n, line_of(n, cur));
         return EditResult::Moved;
     }
-    if (code == KEY_END) {
+    if (code == KeyCode::END) {
         i32 start = line_start(n, line_of(n, cur));
         n->cursor = (u16)(start + line_len_at(n, start));
         return EditResult::Moved;
@@ -622,10 +602,8 @@ export void append_bytes(i32 id, i32 addr, i32 count) {
     i32 i = 0;
     while (i < count) {
         char *p = (char*)(addr + i);
-        i32 c = (i32)(*p) & 0xFF;
-        i32 keep = 0;
-        if (c == 10) { keep = 1; }
-        if (c >= 0x20) { if (c <= 0x7E) { keep = 1; } }
+        i32 c = ascii.byte((i32)(*p));
+        bool keep = c == '\n' || ascii.is_printable(c);
         if (keep) {
             if (!tmp.push((u8)c)) {
                 append_text(id, tmp.as_ptr());
@@ -757,10 +735,7 @@ export Result<i32, UiError> list_item(i32 id, i32 index, char *out, i32 cap) {
     if (n->kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
     if (cap <= 0) { return Err(UiError::InvalidCapacity(cap)); }
     Result<i32, UiError> count_result = list_count(id);
-    i32 count = case count_result of {
-        Ok(value) -> value;
-        Err(e) -> ({ return Err(e); });
-    };
+    i32 count = count_result?;
     if (index < 0 || index >= count) {
         out[0] = (char)0;
         return Err(UiError::InvalidIndex(index));
@@ -853,25 +828,25 @@ export void list_click(i32 id, i32 px, i32 py) {
  * @return EditResult enum indicating outcome (Moved or Unhandled).
  */
 export EditResult list_handle(Node *n, i32 type, i32 code) {
-    if (type != EVT_DOWN) { return EditResult::Unhandled; }
+    if (type != KeyEventType::DOWN) { return EditResult::Unhandled; }
     i32 id = n->id;
     i32 sel = n->sel - 1;
     i32 count = line_of(n, n->len) + 1;
     if (n->len == 0) { count = 0; }
     if (count == 0) { return EditResult::Unhandled; }
-    if (code == KEY_UP) {
+    if (code == KeyCode::UP) {
         if (sel > 0) { list_select(id, sel - 1); } else { list_select(id, 0); }
         dom.fire_change(n);
         return EditResult::Moved;
     }
-    if (code == KEY_DOWN) {
+    if (code == KeyCode::DOWN) {
         if (sel + 1 < count) { list_select(id, sel + 1); }
         dom.fire_change(n);
         return EditResult::Moved;
     }
-    if (code == KEY_HOME) { list_select(id, 0); dom.fire_change(n); return EditResult::Moved; }
-    if (code == KEY_END) { list_select(id, count - 1); dom.fire_change(n); return EditResult::Moved; }
-    if (code == KEY_ENTER) {
+    if (code == KeyCode::HOME) { list_select(id, 0); dom.fire_change(n); return EditResult::Moved; }
+    if (code == KeyCode::END) { list_select(id, count - 1); dom.fire_change(n); return EditResult::Moved; }
+    if (code == KeyCode::ENTER) {
         if (sel >= 0) {
             dom.emit(n, UiEventKind::ACTIVATE, n->on_click, 0);
         }
@@ -889,10 +864,9 @@ export EditResult list_handle(Node *n, i32 type, i32 code) {
  * Closes and removes the currently open popup menu from the desktop.
  */
 export void close_menu() {
-    if (dom.get_g_menu_id() == 0) { return; }
-    i32 id = dom.get_g_menu_id();
-    dom.set_g_menu_id(0);
-    dom.set_g_menu_handler(0);
+    if (dom.menu_id() == 0) { return; }
+    i32 id = dom.menu_id();
+    dom.clear_menu_state();
     dom.remove_node(id);
     dom.touch();
 }
@@ -902,7 +876,7 @@ export void close_menu() {
  * @return Menu DOM Node ID.
  */
 export i32 menu_id() {
-    return dom.get_g_menu_id();
+    return dom.menu_id();
 }
 
 /**
@@ -910,7 +884,7 @@ export i32 menu_id() {
  * @return Target DOM Node ID.
  */
 export i32 menu_target() {
-    return dom.get_g_menu_target();
+    return dom.menu_target();
 }
 
 /**
@@ -970,7 +944,7 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, char *items, i32 handler, i3
     if (x < 0) { x = 0; }
     if (y < 0) { y = 0; }
 
-    i32 id = case dom.create_node(NodeKind::MENU, "menu") of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
+    i32 id = dom.create_node(NodeKind::MENU, "menu")?;
     dom.set_role(id, NodeRole::MENU);
     Node *n = dom.node_ptr(id);
     i32 cap = i + 2;
@@ -995,14 +969,12 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, char *items, i32 handler, i3
     dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
     // Appended to the desktop like a window, but painted last (see
     // paint_desktop) and hit-tested first (see dom_hit_test.find_at).
-    case dom.append_child(dom.get_g_desktop_node_id(), id) of {
+    case dom.append_child(dom.desktop_id(), id) of {
         Ok(_) -> _;
         Err(e) -> ({ dom.remove_node(id); return Err(e); });
     };
     // append_child translated by the desktop origin (0,0): bounds stand.
-    dom.set_g_menu_id(id);
-    dom.set_g_menu_handler(handler);
-    dom.set_g_menu_target(target);
+    dom.set_menu_state(id, handler, target);
     dom.touch();
     return Ok(id);
 }
@@ -1013,7 +985,7 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, char *items, i32 handler, i3
  * @param py Cursor display Y coordinate.
  */
 export void menu_hover(i32 px, i32 py) {
-    i32 id = dom.get_g_menu_id();
+    i32 id = dom.menu_id();
     Node *n = dom.node_ptr(id);
     if (n == 0) { return; }
     i32 next = case list_row_at(id, px, py) of {
@@ -1032,10 +1004,10 @@ export void menu_hover(i32 px, i32 py) {
  * @param py Cursor display Y coordinate.
  */
 export void menu_click(i32 px, i32 py) {
-    i32 id = dom.get_g_menu_id();
+    i32 id = dom.menu_id();
     if (id == 0) { return; }
     Option<i32> row = list_row_at(id, px, py);
-    i32 handler = dom.get_g_menu_handler();
+    i32 handler = dom.menu_handler();
     close_menu();
     case row of {
         Some(r) -> ({
@@ -1093,7 +1065,7 @@ export void collect_focusable(i32 id) {
  * @param backwards Non-zero to move focus backward (Shift-Tab), 0 forward (Tab).
  */
 export void focus_next(i32 backwards) {
-    i32 win = dom.get_g_active_window();
+    i32 win = dom.active_window_id();
     if (win == 0) { return; }
     g_focus_ring_count = 0;
     collect_focusable(win);
@@ -1102,7 +1074,7 @@ export void focus_next(i32 backwards) {
     Option<i32> cur = None;
     i32 i = 0;
     while (i < g_focus_ring_count) {
-        if (g_focus_ring[i] == dom.get_g_focus_id()) {
+        if (g_focus_ring[i] == dom.focus_id()) {
             cur = Some(i);
             break;
         }
@@ -1134,33 +1106,33 @@ export void focus_next(i32 backwards) {
 
 /**
  * Dispatches a keyboard event to the currently focused node or handles window/menu shortcuts.
- * @param type Event type (EVT_CHAR or EVT_DOWN).
+ * @param type KeyEventType value from the shared keyboard contract.
  * @param code Key code or ASCII character.
- * @param mods Active modifier bitmask (e.g. MOD_SHIFT).
+ * @param mods Active KeyModifier bitmask.
  */
 export void dispatch_key_event(i32 type, i32 code, i32 mods) {
-    if (type == EVT_DOWN) {
-        if (code == KEY_ESCAPE) {
-            if (dom.get_g_menu_id() != 0) { close_menu(); return; }
+    if (type == KeyEventType::DOWN) {
+        if (code == KeyCode::ESCAPE) {
+            if (dom.menu_id() != 0) { close_menu(); return; }
         }
-        if (code == KEY_TAB) {
-            focus_next(mods & MOD_SHIFT);
+        if (code == KeyCode::TAB) {
+            focus_next(mods & KeyModifier::SHIFT);
             return;
         }
         // App shortcuts (@key) for the active window's app go first.
         i32 filter = case dom.key_filter() of { Some(value) -> value; None -> 0; };
         if (filter != 0) {
-            Result<i32, UiError> owner = dom.owner_of(dom.get_g_active_window());
+            Result<i32, UiError> owner = dom.owner_of(dom.active_window_id());
             case owner of {
                 Ok(value) -> ({ if (filter(value, code, mods)) { return; } });
                 Err(_) -> _;
             };
         }
     }
-    Node *n = dom.node_ptr(dom.get_g_focus_id());
+    Node *n = dom.node_ptr(dom.focus_id());
     if (n == 0) { return; }
-    i32 id = dom.get_g_focus_id();
-    if (type == EVT_DOWN) {
+    i32 id = dom.focus_id();
+    if (type == KeyEventType::DOWN) {
         i32 handler = n->on_key;
         if (handler != 0) {
             // Runs inline, unlike the queued handlers: it decides whether
@@ -1206,13 +1178,13 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
         list_handle(n, type, code);
         return;
     }
-    if (type == EVT_DOWN) {
+    if (type == KeyEventType::DOWN) {
         if (kind == NodeKind::BUTTON) {
-            if (code == KEY_ENTER) { dom.dispatch_click(id); return; }
-            if (code == KEY_SPACE) { dom.dispatch_click(id); return; }
+            if (code == KeyCode::ENTER) { dom.dispatch_click(id); return; }
+            if (code == KeyCode::SPACE) { dom.dispatch_click(id); return; }
         }
         if (kind == NodeKind::CHECKBOX) {
-            if (code == KEY_SPACE) { dom.dispatch_click(id); return; }
+            if (code == KeyCode::SPACE) { dom.dispatch_click(id); return; }
         }
     }
 }
@@ -1247,11 +1219,10 @@ export void set_input_text(i32 id, char *s) {
  * Queues callbacks for all registered timers whose deadlines have elapsed.
  */
 export void tick() {
-    i32 *g_timer_ids = dom.get_g_timer_ids();
     i32 now = scheduler.ticks();
     i32 i = 0;
-    while (i < dom.get_g_timer_count()) {
-        i32 id = g_timer_ids[i];
+    while (i < dom.timer_count()) {
+        i32 id = dom.timer_id_at(i);
         Node *t = dom.node_ptr(id);
         if (t != 0) {
             if (now >= t->next_due) {
@@ -1270,14 +1241,14 @@ export void tick() {
  * @return Timer DOM Node ID.
  */
 export Result<i32, UiError> create_timer(i32 interval, i32 handler) {
-    i32 *g_timer_ids = dom.get_g_timer_ids();
-    if (dom.get_g_timer_count() >= dom.get_TIMER_MAX()) { return Err(UiError::TimerLimit); }
-    i32 id = case dom.create_node(NodeKind::TIMER, "timer") of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
+    i32 id = dom.create_node(NodeKind::TIMER, "timer")?;
     Node *t = dom.node_ptr(id);
     t->interval = interval;
     t->on_tick = handler;
     t->next_due = scheduler.ticks() + interval;
-    g_timer_ids[dom.get_g_timer_count()] = id;
-    dom.set_g_timer_count(dom.get_g_timer_count() + 1);
+    case dom.register_timer(id) of {
+        Ok(_) -> _;
+        Err(e) -> ({ dom.remove_node(id); return Err(e); });
+    };
     return Ok(id);
 }

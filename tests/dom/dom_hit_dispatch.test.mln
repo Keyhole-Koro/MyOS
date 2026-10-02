@@ -102,7 +102,7 @@ void dom_hit_dispatch() {
     i32 none_negative = dom.node_exists(-1) == 0;
     i32 some_desktop = dom.node_exists(dom.desktop_id());
 
-    i32 tb = theme.titlebar_h(); // logical px; children sit below it
+    i32 tb = theme.TITLEBAR_H; // logical px; children sit below it
 
     i32 win = require_node(dom_elements.create_window("W", 0, 0, 400, 300));
     require_append(dom.append_child(dom.desktop_id(), win));

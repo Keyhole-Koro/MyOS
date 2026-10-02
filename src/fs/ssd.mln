@@ -21,10 +21,10 @@ enum SsdCommand {
     SSD_CMD_WRITE = 2
 }
 
-/** Non-error status values returned by the SSD status register. */
+/** Successful status values returned by the SSD status register. */
 enum SsdStatus {
-    SSD_STATUS_BUSY = 1,
-    SSD_STATUS_DONE = 2
+    BUSY = 1,
+    DONE = 2
 }
 
 /** Failure values returned when a storage-device transfer does not complete successfully. */
@@ -32,19 +32,20 @@ export enum SsdError {
     DeviceError,
 }
 
-export i32 BLOCK_SIZE = 65536;
+export const i32 BLOCK_SIZE = 65536;
 
 /**
- * Waits for an in-flight SSD command to complete and returns the final status code.
- * @return Final device status code (e.g. SSD_STATUS_DONE or error).
+ * Waits for an in-flight SSD command to complete.
+ * @return Ok(DONE) after a completed transfer, or Err(DeviceError).
  */
-i32 wait_for_completion() {
+Result<SsdStatus, SsdError> wait_for_completion() {
     i32 status = mem.read_word(SSD_STATUS_ADDR);
-    while (status == SSD_STATUS_BUSY) {
+    while (status == SsdStatus::BUSY) {
         wfi_cpu();
         status = mem.read_word(SSD_STATUS_ADDR);
     }
-    return status;
+    if (status == SsdStatus::DONE) { return Ok(SsdStatus::DONE); }
+    return Err(SsdError::DeviceError);
 }
 
 /**
@@ -57,10 +58,8 @@ export Result<_, SsdError> read_block(i32 block_num, i32 buf_addr) {
     mem.write_word(SSD_BLOCK_ADDR, block_num);
     mem.write_word(SSD_ADDR_ADDR, buf_addr);
     mem.write_word(SSD_CMD_ADDR, SSD_CMD_READ);
-    if (wait_for_completion() == SSD_STATUS_DONE) {
-        return Ok(_);
-    }
-    return Err(SsdError::DeviceError);
+    SsdStatus completed = wait_for_completion()?;
+    return Ok(_);
 }
 
 /**
@@ -73,8 +72,6 @@ export Result<_, SsdError> write_block(i32 block_num, i32 buf_addr) {
     mem.write_word(SSD_BLOCK_ADDR, block_num);
     mem.write_word(SSD_ADDR_ADDR, buf_addr);
     mem.write_word(SSD_CMD_ADDR, SSD_CMD_WRITE);
-    if (wait_for_completion() == SSD_STATUS_DONE) {
-        return Ok(_);
-    }
-    return Err(SsdError::DeviceError);
+    SsdStatus completed = wait_for_completion()?;
+    return Ok(_);
 }

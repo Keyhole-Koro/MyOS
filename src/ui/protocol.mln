@@ -13,12 +13,19 @@ import { Result } from "@std/core/result.mln";
 import { UiError } from "../../../../contracts/ui/widget.contract.mln";
 import dom from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
-import graphics from "graphics.mln";
 import irq from "../../../MyKernel/src/arch/irq.mln";
 import protocol_elements from "protocol_elements.mln";
 import { NodeKind } from "dom/dom.mln";
-import { Request } from "../../../../contracts/myapp/message.contract.mln";
+import { Request, RequestStatus } from "../../../../contracts/myapp/message.contract.mln";
 import { UiOp } from "../../../../contracts/myapp/ui.contract.mln";
+
+bool writes_typed_result(i32 op) {
+    if (op == UiOp::TEXT_COPY || op == UiOp::IS_CHECKED) { return true; }
+    if (op == UiOp::AREA_LINES || op == UiOp::LIST_COUNT) { return true; }
+    if (op == UiOp::LIST_SELECTED || op == UiOp::LIST_ITEM) { return true; }
+    if (op == UiOp::WINDOW_OF || op == UiOp::WINDOW_X || op == UiOp::WINDOW_Y) { return true; }
+    return op >= UiOp::CREATE_WINDOW && op <= UiOp::APPEND_CHILD;
+}
 
 /**
  * Executes a single UI protocol request within the caller's owner scope.
@@ -27,92 +34,93 @@ import { UiOp } from "../../../../contracts/myapp/ui.contract.mln";
  * ensuring proper resource ownership for windows and child elements.
  *
  * @param m Pointer to Request structure.
- * @return Legacy scalar result for value operations; fallible queries write
- *         their Result through Request.result_out.
+ * @return Request dispatch status. Typed operation results use Request.result_out.
  */
-export i32 handle(Request *m) {
+export RequestStatus handle(Request *m) {
     i32 outer = dom.current_owner();
     dom.set_current_owner(m->owner);
-    i32 r = run_request(m);
+    RequestStatus status = run_request(m);
     dom.set_current_owner(outer);
-    return r;
+    return status;
 }
 
 /**
  * Dispatches an unpacked UI request to the corresponding internal handler.
  *
  * @param m Pointer to Request structure.
- * @return Operation result code.
+ * @return Request dispatch status.
  */
-i32 run_request(Request *m) {
+RequestStatus run_request(Request *m) {
     i32 op = m->op;
     i32 id = m->a0;
-    if (op == UiOp::SET_TEXT)       { set_text(id, m->s0); return 0; }
+    if (writes_typed_result(op) && m->result_out == 0) {
+        return RequestStatus::MISSING_RESULT;
+    }
+    if (op == UiOp::SET_TEXT)       { set_text(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::TEXT_COPY) {
         Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
         *out = text_copy(id, (char*)m->a1, m->a2);
-        return 0;
+        return RequestStatus::OK;
     }
     if (op == UiOp::IS_CHECKED) {
         Result<bool, UiError> *out = (Result<bool, UiError>*)m->result_out;
         *out = is_checked(id);
-        return 0;
+        return RequestStatus::OK;
     }
-    if (op == UiOp::SET_CHECKED)    { set_checked(id, m->a1); return 0; }
-    if (op == UiOp::INPUT_SET)      { input_set(id, m->s0); return 0; }
-    if (op == UiOp::AREA_APPEND)    { area_append(id, m->s0); return 0; }
-    if (op == UiOp::AREA_CLEAR)     { area_clear(id); return 0; }
+    if (op == UiOp::SET_CHECKED)    { set_checked(id, m->a1); return RequestStatus::OK; }
+    if (op == UiOp::INPUT_SET)      { input_set(id, m->s0); return RequestStatus::OK; }
+    if (op == UiOp::AREA_APPEND)    { area_append(id, m->s0); return RequestStatus::OK; }
+    if (op == UiOp::AREA_CLEAR)     { area_clear(id); return RequestStatus::OK; }
     if (op == UiOp::AREA_LINES) {
         Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
         *out = area_lines(id);
-        return 0;
+        return RequestStatus::OK;
     }
-    if (op == UiOp::LIST_SET_ITEMS) { list_set_items(id, m->s0); return 0; }
+    if (op == UiOp::LIST_SET_ITEMS) { list_set_items(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::LIST_COUNT) {
         Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
         *out = list_count(id);
-        return 0;
+        return RequestStatus::OK;
     }
     if (op == UiOp::LIST_SELECTED) {
         Result<Option<i32>, UiError> *out = (Result<Option<i32>, UiError>*)m->result_out;
         *out = dom_widgets.list_selected(id);
-        return 0;
+        return RequestStatus::OK;
     }
     if (op == UiOp::LIST_ITEM) {
         Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
         *out = dom_widgets.list_item(id, m->a1, (char*)m->a2, m->a3);
-        return 0;
+        return RequestStatus::OK;
     }
-    if (op == UiOp::FOCUS)          { focus(id); return 0; }
-    if (op == UiOp::FOCUS_WINDOW)   { focus_window(id); return 0; }
-    if (op == UiOp::CLOSE)          { close(id); return 0; }
+    if (op == UiOp::FOCUS)          { focus(id); return RequestStatus::OK; }
+    if (op == UiOp::FOCUS_WINDOW)   { focus_window(id); return RequestStatus::OK; }
+    if (op == UiOp::CLOSE)          { close(id); return RequestStatus::OK; }
     if (op == UiOp::WINDOW_OF) {
         Result<Option<i32>, UiError> *out = (Result<Option<i32>, UiError>*)m->result_out;
         *out = window_of(id);
-        return 0;
+        return RequestStatus::OK;
     }
     if (op == UiOp::WINDOW_X) {
         Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
         *out = window_x(id);
-        return 0;
+        return RequestStatus::OK;
     }
     if (op == UiOp::WINDOW_Y) {
         Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
         *out = window_y(id);
-        return 0;
+        return RequestStatus::OK;
     }
-    if (op == UiOp::SHOW)           { show(id); return 0; }
-    if (op == UiOp::TEST_ID)        { test_id(id, m->s0); return 0; }
-    if (op == UiOp::SEND_KEY)       { send_key(m->a0, m->a1, m->a2); return 0; }
-    if (op == UiOp::RGB)            { return rgb(m->a0, m->a1, m->a2); }
+    if (op == UiOp::SHOW)           { show(id); return RequestStatus::OK; }
+    if (op == UiOp::TEST_ID)        { test_id(id, m->s0); return RequestStatus::OK; }
+    if (op == UiOp::SEND_KEY)       { send_key(m->a0, m->a1, m->a2); return RequestStatus::OK; }
     if (op >= UiOp::CREATE_WINDOW) {
         if (op <= UiOp::APPEND_CHILD) {
             Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
             *out = protocol_elements.create(m);
-            return 0;
+            return RequestStatus::OK;
         }
     }
-    return 0;
+    return RequestStatus::INVALID_OPERATION;
 }
 
 // --- text -------------------------------------------------------------------------------------
@@ -150,8 +158,8 @@ Result<i32, UiError> text_copy(i32 id, char *out, i32 cap) {
  * @return Ok(true/false) for a Checkbox, or Err for an invalid ID or wrong node kind.
  */
 Result<bool, UiError> is_checked(i32 id) {
-    Option<i32> kind = dom.kind_of(id);
-    i32 value = case kind of {
+    Option<NodeKind> kind = dom.kind_of(id);
+    NodeKind value = case kind of {
         Some(v) -> v;
         None -> ({ return Err(UiError::NodeNotFound(id)); });
     };
@@ -333,15 +341,3 @@ void test_id(i32 id, char *name) { dom.set_test_id(id, name); }
  * @param mods Active modifier keys (shift, ctrl, alt).
  */
 void send_key(i32 type, i32 code, i32 mods) { dom_widgets.dispatch_key_event(type, code, mods); }
-
-// --- colours -----------------------------------------------------------------------------------
-
-/**
- * Packs 8-bit RGB components into a 32-bit color value.
- *
- * @param r Red component (0..255).
- * @param g Green component (0..255).
- * @param b Blue component (0..255).
- * @return 32-bit packed color value.
- */
-i32 rgb(i32 r, i32 g, i32 b) { return graphics.rgb(r, g, b); }

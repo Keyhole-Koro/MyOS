@@ -157,10 +157,7 @@ Result<bool, UiError> (Files *f) selected_is_dir() {
     InlineCString<48> item = InlineCString<48> {};
     item.clear();
     Result<i32, UiError> copied = ui.list_item(f->list, row, item.as_ptr(), item.data.length);
-    case copied of {
-        Ok(_) -> _;
-        Err(e) -> ({ return Err(e); });
-    };
+    copied?;
     item.sync_from_ptr();
     if (item.len() == 2 && item.data[0] == '.' && item.data[1] == '.') { return Ok(true); }
     if (!item.is_empty() && item.data[item.len() - 1] == '/') { return Ok(true); }

@@ -18,6 +18,7 @@ import { FsError, SeekWhence } from "../../../../contracts/io/fs.contract.mln";
 import fs from "../fs/fs.mln";
 import str from "@std/text/str.mln";
 import { InlineCString } from "@std/text/inline_c_string.mln";
+import ascii from "@std/text/ascii.mln";
 import dom_widgets from "../ui/dom/dom_widgets.mln";
 import dom from "../ui/dom/dom.mln";
 
@@ -144,7 +145,7 @@ export void feed_line(i32 pid, char *line) {
     i32 k = 0;
     while (1) {
         i32 c = 10;
-        if (line[k] != 0) { c = (i32)line[k] & 0xFF; }
+        if (line[k] != 0) { c = ascii.byte(line[k]); }
         i32 next = (consoles[i].in_tail + 1) % STDIN_CAP;
         if (next == consoles[i].in_head) { return; } // full
         mem.write_byte(base + consoles[i].in_tail, c);

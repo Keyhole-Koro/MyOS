@@ -10,7 +10,7 @@
 package request_channel;
 
 import ipc from "../../../MyKernel/src/kernel/ipc.mln";
-import { Request, RequestDomain, TransportSignal } from "../../../../contracts/myapp/message.contract.mln";
+import { Request, RequestDomain, RequestStatus, TransportSignal } from "../../../../contracts/myapp/message.contract.mln";
 import ui_protocol from "../ui/protocol.mln";
 import shell_protocol from "../shell/protocol.mln";
 import app_events from "events.mln";
@@ -39,7 +39,7 @@ enum RequestWord {
     REPLY_CHANNEL,
 }
 
-export i32 REQUEST_WORD_COUNT = RequestWord::REPLY_CHANNEL;
+export const i32 REQUEST_WORD_COUNT = RequestWord::REPLY_CHANNEL;
 
 /**
  * Clears a full IPC message before populating its meaningful words.
@@ -149,7 +149,7 @@ export i32 serve() {
         decode_request_words(&w[0], &m);
         i32 r[24];
         clear_message(&r[0]);
-        r[0] = 0;
+        r[0] = RequestStatus::INVALID_DOMAIN;
         if (m.domain == RequestDomain::UI) { r[0] = ui_protocol.handle(&m); }
         if (m.domain == RequestDomain::APP) { r[0] = shell_protocol.handle(&m); }
         i32 reply_channel = w[RequestWord::REPLY_CHANNEL];

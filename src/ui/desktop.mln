@@ -32,7 +32,7 @@ export void init() {
     graphics.init();
 
     i32 root = require_system_node(dom.create_node(NodeKind::ROOT, "root"));
-    dom.set_g_root_node_id(root);
+    dom.set_root_node_id(root);
     dom.set_role(root, NodeRole::ROOT);
 
     i32 sys = require_system_node(dom.create_node(NodeKind::SYSTEM, "system"));
@@ -52,17 +52,15 @@ export void init() {
 
     i32 desktop_node = require_system_node(dom.create_node(NodeKind::DESKTOP, "desktop"));
     require_system_append(dom.append_child(ui, desktop_node));
-    dom.set_g_desktop_node_id(desktop_node);
+    dom.set_desktop_id(desktop_node);
     dom.set_role(desktop_node, NodeRole::DESKTOP);
 
     i32 timers = require_system_node(dom.create_node(NodeKind::UI, "timers"));
     require_system_append(dom.append_child(ui, timers));
-    dom.set_g_timers_node_id(timers);
-    dom.set_g_timer_count(0);
 
-    dom.set_g_active_window(0);
-    dom.set_g_focus_id(0);
-    dom.set_g_taskbar_id(0);
+    dom.set_active_window_id(0);
+    dom.set_focus_id(0);
+    dom.set_taskbar_id(0);
 }
 
 /** Creates and docks the taskbar at the bottom of the desktop screen. */
@@ -74,10 +72,7 @@ export Result<i32, UiError> create_taskbar() {
     i32 height = ui_metrics.taskbar_height() * scale;
     i32 display_width = ui_metrics.display_width();
     i32 display_height = ui_metrics.display_height();
-    i32 id = case dom.create_node(NodeKind::TASKBAR, "taskbar") of {
-        Ok(value) -> value;
-        Err(error) -> ({ return Err(error); });
-    };
+    i32 id = dom.create_node(NodeKind::TASKBAR, "taskbar")?;
 
     dom.set_role(id, NodeRole::TOOLBAR);
     dom.set_text(id, "taskbar");
@@ -89,6 +84,6 @@ export Result<i32, UiError> create_taskbar() {
         Err(error) -> ({ dom.remove_node(id); return Err(error); });
     };
 
-    dom.set_g_taskbar_id(id);
+    dom.set_taskbar_id(id);
     return Ok(id);
 }

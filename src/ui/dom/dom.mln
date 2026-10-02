@@ -151,7 +151,7 @@ export typedef struct {
     i32 on_close;         // Window: handler(owner, id, 0) when the user closes it; 0 = just remove
 } Node;
 
-export i32 NODE_SIZE = 104;
+export const i32 NODE_SIZE = 104;
 
 // Damage rectangles: the areas that changed since the last render, in
 // display coordinates. render_scene repaints each one under a clip. Keeping
@@ -159,40 +159,39 @@ export i32 NODE_SIZE = 104;
 // width at the bottom: one rect for it plus one for a window near the top
 // would otherwise union into nearly the whole screen. When the list is
 // full, new areas merge into the first entry.
-export i32 DAMAGE_MAX = 8;
-export i32 g_damage_x0[8];
-export i32 g_damage_y0[8];
-export i32 g_damage_x1[8];
-export i32 g_damage_y1[8];
-export i32 g_damage_count = 0;
+export const i32 DAMAGE_MAX = 8;
+i32 g_damage_x0[8];
+i32 g_damage_y0[8];
+i32 g_damage_x1[8];
+i32 g_damage_y1[8];
+i32 g_damage_count = 0;
 
 // The rect render_scene is currently repainting, so node_in_damage can test
 // against just that one; g_painting_all short-circuits it for full paints.
-export i32 g_paint_x0 = 0;
-export i32 g_paint_y0 = 0;
-export i32 g_paint_x1 = 0;
-export i32 g_paint_y1 = 0;
-export i32 g_painting_all = 1;
+i32 g_paint_x0 = 0;
+i32 g_paint_y0 = 0;
+i32 g_paint_x1 = 0;
+i32 g_paint_y1 = 0;
+i32 g_painting_all = 1;
 
-export i32 g_next_node_id = 1; // 0 is invalid/null
-export i32 g_revision = 0;     // increments on externally observable DOM mutation
-export i32 g_root_node_id = 0;
-export i32 g_desktop_node_id = 0; // set in init(); UI attaches under this
-export i32 g_taskbar_id = 0;      // the desktop's taskbar node, drawn above windows
-export i32 g_timers_node_id = 0;  // structural parent for Timer nodes
+i32 g_next_node_id = 1; // 0 is invalid/null
+i32 g_revision = 0;     // increments on externally observable DOM mutation
+i32 g_root_node_id = 0;
+i32 g_desktop_node_id = 0; // set in init(); UI attaches under this
+i32 g_taskbar_id = 0;      // the desktop's taskbar node, drawn above windows
 
-export i32 g_active_window = 0;   // window with STATE_FOCUSED (front-most, gets keys)
-export i32 g_focus_id = 0;        // node with keyboard focus (a TextInput), or 0
-export i32 g_launcher = 0;        // handler() for the taskbar's launcher button
-export i32 g_menu_id = 0;         // the open popup menu, or 0
-export i32 g_menu_handler = 0;    // handler(index) for the open menu
-export i32 g_menu_target = 0;     // the window a window-menu acts on (0 for the desktop menu)
+i32 g_active_window = 0;   // window with STATE_FOCUSED (front-most, gets keys)
+i32 g_focus_id = 0;        // node with keyboard focus (a TextInput), or 0
+i32 g_launcher = 0;        // handler() for the taskbar's launcher button
+i32 g_menu_id = 0;         // the open popup menu, or 0
+i32 g_menu_handler = 0;    // handler(index) for the open menu
+i32 g_menu_target = 0;     // the window a window-menu acts on (0 for the desktop menu)
 
 // The app instance whose code is running right now (a handler drained from
 // the event queue, or a view() being mounted); create_node stamps it into
 // each new node's `owner`, so dialogs and timers an app makes on the fly are
 // swept with it by remove_owned(). 0 while the system itself runs.
-export i32 g_current_owner = 0;
+i32 g_current_owner = 0;
 
 // Apps the shell has started whose window has not arrived yet. Reported in
 // the automation snapshot ("starting") so a test harness can tell a
@@ -212,13 +211,13 @@ export i32 apps_starting() { return g_apps_starting; }
 
 // Installed by the app framework: i32 filter(owner, code, mods) sees every
 // key DOWN before the focused widget and returns 1 to claim it (shortcuts).
-export i32 g_key_filter = 0;
+i32 g_key_filter = 0;
 
 // Pending handler calls: 4 words each (handler, owner, id, arg).
-export i32 EVENT_MAX = 64;
-export i32 g_events[256];
-export i32 g_event_head = 0;
-export i32 g_event_tail = 0;
+export const i32 EVENT_MAX = 64;
+i32 g_events[256];
+i32 g_event_head = 0;
+i32 g_event_tail = 0;
 
 // Up to NODE_IDS nodes at once. Ids are reused: remove_node() returns an id
 // to a free list and create_node() takes from it before growing the high-
@@ -231,7 +230,7 @@ export i32 g_event_tail = 0;
 // one app cannot take the whole table from the others; create_node()
 // returns 0 past that, and past NODE_IDS.
 i32 NODE_IDS = 512;
-export i32 NODES_PER_OWNER = 96;
+export const i32 NODES_PER_OWNER = 96;
 Node *g_node_table[512];
 i32 g_free_ids[512];
 i32 g_free_count = 0;
@@ -272,22 +271,16 @@ export i32 nodes_of(i32 owner) {
         None -> 0;
     };
 }
-/**
- * Returns the backing table of DOM node pointers for renderer traversal.
- * @return Pointer to the first entry in the node table.
- */
-export Node **get_g_node_table() { return (Node**)(&g_node_table[0]); }
-
 // Registered timers (ids), scanned by tick().
-export i32 TIMER_MAX = 16;
-export i32 g_timer_ids[16];
-export i32 g_timer_count = 0;
+export const i32 TIMER_MAX = 16;
+i32 g_timer_ids[16];
+i32 g_timer_count = 0;
 
 // Scratch rectangle for helpers that hand back a rect (no multiple returns).
-export i32 g_ext_x = 0;
-export i32 g_ext_y = 0;
-export i32 g_ext_w = 0;
-export i32 g_ext_h = 0;
+i32 g_ext_x = 0;
+i32 g_ext_y = 0;
+i32 g_ext_w = 0;
+i32 g_ext_h = 0;
 
 /**
  * Increments the global DOM revision counter when observable tree changes occur.
@@ -304,8 +297,8 @@ export i32 revision() { return g_revision; }
 // physical display so its proportions remain intact on larger resolutions.
 // A display smaller than the base size keeps scale 1, avoiding zero-size
 // controls; responsive downscaling can be added when sub-pixel layout exists.
-export i32 BASE_DISPLAY_WIDTH = 1024;
-export i32 BASE_DISPLAY_HEIGHT = 768;
+export const i32 BASE_DISPLAY_WIDTH = 1024;
+export const i32 BASE_DISPLAY_HEIGHT = 768;
 
 /**
  * Calculates the integer UI scaling factor based on current display resolution.
@@ -639,7 +632,7 @@ export void unlock() {
  * @param id DOM Node ID.
  * @return Some(kind) or None.
  */
-export Option<i32> kind_of(i32 id) {
+export Option<NodeKind> kind_of(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return None; }
     return Some(n->kind);
@@ -698,7 +691,7 @@ export char* text_of(i32 id) {
  * @param id DOM Node ID.
  * @return Ok(NodeRole value), or Err for an invalid ID.
  */
-export Result<i32, UiError> role_of(i32 id) {
+export Result<NodeRole, UiError> role_of(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return Err(UiError::NodeNotFound(id)); }
     return Ok(n->role);
@@ -1346,7 +1339,7 @@ export bool is_pressed(i32 id) { return get_state_flag(id, NodeState::PRESSED); 
  * @param id DOM Node ID.
  * @return Ok(state flags), or Err for an invalid ID.
  */
-export Result<i32, UiError> state_of(i32 id) {
+export Result<NodeState, UiError> state_of(i32 id) {
     Node *n = node_ptr(id);
     if (n == 0) { return Err(UiError::NodeNotFound(id)); }
     return Ok(n->state);
@@ -1689,139 +1682,103 @@ export Result<Option<i32>, UiError> window_of(i32 id) {
 }
 
 
-// Getters and Setters
-/** Gets NODE_SIZE constant. @return Node structure size in bytes. */
-export i32 get_NODE_SIZE() { return NODE_SIZE; }
-/** Sets NODE_SIZE constant. @param v New node size. */
-export void set_NODE_SIZE(i32 v) { NODE_SIZE = v; }
-/** Gets DAMAGE_MAX constant. @return Maximum number of tracked damage rectangles. */
-export i32 get_DAMAGE_MAX() { return DAMAGE_MAX; }
-/** Sets DAMAGE_MAX constant. @param v New max damage rect count. */
-export void set_DAMAGE_MAX(i32 v) { DAMAGE_MAX = v; }
-/** Gets pointer to g_damage_x0 array. @return Pointer to damage rect left coordinates. */
-export i32 *get_g_damage_x0() { return &g_damage_x0[0]; }
-/** Gets pointer to g_damage_y0 array. @return Pointer to damage rect top coordinates. */
-export i32 *get_g_damage_y0() { return &g_damage_y0[0]; }
-/** Gets pointer to g_damage_x1 array. @return Pointer to damage rect right coordinates. */
-export i32 *get_g_damage_x1() { return &g_damage_x1[0]; }
-/** Gets pointer to g_damage_y1 array. @return Pointer to damage rect bottom coordinates. */
-export i32 *get_g_damage_y1() { return &g_damage_y1[0]; }
-/** Gets current damage rect count. @return Number of active damage rectangles. */
-export i32 get_g_damage_count() { return g_damage_count; }
-/** Sets current damage rect count. @param v New damage rect count. */
-export void set_g_damage_count(i32 v) { g_damage_count = v; }
-/** Gets current paint clipping left coordinate. @return Paint clip X0. */
-export i32 get_g_paint_x0() { return g_paint_x0; }
-/** Sets current paint clipping left coordinate. @param v New paint clip X0. */
-export void set_g_paint_x0(i32 v) { g_paint_x0 = v; }
-/** Gets current paint clipping top coordinate. @return Paint clip Y0. */
-export i32 get_g_paint_y0() { return g_paint_y0; }
-/** Sets current paint clipping top coordinate. @param v New paint clip Y0. */
-export void set_g_paint_y0(i32 v) { g_paint_y0 = v; }
-/** Gets current paint clipping right coordinate. @return Paint clip X1. */
-export i32 get_g_paint_x1() { return g_paint_x1; }
-/** Sets current paint clipping right coordinate. @param v New paint clip X1. */
-export void set_g_paint_x1(i32 v) { g_paint_x1 = v; }
-/** Gets current paint clipping bottom coordinate. @return Paint clip Y1. */
-export i32 get_g_paint_y1() { return g_paint_y1; }
-/** Sets current paint clipping bottom coordinate. @param v New paint clip Y1. */
-export void set_g_paint_y1(i32 v) { g_paint_y1 = v; }
-/** Gets full repaint flag. @return 1 if full repaint is active, 0 otherwise. */
-export i32 get_g_painting_all() { return g_painting_all; }
-/** Sets full repaint flag. @param v Non-zero to force full repaint. */
-export void set_g_painting_all(i32 v) { g_painting_all = v; }
-/** Gets next available node ID. @return Next node ID counter value. */
-export i32 get_g_next_node_id() { return g_next_node_id; }
-/** Sets next available node ID. @param v Counter value to set. */
-export void set_g_next_node_id(i32 v) { g_next_node_id = v; }
-/** Gets current DOM tree revision counter. @return Revision counter. */
-export i32 get_g_revision() { return g_revision; }
-/** Sets current DOM tree revision counter. @param v Revision value to set. */
-export void set_g_revision(i32 v) { g_revision = v; }
-/** Gets root node ID. @return Root node ID. */
-export i32 get_g_root_node_id() { return g_root_node_id; }
-/** Sets root node ID. @param v Node ID to set as root. */
-export void set_g_root_node_id(i32 v) { g_root_node_id = v; }
-/** Gets desktop container node ID. @return Desktop container node ID. */
-export i32 get_g_desktop_node_id() { return g_desktop_node_id; }
-/** Sets desktop container node ID. @param v Node ID to set as desktop. */
-export void set_g_desktop_node_id(i32 v) { g_desktop_node_id = v; }
-/** Gets taskbar node ID. @return Taskbar node ID. */
-export i32 get_g_taskbar_id() { return g_taskbar_id; }
-/** Sets taskbar node ID. @param v Node ID to set as taskbar. */
-export void set_g_taskbar_id(i32 v) { g_taskbar_id = v; }
-/** Gets timers container node ID. @return Timers node ID. */
-export i32 get_g_timers_node_id() { return g_timers_node_id; }
-/** Sets timers container node ID. @param v Node ID to set as timers container. */
-export void set_g_timers_node_id(i32 v) { g_timers_node_id = v; }
-/** Gets active window node ID. @return Active window node ID. */
-export i32 get_g_active_window() { return g_active_window; }
-/** Sets active window node ID. @param v Window node ID to activate. */
-export void set_g_active_window(i32 v) { g_active_window = v; }
+// --- subsystem state -------------------------------------------------------------------------
 
-/**
- * Returns the currently active top-level window node ID.
- * @return Active window DOM Node ID, or 0 if none.
- */
-export Option<i32> active_window() {
-    if (g_active_window == 0) { return None; }
-    return Some(g_active_window);
+/** Selects the root node created during desktop initialization. */
+export void set_root_node_id(i32 id) { g_root_node_id = id; }
+
+/** Selects the desktop container created during desktop initialization. */
+export void set_desktop_id(i32 id) { g_desktop_node_id = id; }
+
+/** Selects the system taskbar node, or clears it with zero. */
+export void set_taskbar_id(i32 id) { g_taskbar_id = id; }
+
+/** Returns the active top-level window ID, or zero. */
+export i32 active_window_id() { return g_active_window; }
+
+/** Updates the active top-level window ID. */
+export void set_active_window_id(i32 id) { g_active_window = id; }
+
+/** Returns the focused control ID, or zero. */
+export i32 focus_id() { return g_focus_id; }
+
+/** Updates the focused control ID. */
+export void set_focus_id(i32 id) { g_focus_id = id; }
+
+/** Returns the taskbar launcher callback address. */
+export i32 launcher_handler() { return g_launcher; }
+
+/** Installs the taskbar launcher callback address. */
+export void set_launcher_handler(i32 handler) { g_launcher = handler; }
+
+/** Returns the open popup menu ID, or zero. */
+export i32 menu_id() { return g_menu_id; }
+
+/** Returns the callback attached to the open popup menu. */
+export i32 menu_handler() { return g_menu_handler; }
+
+/** Returns the node targeted by the open popup menu. */
+export i32 menu_target() { return g_menu_target; }
+
+/** Records all state belonging to a newly opened popup menu. */
+export void set_menu_state(i32 id, i32 handler, i32 target) {
+    g_menu_id = id;
+    g_menu_handler = handler;
+    g_menu_target = target;
 }
-/** Gets focused node ID. @return Focused node ID. */
-export i32 get_g_focus_id() { return g_focus_id; }
-/** Sets focused node ID. @param v Node ID to focus. */
-export void set_g_focus_id(i32 v) { g_focus_id = v; }
-/** Gets launcher callback function pointer. @return Launcher function pointer. */
-export i32 get_g_launcher() { return g_launcher; }
-/** Sets launcher callback function pointer. @param v Function pointer to launcher. */
-export void set_g_launcher(i32 v) { g_launcher = v; }
-/** Gets open menu node ID. @return Menu node ID, or 0 if closed. */
-export i32 get_g_menu_id() { return g_menu_id; }
-/** Sets open menu node ID. @param v Menu node ID. */
-export void set_g_menu_id(i32 v) { g_menu_id = v; }
-/** Gets menu click callback handler pointer. @return Function pointer to menu handler. */
-export i32 get_g_menu_handler() { return g_menu_handler; }
-/** Sets menu click callback handler pointer. @param v Function pointer to menu handler. */
-export void set_g_menu_handler(i32 v) { g_menu_handler = v; }
-/** Gets target node ID associated with current menu. @return Target node ID. */
-export i32 get_g_menu_target() { return g_menu_target; }
-/** Sets target node ID associated with current menu. @param v Target node ID. */
-export void set_g_menu_target(i32 v) { g_menu_target = v; }
-/** Gets TIMER_MAX constant. @return Maximum number of active timers. */
-export i32 get_TIMER_MAX() { return TIMER_MAX; }
-/** Sets TIMER_MAX constant. @param v Max timer count to set. */
-export void set_TIMER_MAX(i32 v) { TIMER_MAX = v; }
-/** Gets pointer to g_timer_ids array. @return Pointer to timer ID table. */
-export i32 *get_g_timer_ids() { return &g_timer_ids[0]; }
-/** Gets current active timer count. @return Number of registered timers. */
-export i32 get_g_timer_count() { return g_timer_count; }
-/** Sets current active timer count. @param v Timer count to set. */
-export void set_g_timer_count(i32 v) { g_timer_count = v; }
-/** Gets extent calculation scratch X. @return Extent scratch X. */
-export i32 get_g_ext_x() { return g_ext_x; }
-/** Sets extent calculation scratch X. @param v Scratch X coordinate. */
-export void set_g_ext_x(i32 v) { g_ext_x = v; }
-/** Gets extent calculation scratch Y. @return Extent scratch Y. */
-export i32 get_g_ext_y() { return g_ext_y; }
-/** Sets extent calculation scratch Y. @param v Scratch Y coordinate. */
-export void set_g_ext_y(i32 v) { g_ext_y = v; }
-/** Gets extent calculation scratch width. @return Extent scratch width. */
-export i32 get_g_ext_w() { return g_ext_w; }
-/** Sets extent calculation scratch width. @param v Scratch width. */
-export void set_g_ext_w(i32 v) { g_ext_w = v; }
-/** Gets extent calculation scratch height. @return Extent scratch height. */
-export i32 get_g_ext_h() { return g_ext_h; }
-/** Sets extent calculation scratch height. @param v Scratch height. */
-export void set_g_ext_h(i32 v) { g_ext_h = v; }
-/** Gets pointer to formatted taskbar clock string buffer. @return Clock buffer pointer. */
-/** Gets baseline display width constant. @return Baseline display width in logical pixels. */
-export i32 get_BASE_DISPLAY_WIDTH() { return BASE_DISPLAY_WIDTH; }
-/** Sets baseline display width constant. @param v New baseline display width. */
-export void set_BASE_DISPLAY_WIDTH(i32 v) { BASE_DISPLAY_WIDTH = v; }
-/** Gets baseline display height constant. @return Baseline display height in logical pixels. */
-export i32 get_BASE_DISPLAY_HEIGHT() { return BASE_DISPLAY_HEIGHT; }
-/** Sets baseline display height constant. @param v New baseline display height. */
-export void set_BASE_DISPLAY_HEIGHT(i32 v) { BASE_DISPLAY_HEIGHT = v; }
+
+/** Clears popup state before its node is removed. */
+export void clear_menu_state() {
+    g_menu_id = 0;
+    g_menu_handler = 0;
+    g_menu_target = 0;
+}
+
+/** Returns the number of registered timer nodes. */
+export i32 timer_count() { return g_timer_count; }
+
+/** Returns a registered timer ID by table index. */
+export i32 timer_id_at(i32 index) { return g_timer_ids[index]; }
+
+/** Adds a timer ID to the bounded timer registry. */
+export Result<_, UiError> register_timer(i32 id) {
+    if (g_timer_count >= TIMER_MAX) { return Err(UiError::TimerLimit); }
+    g_timer_ids[g_timer_count] = id;
+    g_timer_count++;
+    return Ok(_);
+}
+
+/** Returns the number of damage rectangles awaiting paint. */
+export i32 damage_count() { return g_damage_count; }
+
+/** Selects one queued damage rectangle as the current paint region. */
+export void select_damage(i32 index) {
+    g_paint_x0 = g_damage_x0[index];
+    g_paint_y0 = g_damage_y0[index];
+    g_paint_x1 = g_damage_x1[index];
+    g_paint_y1 = g_damage_y1[index];
+    g_painting_all = 0;
+}
+
+/** Selects an unrestricted full-scene paint. */
+export void select_full_paint() { g_painting_all = 1; }
+
+/** Returns true when a node overlaps the selected paint region. */
+export bool node_intersects_paint(Node *node) {
+    if (g_painting_all) { return true; }
+    node_extent(node);
+    if (g_ext_x + g_ext_w <= g_paint_x0) { return false; }
+    if (g_ext_y + g_ext_h <= g_paint_y0) { return false; }
+    if (g_ext_x >= g_paint_x1) { return false; }
+    if (g_ext_y >= g_paint_y1) { return false; }
+    return true;
+}
+
+/** Applies the selected damage rectangle to a renderer clip. */
+export i32 paint_x() { return g_paint_x0; }
+export i32 paint_y() { return g_paint_y0; }
+export i32 paint_width() { return g_paint_x1 - g_paint_x0; }
+export i32 paint_height() { return g_paint_y1 - g_paint_y0; }
 
 /**
  * Checks whether a node clips its children to its bounding box.

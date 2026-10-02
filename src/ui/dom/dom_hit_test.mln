@@ -63,7 +63,7 @@ export Option<i32> hit_test(i32 node_id, i32 px, i32 py) {
 
 /** Finds the topmost interactive UI node at a display position. */
 export Option<i32> find_at(i32 x, i32 y) {
-    i32 menu_id = dom.get_g_menu_id();
+    i32 menu_id = dom.menu_id();
     if (menu_id != 0) {
         Option<i32> menu_hit = hit_test(menu_id, x, y);
         case menu_hit of { Some(id) -> ({ return Some(id); }); None -> _; };

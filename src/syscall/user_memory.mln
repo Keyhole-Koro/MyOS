@@ -7,6 +7,7 @@
 package user_memory;
 
 import mem from "../../../MyKernel/src/mm/mem.mln";
+import bytes from "@std/text/bytes.mln";
 
 /**
  * Copies a fixed-size argument record from the active user address space.
@@ -60,7 +61,7 @@ export void copy_in_string(i32 user, char *dst, i32 cap) {
 export void copy_out(i32 user, char *src, i32 n) {
     i32 k = 0;
     while (k < n) {
-        mem.write_byte(user + k, src[k] & 0xFF);
+        mem.write_byte(user + k, bytes.as_unsigned(src[k]));
         k++;
     }
 }

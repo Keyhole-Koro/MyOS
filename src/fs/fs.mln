@@ -139,7 +139,7 @@ void set_buf_word(i32 off, i32 value) {
  */
 i32 buf_byte(i32 off) {
     char *p = (char *)(g_buf + off);
-    return (i32)(*p) & 0xFF;
+    return bytes.as_unsigned(*p);
 }
 
 /**
@@ -159,7 +159,7 @@ void set_buf_byte(i32 off, i32 value) {
  */
 i32 ram_byte(i32 addr) {
     char *p = (char *)addr;
-    return (i32)(*p) & 0xFF;
+    return bytes.as_unsigned(*p);
 }
 
 /**
@@ -323,7 +323,7 @@ void store_name(i32 off, char* name) {
 // `first_block != 0` everywhere. Paths are `/a/b/c` or `a/b/c`, each
 // component at most NAME_MAX - 1 characters.
 
-export i32 FLAG_DIR = 1;
+export const i32 FLAG_DIR = 1;
 
 // The entry called `name` directly inside directory `parent_code`
 // (parent index + 1, 0 = root), or None.
@@ -585,10 +585,7 @@ Result<i32, FsError> make_entry(char* path, i32 flags) {
     };
 
     // Write entry to disk
-    i32 off = case load_entry(idx) of {
-        Ok(v) -> v;
-        Err(e) -> ({ return Err(e); });
-    };
+    i32 off = load_entry(idx)?;
     store_name(off, clean_name.as_ptr());
     set_buf_word(off + 16, first);       // first_block
     set_buf_word(off + 20, 0);           // file_size
@@ -608,10 +605,7 @@ Result<i32, FsError> make_entry(char* path, i32 flags) {
  */
 export Result<i32, FsError> create(char* path) {
     Result<i32, FsError> made = make_entry(path, 0);
-    case made of {
-        Ok(_) -> _;
-        Err(e) -> ({ return Err(e); });
-    };
+    made?;
     // A function can't `return` another function's aggregate-returning call
     // directly (no lvalue to copy from); binding it to a local first gives
     // the codegen an address to forward through our own hidden out-pointer.
@@ -642,10 +636,7 @@ export Result<bool, FsError> is_dir(i32 idx) {
         FsError cause = InvalidEntry(idx);
         return Err(cause);
     }
-    i32 off = case load_entry(idx) of {
-        Ok(v) -> v;
-        Err(e) -> ({ return Err(e); });
-    };
+    i32 off = load_entry(idx)?;
     if (buf_word(off + 16) == 0) { return Err(FsError::NotFound); }
     return Ok((buf_word(off + 24) & FLAG_DIR) != 0);
 }
@@ -683,12 +674,7 @@ export Result<i32, FsError> open(char* path) {
         Some(v) -> v;
         None -> ({ return Err(FsError::NotFound); });
     };
-    Result<bool, FsError> directory = is_dir(idx);
-    bool is_directory = false;
-    case directory of {
-        Ok(value) -> ({ is_directory = value; });
-        Err(e) -> ({ return Err(e); });
-    };
+    bool is_directory = is_dir(idx)?;
     if (is_directory) {
         FsError cause = WrongType(idx);
         return Err(cause);
@@ -698,10 +684,7 @@ export Result<i32, FsError> open(char* path) {
         None -> ({ return Err(FsError::NoFreeSlot); });
     };
 
-    i32 off = case load_entry(idx) of {
-        Ok(v) -> v;
-        Err(e) -> ({ return Err(e); });
-    };
+    i32 off = load_entry(idx)?;
     g_fd_table[fd] = OpenFile::File(FileState {
         entry_idx: idx,
         offset: 0,
@@ -887,10 +870,7 @@ Result<i32, FsError> finish_write(i32 fd, i32 new_size) {
         File(f) -> ({
             i32 written = new_size - f.file_size;
             i32 idx = f.entry_idx;
-            i32 off = case load_entry(idx) of {
-                Ok(v) -> v;
-                Err(e) -> ({ return Err(e); });
-            };
+            i32 off = load_entry(idx)?;
             set_buf_word(off + 20, new_size);
             case ssd.write_block(entry_block(idx), g_buf) of {
                 Ok(_) -> _;
@@ -1056,30 +1036,21 @@ export Result<_, FsError> remove(char* path) {
         None -> ({ return Err(FsError::NotFound); });
     };
     // A directory goes only when empty.
-    Result<bool, FsError> directory = is_dir(idx);
-    bool is_directory = false;
-    case directory of {
-        Ok(value) -> ({ is_directory = value; });
-        Err(e) -> ({ return Err(e); });
-    };
+    bool is_directory = is_dir(idx)?;
     if (is_directory) {
         InlineCString<16> child = InlineCString<16> {};
         child.clear();
-        Result<Option<i32>, FsError> any = dir_next_in(idx + 1, 0, child.as_ptr(), child.data.length);
-        bool has_child = false;
-        case any of {
-            Ok(v) -> ({ has_child = case v of { Some(_) -> true; None -> false; }; });
-            Err(e) -> ({ return Err(e); });
+        Option<i32> any = dir_next_in(idx + 1, 0, child.as_ptr(), child.data.length)?;
+        bool has_child = case any of {
+            Some(_) -> true;
+            None -> false;
         };
         if (has_child) {
             FsError cause = WrongType(idx);
             return Err(cause);
         }
     }
-    i32 off = case load_entry(idx) of {
-        Ok(v) -> v;
-        Err(e) -> ({ return Err(e); });
-    };
+    i32 off = load_entry(idx)?;
     i32 block = buf_word(off + 16);
 
     // Free block chain
@@ -1094,10 +1065,7 @@ export Result<_, FsError> remove(char* path) {
     }
 
     // Clear disk entry
-    off = case load_entry(idx) of {
-        Ok(v) -> v;
-        Err(e) -> ({ return Err(e); });
-    };
+    off = load_entry(idx)?;
     set_buf_word(off + 16, 0);
     set_buf_word(off + 20, 0);
     set_buf_byte(off, 0);
@@ -1169,10 +1137,7 @@ export void list() {
  * @return Ok(Some(index)) when found, Ok(None) at end, or Err(FsError).
  */
 export Result<Option<i32>, FsError> dir_next_at(char* path, i32 start, char* out, i32 cap) {
-    i32 code = case dir_code_of(path) of {
-        Ok(v) -> v;
-        Err(e) -> ({ return Err(e); });
-    };
+    i32 code = dir_code_of(path)?;
     Result<Option<i32>, FsError> r = dir_next_in(code, start, out, cap);
     return r;
 }
@@ -1216,10 +1181,7 @@ export Result<i32, FsError> entry_size(i32 idx) {
         FsError cause = InvalidEntry(idx);
         return Err(cause);
     }
-    i32 off = case load_entry(idx) of {
-        Ok(v) -> v;
-        Err(e) -> ({ return Err(e); });
-    };
+    i32 off = load_entry(idx)?;
     if (buf_word(off + 16) == 0) { return Err(FsError::NotFound); }
     return Ok(buf_word(off + 20));
 }

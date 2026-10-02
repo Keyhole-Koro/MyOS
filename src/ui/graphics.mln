@@ -5,10 +5,11 @@ import ui_config from "config.mln";
 import font from "font8x8.mln";
 import font_sans from "font_sans.mln";
 import str from "@std/text/str.mln";
+import ascii from "@std/text/ascii.mln";
 import { InlineString } from "@std/text/inline_string.mln";
 import { Option } from "@std/core/option.mln";
 
-export i32 VRAM_BASE = 0x30000000;
+export const i32 VRAM_BASE = 0x30000000;
 
 // Imported MyLang functions link across packages reliably, so keep display
 // geometry behind calls to the shared configuration rather than duplicating
@@ -925,13 +926,13 @@ export i32 text_width(char* s, i32 bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     i32 w = 0;
     i32 i = 0;
-    i32 c = (i32)s[i] & 0xFF;
+    i32 c = ascii.byte(s[i]);
     while (c != 0) {
         if (c != 10) {
             w = w + font_sans.advance(face, c);
         }
         i++;
-        c = (i32)s[i] & 0xFF;
+        c = ascii.byte(s[i]);
     }
     return w;
 }
@@ -948,14 +949,14 @@ export i32 text_width_n(char* s, i32 n, i32 bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     i32 w = 0;
     i32 i = 0;
-    i32 c = (i32)s[i] & 0xFF;
+    i32 c = ascii.byte(s[i]);
     while (c != 0) {
         if (i >= n) { return w; }
         if (c != 10) {
             w = w + font_sans.advance(face, c);
         }
         i++;
-        c = (i32)s[i] & 0xFF;
+        c = ascii.byte(s[i]);
     }
     return w;
 }
@@ -1000,7 +1001,7 @@ export void draw_label(i32 x, i32 y, char* s, i32 color, i32 bold, i32 scale) {
     i32 cx = x;
     i32 cy = y;
     i32 i = 0;
-    i32 c = (i32)s[i] & 0xFF;
+    i32 c = ascii.byte(s[i]);
     while (c != 0) {
         if (c == 10) {
             cx = x;
@@ -1016,7 +1017,7 @@ export void draw_label(i32 x, i32 y, char* s, i32 color, i32 bold, i32 scale) {
             cx = cx + adv;
         }
         i++;
-        c = (i32)s[i] & 0xFF;
+        c = ascii.byte(s[i]);
     }
 }
 
@@ -1138,17 +1139,17 @@ export void draw_text(i32 x, i32 y, char* s, i32 fg, i32 bg) {
     i32 cx = x;
     i32 cy = y;
     i32 i = 0;
-    i32 c = (i32)s[i] & 0xFF;
+    i32 c = ascii.byte(s[i]);
     while (c != 0) {
         if (c == 10) {
             cx = x;
-            cy = cy + font.glyph_h();
+            cy = cy + font.GLYPH_HEIGHT;
         } else {
             draw_char(cx, cy, c, fg, bg);
-            cx = cx + font.glyph_w();
+            cx = cx + font.GLYPH_WIDTH;
         }
         i++;
-        c = (i32)s[i] & 0xFF;
+        c = ascii.byte(s[i]);
     }
 }
 
@@ -1195,7 +1196,7 @@ export void draw_text_scaled(i32 x, i32 y, char* s, i32 fg, i32 bg, i32 scale) {
     i32 cx = x;
     i32 cy = y;
     i32 i = 0;
-    i32 c = (i32)s[i] & 0xFF;
+    i32 c = ascii.byte(s[i]);
     while (c != 0) {
         if (c == 10) {
             cx = x;
@@ -1205,7 +1206,7 @@ export void draw_text_scaled(i32 x, i32 y, char* s, i32 fg, i32 bg, i32 scale) {
             cx = cx + 8 * scale;
         }
         i++;
-        c = (i32)s[i] & 0xFF;
+        c = ascii.byte(s[i]);
     }
 }
 
@@ -1224,9 +1225,9 @@ export i32 draw_int(i32 x, i32 y, i32 value, i32 fg, i32 bg) {
     i32 cx = x;
     i32 i = 0;
     while (i < digits.len()) {
-        i32 c = (i32)digits.data[i] & 0xFF;
+        i32 c = ascii.byte(digits.data[i]);
         draw_char(cx, y, c, fg, bg);
-        cx = cx + font.glyph_w();
+        cx = cx + font.GLYPH_WIDTH;
         i++;
     }
     return cx;

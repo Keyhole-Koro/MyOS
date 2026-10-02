@@ -3,6 +3,7 @@ package app;
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
 import str from "@std/text/str.mln";
+import ascii from "@std/text/ascii.mln";
 import { ParseIntError } from "@std/text/str.mln";
 import { InlineCString } from "@std/text/inline_c_string.mln";
 import dom from "../ui/dom/dom.mln";
@@ -22,6 +23,7 @@ import mbin from "@std/format/mbin.mln";
 import { Result, result_take_ok } from "@std/core/result.mln";
 import { Option } from "@std/core/option.mln";
 import { ShellEventKind } from "events.mln";
+import { KeyModifier, KeyCode } from "../../../../contracts/input/keyboard.contract.mln";
 
 // The shell: the registry of installed apps and the instances running on
 // the desktop. This is the OS side of the application framework -- apps
@@ -556,10 +558,7 @@ export Result<Option<i32>, AppError> open(char *path) {
                 };
             }
             if (!found) {
-                slot = case mount(a) of {
-                    Ok(v) -> v;
-                    Err(error) -> ({ return Err(error); });
-                };
+                slot = mount(a)?;
             }
             InlineCString<64> *open_path = open_path_for(slot);
             open_path->clear();
@@ -626,17 +625,12 @@ export void launch_menu() {
 
 // --- keyboard shortcuts ----------------------------------------------------------------------
 
-i32 MOD_SHIFT = 1;
-i32 MOD_CTRL = 2;
-i32 MOD_ALT = 4;
-
 // True if `word` (n chars, case-insensitive) is `name`.
 bool word_is(char *word, i32 n, char *name) {
     i32 i = 0;
     while (i < n) {
-        i32 c = word[i] & 0xFF;
-        if (c >= 'A') { if (c <= 'Z') { c = c + 32; } }
-        i32 d = name[i] & 0xFF;
+        i32 c = ascii.to_lower(word[i]);
+        i32 d = ascii.byte(name[i]);
         if (d == 0) { return false; }
         if (c != d) { return false; }
         i++;
@@ -649,34 +643,33 @@ bool word_is(char *word, i32 n, char *name) {
 // case), or a named key in the kernel's keyboard.mln encoding. None if unknown.
 Option<i32> named_key(char *word, i32 n) {
     if (n == 1) {
-        i32 c = word[0] & 0xFF;
-        if (c >= 'A') { if (c <= 'Z') { c = c + 32; } }
+        i32 c = ascii.to_lower(word[0]);
         return Some(c);
     }
-    if (word_is(word, n, "enter")) { return Some(13); }
-    if (word_is(word, n, "return")) { return Some(13); }
-    if (word_is(word, n, "tab")) { return Some(9); }
-    if (word_is(word, n, "escape")) { return Some(27); }
-    if (word_is(word, n, "esc")) { return Some(27); }
-    if (word_is(word, n, "space")) { return Some(32); }
-    if (word_is(word, n, "backspace")) { return Some(8); }
-    if (word_is(word, n, "delete")) { return Some(127); }
-    if (word_is(word, n, "left")) { return Some(0x101); }
-    if (word_is(word, n, "right")) { return Some(0x102); }
-    if (word_is(word, n, "up")) { return Some(0x103); }
-    if (word_is(word, n, "down")) { return Some(0x104); }
-    if (word_is(word, n, "home")) { return Some(0x105); }
-    if (word_is(word, n, "end")) { return Some(0x106); }
-    if (word_is(word, n, "pageup")) { return Some(0x107); }
-    if (word_is(word, n, "pagedown")) { return Some(0x108); }
+    if (word_is(word, n, "enter")) { return Some(KeyCode::ENTER); }
+    if (word_is(word, n, "return")) { return Some(KeyCode::ENTER); }
+    if (word_is(word, n, "tab")) { return Some(KeyCode::TAB); }
+    if (word_is(word, n, "escape")) { return Some(KeyCode::ESCAPE); }
+    if (word_is(word, n, "esc")) { return Some(KeyCode::ESCAPE); }
+    if (word_is(word, n, "space")) { return Some(KeyCode::SPACE); }
+    if (word_is(word, n, "backspace")) { return Some(KeyCode::BACKSPACE); }
+    if (word_is(word, n, "delete")) { return Some(KeyCode::DELETE); }
+    if (word_is(word, n, "left")) { return Some(KeyCode::LEFT); }
+    if (word_is(word, n, "right")) { return Some(KeyCode::RIGHT); }
+    if (word_is(word, n, "up")) { return Some(KeyCode::UP); }
+    if (word_is(word, n, "down")) { return Some(KeyCode::DOWN); }
+    if (word_is(word, n, "home")) { return Some(KeyCode::HOME); }
+    if (word_is(word, n, "end")) { return Some(KeyCode::END); }
+    if (word_is(word, n, "pageup")) { return Some(KeyCode::PAGE_UP); }
+    if (word_is(word, n, "pagedown")) { return Some(KeyCode::PAGE_DOWN); }
     if (n >= 2) {
-        if (word[0] == 'F') {
+        if (ascii.to_lower(word[0]) == 'f') {
             Result<i32, ParseIntError> parsed = str.atoi(&word[1]);
             i32 f = case parsed of {
                 Ok(value) -> value;
                 Err(_) -> ({ return None; });
             };
-            if (f >= 1) { if (f <= 12) { return Some(0x120 + f); } }
+            if (f >= 1) { if (f <= 12) { return Some(KeyCode::F1 + f - 1); } }
         }
     }
     return None;
@@ -700,9 +693,9 @@ bool key_spec_matches(char *spec, i32 code, i32 mods) {
                 if (spec[i + 1] != 0) { return false; }
                 n = 1;
             } else {
-                if (word_is(&spec[start], n, "ctrl")) { want_mods = want_mods | MOD_CTRL; }
-                else if (word_is(&spec[start], n, "shift")) { want_mods = want_mods | MOD_SHIFT; }
-                else if (word_is(&spec[start], n, "alt")) { want_mods = want_mods | MOD_ALT; }
+                if (word_is(&spec[start], n, "ctrl")) { want_mods = want_mods | KeyModifier::CTRL; }
+                else if (word_is(&spec[start], n, "shift")) { want_mods = want_mods | KeyModifier::SHIFT; }
+                else if (word_is(&spec[start], n, "alt")) { want_mods = want_mods | KeyModifier::ALT; }
                 else { return false; }
                 i++;
                 continue;
@@ -778,14 +771,14 @@ void release_claims(i32 owner) {
  * Tests a key-down event against one process's registered shortcuts.
  * @param owner Process ID of the active window's owner.
  * @param code Encoded key code from the keyboard driver.
- * @param mods Modifier bitmask using MOD_SHIFT, MOD_CTRL, and MOD_ALT.
- * @return 1 when a matching shortcut event was sent; otherwise 0.
+ * @param mods KeyModifier bitmask from the shared keyboard contract.
+ * @return True when a matching shortcut event was sent.
  */
-export i32 dispatch_key(i32 owner, i32 code, i32 mods) {
-    if (owner == 0) { return 0; }
+export bool dispatch_key(i32 owner, i32 code, i32 mods) {
+    if (owner == 0) { return false; }
     i32 slot = case slot_of_owner(owner) of {
         Some(v) -> v;
-        None -> ({ return 0; });
+        None -> ({ return false; });
     };
     i32 i = 0;
     while (i < claim_count) {
@@ -794,19 +787,19 @@ export i32 dispatch_key(i32 owner, i32 code, i32 mods) {
             if (key_spec_matches(claim->spec.as_ptr(), code, mods)) {
                 AppInstance instance = case instances[slot] of {
                     Some(value) -> value;
-                    None -> ({ return 0; });
+                    None -> ({ return false; });
                 };
                 i32 window = case instance.win of {
                     Some(value) -> value;
-                    None -> ({ return 0; });
+                    None -> ({ return false; });
                 };
                 push_app_event(owner, window, ShellEventKind::KEY, code | (mods << 16), i + 1, (char*)0);
-                return 1;
+                return true;
             }
         }
         i++;
     }
-    return 0;
+    return false;
 }
 
 // Read the disk and wire the shell to the desktop: taskbar launcher,

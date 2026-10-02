@@ -31,7 +31,7 @@ import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
  * @return DOM Node ID.
  */
 export Result<i32, UiError> create_window(char *title, i32 x, i32 y, i32 w, i32 h) {
-    i32 id = case dom.create_node(NodeKind::WINDOW, title) of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
+    i32 id = dom.create_node(NodeKind::WINDOW, title)?;
     dom.set_role(id, NodeRole::WINDOW);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     dom.set_text(id, title);
@@ -51,7 +51,7 @@ export Result<i32, UiError> create_window(char *title, i32 x, i32 y, i32 w, i32 
  * @return DOM Node ID.
  */
 export Result<i32, UiError> create_button(char *label, i32 x, i32 y, i32 w, i32 h) {
-    i32 id = case dom.create_node(NodeKind::BUTTON, label) of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
+    i32 id = dom.create_node(NodeKind::BUTTON, label)?;
     dom.set_role(id, NodeRole::BUTTON);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     dom.set_text(id, label);
@@ -69,7 +69,7 @@ export Result<i32, UiError> create_button(char *label, i32 x, i32 y, i32 w, i32 
  * @return DOM Node ID.
  */
 export Result<i32, UiError> create_text(char *text, i32 x, i32 y) {
-    i32 id = case dom.create_node(NodeKind::TEXT, text) of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
+    i32 id = dom.create_node(NodeKind::TEXT, text)?;
     dom.set_role(id, NodeRole::TEXT);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), 0, 0);
     dom.set_text(id, text);
@@ -89,7 +89,7 @@ export Result<i32, UiError> create_text(char *text, i32 x, i32 y) {
  */
 export Result<i32, UiError> create_box(i32 x, i32 y, i32 w, i32 h,
                       i32 background, i32 border) {
-    i32 id = case dom.create_node(NodeKind::BOX, "box") of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
+    i32 id = dom.create_node(NodeKind::BOX, "box")?;
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     dom.set_colors(id, background, border);
     dom.set_state_flag(id, NodeState::VISIBLE, 1);
@@ -106,7 +106,7 @@ export Result<i32, UiError> create_box(i32 x, i32 y, i32 w, i32 h,
  * @return DOM Node ID.
  */
 export Result<i32, UiError> create_panel(i32 x, i32 y, i32 w, i32 h, i32 radius) {
-    i32 id = case dom.create_node(NodeKind::PANEL, "panel") of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
+    i32 id = dom.create_node(NodeKind::PANEL, "panel")?;
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     Node *n = dom.node_ptr(id);
     n->radius = (u16)dom.scale_ui(radius);
@@ -126,7 +126,7 @@ export Result<i32, UiError> create_panel(i32 x, i32 y, i32 w, i32 h, i32 radius)
  */
 export Result<i32, UiError> create_column(i32 x, i32 y, i32 w, i32 h,
                          i32 padding, i32 gap) {
-    i32 id = case dom.create_node(NodeKind::COLUMN, "column") of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
+    i32 id = dom.create_node(NodeKind::COLUMN, "column")?;
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     dom.set_column_layout(id, dom.scale_ui(padding), dom.scale_ui(gap));
     dom.set_state_flag(id, NodeState::VISIBLE, 1);
@@ -145,7 +145,7 @@ export Result<i32, UiError> create_column(i32 x, i32 y, i32 w, i32 h,
  */
 export Result<i32, UiError> create_row(i32 x, i32 y, i32 w, i32 h,
                       i32 padding, i32 gap) {
-    i32 id = case dom.create_node(NodeKind::ROW, "row") of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
+    i32 id = dom.create_node(NodeKind::ROW, "row")?;
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     dom.set_column_layout(id, dom.scale_ui(padding), dom.scale_ui(gap));
     dom.set_state_flag(id, NodeState::VISIBLE, 1);
@@ -164,7 +164,7 @@ export Result<i32, UiError> create_row(i32 x, i32 y, i32 w, i32 h,
  */
 export Result<i32, UiError> create_text_input(char *placeholder, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
     if (capacity < 2) { capacity = 2; }
-    i32 id = case dom.create_node(NodeKind::TEXT_INPUT, placeholder) of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
+    i32 id = dom.create_node(NodeKind::TEXT_INPUT, placeholder)?;
     dom.set_role(id, NodeRole::TEXTBOX);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     Node *n = dom.node_ptr(id);
@@ -193,10 +193,10 @@ export Result<i32, UiError> create_text_input(char *placeholder, i32 x, i32 y, i
  * @return DOM Node ID.
  */
 export Result<i32, UiError> create_checkbox(char *label, i32 x, i32 y, i32 checked) {
-    i32 id = case dom.create_node(NodeKind::CHECKBOX, label) of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
+    i32 id = dom.create_node(NodeKind::CHECKBOX, label)?;
     dom.set_role(id, NodeRole::CHECKBOX);
     i32 s = dom.ui_scale();
-    i32 box = theme.checkbox_size() * s;
+    i32 box = theme.CHECKBOX_SIZE * s;
     i32 tw = ui_metrics.text_width(label, 0, s);
     i32 th = ui_metrics.text_height(0, s);
     i32 h = box;
@@ -218,7 +218,7 @@ export Result<i32, UiError> create_checkbox(char *label, i32 x, i32 y, i32 check
  * @return DOM Node ID.
  */
 export Result<i32, UiError> create_separator(i32 x, i32 y, i32 w) {
-    i32 id = case dom.create_node(NodeKind::SEPARATOR, "separator") of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
+    i32 id = dom.create_node(NodeKind::SEPARATOR, "separator")?;
     dom.set_role(id, NodeRole::SEPARATOR);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.ui_scale());
     dom.set_state_flag(id, NodeState::VISIBLE, 1);
@@ -238,7 +238,7 @@ export Result<i32, UiError> create_separator(i32 x, i32 y, i32 w) {
  */
 export Result<i32, UiError> create_text_area(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 readonly) {
     if (capacity < 2) { capacity = 2; }
-    i32 id = case dom.create_node(NodeKind::TEXT_AREA, name) of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
+    i32 id = dom.create_node(NodeKind::TEXT_AREA, name)?;
     dom.set_role(id, NodeRole::TEXTAREA);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     Node *n = dom.node_ptr(id);
@@ -272,7 +272,7 @@ export Result<i32, UiError> create_text_area(char *name, i32 x, i32 y, i32 w, i3
  */
 export Result<i32, UiError> create_list(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
     if (capacity < 2) { capacity = 2; }
-    i32 id = case dom.create_node(NodeKind::LIST, name) of { Ok(v) -> v; Err(e) -> ({ return Err(e); }); };
+    i32 id = dom.create_node(NodeKind::LIST, name)?;
     dom.set_role(id, NodeRole::LIST);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     Node *n = dom.node_ptr(id);
@@ -298,7 +298,7 @@ export Result<i32, UiError> create_list(char *name, i32 x, i32 y, i32 w, i32 h, 
  * @param role NodeRole value.
  * @return Role name string.
  */
-export char* role_name(i32 role) {
+export char* role_name(NodeRole role) {
     if (role == NodeRole::TEXTAREA) { return "textarea"; }
     if (role == NodeRole::LIST) { return "list"; }
     if (role == NodeRole::MENU) { return "menu"; }

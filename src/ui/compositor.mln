@@ -11,6 +11,7 @@ import dom_render from "dom/dom_render.mln";
 import { TaskbarTarget } from "dom/dom_render.mln";
 import graphics from "graphics.mln";
 import mouse from "../../../MyKernel/src/io/mouse.mln";
+import { PointerButton } from "../../../../contracts/input/pointer.contract.mln";
 import keyboard from "../../../MyKernel/src/io/keyboard.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import irq from "../../../MyKernel/src/arch/irq.mln";
@@ -146,7 +147,7 @@ void on_press(i32 ex, i32 ey) {
         case dom_render.taskbar_target_at(ex, ey) of {
             TaskbarTarget::Window(target) -> dom_widgets.focus_window(target);
             TaskbarTarget::Launcher -> ({
-                i32 handler = dom.get_g_launcher();
+                i32 handler = dom.launcher_handler();
                 if (handler != 0) { handler(); }
             });
             TaskbarTarget::Miss -> 0;
@@ -184,7 +185,7 @@ void on_press(i32 ex, i32 ey) {
         return;
     }
 
-    i32 kind = case dom.kind_of(hit) of {
+    NodeKind kind = case dom.kind_of(hit) of {
         Some(v) -> v;
         None -> ({ return; });
     };
@@ -323,8 +324,8 @@ export void run() {
             i32 btn = mouse.event_btn();
             i32 wheel = mouse.event_wheel();
             mouse.pop_event();
-            i32 eb = btn & 1;
-            i32 er = btn & 2;
+            i32 eb = btn & PointerButton::LEFT;
+            i32 er = btn & PointerButton::RIGHT;
 
             if (eb) {
                 if (!prev_left) {

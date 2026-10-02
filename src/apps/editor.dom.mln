@@ -8,6 +8,7 @@ import { Result } from "@std/core/result.mln";
 import { FsError } from "../../../../contracts/io/fs.contract.mln";
 import { UiError } from "../../../../contracts/ui/widget.contract.mln";
 import { InlineCString } from "@std/text/inline_c_string.mln";
+import { KeyEventType, KeyCode } from "../../../../contracts/input/keyboard.contract.mln";
 
 // Text editor: a TextArea over one file on the MFS disk. Save rewrites the
 // file (MFS writes are append-only, so the file is removed and recreated).
@@ -85,7 +86,7 @@ void (Editor *e) open(char *path) {
     }
     fs.close(fd);
     // area_append leaves the caret at the end; start at the top instead.
-    ui.send_key(1, 0x105, 0); // Home of the last line
+    ui.send_key(KeyEventType::DOWN, KeyCode::HOME, 0); // Home of the last line
     ui.set_text_fmt(e->status, "loaded %d bytes", total, 0);
 }
 

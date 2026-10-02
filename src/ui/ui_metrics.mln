@@ -34,13 +34,13 @@ export i32 text_height(i32 bold, i32 scale) {
 }
 
 /** Returns the logical titlebar height from the active theme. */
-export i32 titlebar_height() { return theme.titlebar_h(); }
+export i32 titlebar_height() { return theme.TITLEBAR_H; }
 
 /** Returns the logical taskbar height from the active theme. */
-export i32 taskbar_height() { return theme.taskbar_h(); }
+export i32 taskbar_height() { return theme.TASKBAR_H; }
 
 /** Returns the logical window shadow extent from the active theme. */
-export i32 window_shadow_size() { return theme.shadow_size(); }
+export i32 window_shadow_size() { return theme.SHADOW_SIZE; }
 
 /** Returns the logical window shadow offset from the active theme. */
-export i32 window_shadow_offset() { return theme.shadow_offset(); }
+export i32 window_shadow_offset() { return theme.SHADOW_OFFSET; }

@@ -1,262 +1,79 @@
 package theme;
 
-import graphics from "graphics.mln";
+// Desktop theme constants. Colors use the same 0xAARRGGBB representation as
+// graphics.rgba; RGB colors leave the alpha byte at zero. Metrics are logical
+// pixels in the 1024x768 design space and callers apply the current UI scale.
 
-// Desktop theme: every colour and metric the renderer uses, in one place.
-// Colours are graphics.rgb()/rgba() values; metrics are in logical pixels
-// (the 1024x768 design space) and callers multiply by dom.ui_scale().
-//
-// Exposed as functions rather than globals because a MyLang package cannot
-// read another package's exported globals, only call its functions.
-//
-// The look: a deep blue-grey desktop gradient, light windows with a soft
-// shadow and an 8px corner radius, a blue accent for primary actions and
-// focus rings, and a translucent dark taskbar along the bottom edge.
+// Desktop
+export const i32 DESKTOP_TOP = 0x2B3A5C;
+export const i32 DESKTOP_BOTTOM = 0x0E1424;
 
-// --- desktop ---------------------------------------------------------------
-/** Desktop gradient top background color.
- * @return Encoded RGB color value.
- */
-export i32 desktop_top()    { return graphics.rgb(0x2B, 0x3A, 0x5C); }
-/** Desktop gradient bottom background color.
- * @return Encoded RGB color value.
- */
-export i32 desktop_bottom() { return graphics.rgb(0x0E, 0x14, 0x24); }
+// Accent
+export const i32 ACCENT = 0x3B82F6;
+export const i32 ACCENT_HOVER = 0x609AF8;
+export const i32 ACCENT_PRESSED = 0x2563EB;
+export const i32 ON_ACCENT = 0xFFFFFF;
 
-// --- accent ----------------------------------------------------------------
-/** Primary UI accent color.
- * @return Encoded RGB color value.
- */
-export i32 accent()         { return graphics.rgb(0x3B, 0x82, 0xF6); }
-/** Accent color on hover.
- * @return Encoded RGB color value.
- */
-export i32 accent_hover()   { return graphics.rgb(0x60, 0x9A, 0xF8); }
-/** Accent color when pressed.
- * @return Encoded RGB color value.
- */
-export i32 accent_pressed() { return graphics.rgb(0x25, 0x63, 0xEB); }
-/** Foreground color displayed on top of accent color.
- * @return Encoded RGB color value.
- */
-export i32 on_accent()      { return graphics.rgb(0xFF, 0xFF, 0xFF); }
+// Text
+export const i32 TEXT_PRIMARY = 0x1F2328;
+export const i32 TEXT_SECONDARY = 0x6B7280;
+export const i32 TEXT_DISABLED = 0xA0A6B0;
+export const i32 TEXT_ON_DARK = 0xF3F4F6;
+export const i32 TEXT_ON_DARK_DIM = 0xA8B0BE;
 
-// --- text ------------------------------------------------------------------
-/** Primary text color for light backgrounds.
- * @return Encoded RGB color value.
- */
-export i32 text_primary()   { return graphics.rgb(0x1F, 0x23, 0x28); }
-/** Secondary/subdued text color.
- * @return Encoded RGB color value.
- */
-export i32 text_secondary() { return graphics.rgb(0x6B, 0x72, 0x80); }
-/** Disabled text color.
- * @return Encoded RGB color value.
- */
-export i32 text_disabled()  { return graphics.rgb(0xA0, 0xA6, 0xB0); }
-/** Text color on dark surfaces.
- * @return Encoded RGB color value.
- */
-export i32 text_on_dark()   { return graphics.rgb(0xF3, 0xF4, 0xF6); }
-/** Dimmed text color on dark surfaces.
- * @return Encoded RGB color value.
- */
-export i32 text_on_dark_dim() { return graphics.rgb(0xA8, 0xB0, 0xBE); }
+// Window
+export const i32 WINDOW_BG = 0xF6F7F9;
+export const i32 WINDOW_BORDER = 0x46000000;
+export const i32 WINDOW_BORDER_INACTIVE = 0x2D000000;
+export const i32 TITLEBAR_TOP = 0xECEEF2;
+export const i32 TITLEBAR_BOTTOM = 0xDFE2E8;
+export const i32 TITLEBAR_INACTIVE = 0xF0F1F4;
+export const i32 TITLEBAR_DIVIDER = 0x23000000;
+export const i32 CLOSE_BUTTON = 0xFF5F57;
+export const i32 CLOSE_BUTTON_RING = 0x2D000000;
+export const i32 CLOSE_BUTTON_INACTIVE = 0xC8CBD1;
+export const i32 CLOSE_BUTTON_HOVER = 0xE0443E;
+export const i32 MINIMIZE_BUTTON = 0xFEBC2E;
+export const i32 MAXIMIZE_BUTTON = 0x28C840;
+export const i32 CLOSE_GLYPH = 0x4A0000;
 
-// --- window ----------------------------------------------------------------
-/** Window content background color.
- * @return Encoded RGB color value.
- */
-export i32 window_bg()              { return graphics.rgb(0xF6, 0xF7, 0xF9); }
-/** Active window border color with alpha.
- * @return Encoded RGBA color value.
- */
-export i32 window_border()          { return graphics.rgba(0x00, 0x00, 0x00, 70); }
-/** Inactive window border color with alpha.
- * @return Encoded RGBA color value.
- */
-export i32 window_border_inactive() { return graphics.rgba(0x00, 0x00, 0x00, 45); }
-/** Active window titlebar gradient top color.
- * @return Encoded RGB color value.
- */
-export i32 titlebar_top()           { return graphics.rgb(0xEC, 0xEE, 0xF2); }
-/** Active window titlebar gradient bottom color.
- * @return Encoded RGB color value.
- */
-export i32 titlebar_bottom()        { return graphics.rgb(0xDF, 0xE2, 0xE8); }
-/** Inactive window titlebar background color.
- * @return Encoded RGB color value.
- */
-export i32 titlebar_inactive()      { return graphics.rgb(0xF0, 0xF1, 0xF4); }
-/** Divider line color below window titlebar.
- * @return Encoded RGBA color value.
- */
-export i32 titlebar_divider()       { return graphics.rgba(0x00, 0x00, 0x00, 35); }
-/** Window close button color.
- * @return Encoded RGB color value.
- */
-export i32 close_button()           { return graphics.rgb(0xFF, 0x5F, 0x57); }
-/** Border ring color around close button.
- * @return Encoded RGBA color value.
- */
-export i32 close_button_ring()      { return graphics.rgba(0x00, 0x00, 0x00, 45); }
-/** Inactive window close button color.
- * @return Encoded RGB color value.
- */
-export i32 close_button_inactive()  { return graphics.rgb(0xC8, 0xCB, 0xD1); }
-/** Close button hover state color.
- * @return Encoded RGB color value.
- */
-export i32 close_button_hover()     { return graphics.rgb(0xE0, 0x44, 0x3E); }
-/** Window minimize button color.
- * @return Encoded RGB color value.
- */
-export i32 minimize_button()        { return graphics.rgb(0xFE, 0xBC, 0x2E); }
-/** Window maximize button color.
- * @return Encoded RGB color value.
- */
-export i32 maximize_button()        { return graphics.rgb(0x28, 0xC8, 0x40); }
-/** Symbol color inside close button.
- * @return Encoded RGB color value.
- */
-export i32 close_glyph()            { return graphics.rgb(0x4A, 0x00, 0x00); }
+export const i32 TITLEBAR_H = 32;
+export const i32 WINDOW_RADIUS = 8;
+export const i32 SHADOW_SIZE = 12;
+export const i32 SHADOW_OFFSET = 5;
+export const i32 SHADOW_ALPHA = 90;
+export const i32 SHADOW_ALPHA_INACTIVE = 50;
 
-/** Window titlebar height in logical pixels.
- * @return Height in logical pixels.
- */
-export i32 titlebar_h()        { return 32; }
-/** Window corner radius in logical pixels.
- * @return Radius in logical pixels.
- */
-export i32 window_radius()     { return 8; }
-/** Drop shadow blur size in logical pixels.
- * @return Shadow size in logical pixels.
- */
-export i32 shadow_size()       { return 12; }
-/** Drop shadow vertical offset in logical pixels.
- * @return Vertical offset in logical pixels.
- */
-export i32 shadow_offset()     { return 5; }
-/** Drop shadow alpha opacity for active windows.
- * @return Alpha value used by the renderer.
- */
-export i32 shadow_alpha()      { return 90; }
-/** Drop shadow alpha opacity for inactive windows.
- * @return Alpha value used by the renderer.
- */
-export i32 shadow_alpha_inactive() { return 50; }
+// Controls
+export const i32 BUTTON_FACE = 0xFFFFFF;
+export const i32 BUTTON_FACE_HOVER = 0xF1F3F7;
+export const i32 BUTTON_FACE_PRESSED = 0xE2E6EC;
+export const i32 BUTTON_BORDER = 0x37000000;
+export const i32 BUTTON_RADIUS = 6;
 
-// --- controls ----------------------------------------------------------------
-/** Default button surface color.
- * @return Encoded RGB color value.
- */
-export i32 button_face()         { return graphics.rgb(0xFF, 0xFF, 0xFF); }
-/** Button surface color when hovered.
- * @return Encoded RGB color value.
- */
-export i32 button_face_hover()   { return graphics.rgb(0xF1, 0xF3, 0xF7); }
-/** Button surface color when pressed.
- * @return Encoded RGB color value.
- */
-export i32 button_face_pressed() { return graphics.rgb(0xE2, 0xE6, 0xEC); }
-/** Button outline border color.
- * @return Encoded RGBA color value.
- */
-export i32 button_border()       { return graphics.rgba(0x00, 0x00, 0x00, 55); }
-/** Button corner radius in logical pixels.
- * @return Radius in logical pixels.
- */
-export i32 button_radius()       { return 6; }
+export const i32 PANEL_BG = 0xFFFFFF;
+export const i32 PANEL_BORDER = 0x1E000000;
+export const i32 SEPARATOR = 0x1E000000;
 
-/** Panel background color.
- * @return Encoded RGB color value.
- */
-export i32 panel_bg()      { return graphics.rgb(0xFF, 0xFF, 0xFF); }
-/** Panel border color.
- * @return Encoded RGBA color value.
- */
-export i32 panel_border()  { return graphics.rgba(0x00, 0x00, 0x00, 30); }
-/** Separator line color.
- * @return Encoded RGBA color value.
- */
-export i32 separator()     { return graphics.rgba(0x00, 0x00, 0x00, 30); }
+export const i32 INPUT_BG = 0xFFFFFF;
+export const i32 INPUT_BORDER = 0x3C000000;
+export const i32 INPUT_BORDER_FOCUS = 0x3B82F6;
+export const i32 INPUT_PLACEHOLDER = 0xA0A6B0;
+export const i32 CARET = 0x3B82F6;
+export const i32 INPUT_RADIUS = 6;
+export const i32 INPUT_PADDING_X = 8;
 
-/** Text input background color.
- * @return Encoded RGB color value.
- */
-export i32 input_bg()            { return graphics.rgb(0xFF, 0xFF, 0xFF); }
-/** Text input border color.
- * @return Encoded RGBA color value.
- */
-export i32 input_border()        { return graphics.rgba(0x00, 0x00, 0x00, 60); }
-/** Text input focused border color.
- * @return Encoded RGB color value.
- */
-export i32 input_border_focus()  { return accent(); }
-/** Text input placeholder text color.
- * @return Encoded RGB color value.
- */
-export i32 input_placeholder()   { return text_disabled(); }
-/** Text input caret color.
- * @return Encoded RGB color value.
- */
-export i32 caret()               { return accent(); }
-/** Text input corner radius in logical pixels.
- * @return Radius in logical pixels.
- */
-export i32 input_radius()        { return 6; }
-/** Text input horizontal padding in logical pixels.
- * @return Padding in logical pixels.
- */
-export i32 input_padding_x()     { return 8; }
+export const i32 CHECKBOX_SIZE = 18;
+export const i32 CHECKBOX_RADIUS = 4;
+export const i32 CHECKBOX_BORDER = 0x50000000;
+export const i32 CHECKBOX_BG = 0xFFFFFF;
 
-/** Checkbox size in logical pixels.
- * @return Checkbox edge length in logical pixels.
- */
-export i32 checkbox_size()       { return 18; }
-/** Checkbox corner radius in logical pixels.
- * @return Radius in logical pixels.
- */
-export i32 checkbox_radius()     { return 4; }
-/** Checkbox border color.
- * @return Encoded RGBA color value.
- */
-export i32 checkbox_border()     { return graphics.rgba(0x00, 0x00, 0x00, 80); }
-/** Checkbox background color.
- * @return Encoded RGB color value.
- */
-export i32 checkbox_bg()         { return graphics.rgb(0xFF, 0xFF, 0xFF); }
-
-// --- taskbar -------------------------------------------------------------------
-/** Taskbar height in logical pixels.
- * @return Height in logical pixels.
- */
-export i32 taskbar_h()          { return 40; }
-/** Taskbar background color with alpha.
- * @return Encoded RGBA color value.
- */
-export i32 taskbar_bg()         { return graphics.rgba(0x10, 0x14, 0x1E, 225); }
-/** Top edge highlight line color of taskbar.
- * @return Encoded RGBA color value.
- */
-export i32 taskbar_edge()       { return graphics.rgba(0xFF, 0xFF, 0xFF, 28); }
-/** Taskbar window item background color.
- * @return Encoded RGBA color value.
- */
-export i32 taskbar_entry()      { return graphics.rgba(0xFF, 0xFF, 0xFF, 22); }
-/** Active taskbar window item background color.
- * @return Encoded RGBA color value.
- */
-export i32 taskbar_entry_active() { return graphics.rgba(0xFF, 0xFF, 0xFF, 50); }
-/** Width of a taskbar entry button in logical pixels.
- * @return Width in logical pixels.
- */
-export i32 taskbar_entry_w()    { return 168; }
-/** Corner radius of taskbar entry button.
- * @return Radius in logical pixels.
- */
-export i32 taskbar_entry_radius() { return 6; }
-/** Launcher button width on taskbar.
- * @return Width in logical pixels.
- */
-export i32 taskbar_launcher_w() { return 88; }
+// Taskbar
+export const i32 TASKBAR_H = 40;
+export const i32 TASKBAR_BG = 0xE110141E;
+export const i32 TASKBAR_EDGE = 0x1CFFFFFF;
+export const i32 TASKBAR_ENTRY = 0x16FFFFFF;
+export const i32 TASKBAR_ENTRY_ACTIVE = 0x32FFFFFF;
+export const i32 TASKBAR_ENTRY_W = 168;
+export const i32 TASKBAR_ENTRY_RADIUS = 6;
+export const i32 TASKBAR_LAUNCHER_W = 88;

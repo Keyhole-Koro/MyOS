@@ -1,5 +1,7 @@
 package font;
 
+import bytes from "@std/text/bytes.mln";
+
 // 8x8 bitmap font for printable ASCII 0x20 (space) .. 0x7E (~).
 // Each glyph is 8 bytes, one per row, top to bottom. Within a row the most
 // significant bit is the leftmost pixel. Index for character `c` is
@@ -8,21 +10,11 @@ package font;
 // 95 glyphs * 8 = 760 bytes, laid down as a static char[] initializer (relies
 // on the global array-init codegen).
 //
-// Glyph dimensions are a fixed 8x8; callers use glyph_w()/glyph_h() since
-// MyLang cannot read another module's exported globals, only call its
-// functions.
+/** Width of each bitmap glyph in pixels. */
+export const i32 GLYPH_WIDTH = 8;
 
-/**
- * Returns the width of each 8x8 font glyph in pixels.
- * @return Glyph width (8).
- */
-export i32 glyph_w() { return 8; }
-
-/**
- * Returns the height of each 8x8 font glyph in pixels.
- * @return Glyph height (8).
- */
-export i32 glyph_h() { return 8; }
+/** Height of each bitmap glyph in pixels. */
+export const i32 GLYPH_HEIGHT = 8;
 
 char glyphs[760] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 0x20 ' '
@@ -132,10 +124,9 @@ char glyphs[760] = {
  * @return 8-bit row bitmap coverage.
  */
 export i32 glyph_row(i32 ch, i32 row) {
-    if (ch < 0x20) { return 0; }
-    if (ch > 0x7E) { return 0; }
+    if (ch < ' ' || ch > '~') { return 0; }
     if (row < 0) { return 0; }
     if (row > 7) { return 0; }
-    i32 idx = (ch - 0x20) * 8 + row;
-    return (i32)glyphs[idx] & 0xFF;
+    i32 idx = (ch - ' ') * 8 + row;
+    return bytes.as_unsigned(glyphs[idx]);
 }

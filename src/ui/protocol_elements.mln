@@ -28,10 +28,7 @@ import { UiError } from "../../../../contracts/ui/widget.contract.mln";
  */
 Result<_, UiError> tag(i32 id, char *testId) {
     if (testId[0] != 0) {
-        char *copy = case dup_string(testId) of {
-            Ok(value) -> value;
-            Err(e) -> ({ return Err(e); });
-        };
+        char *copy = dup_string(testId)?;
         dom.set_test_id(id, copy);
     }
     return Ok(_);
@@ -82,10 +79,7 @@ export Result<i32, UiError> create(Request *m) {
     if (op == UiOp::CREATE_TIMER) {
         return dom_widgets.create_timer(m->a0, 0); // ticks become TIMER events (owner != 0)
     }
-    char *s0 = case dup_string(m->s0) of {
-        Ok(copy) -> copy;
-        Err(e) -> ({ return Err(e); });
-    }; // the node's name is kept for its lifetime
+    char *s0 = dup_string(m->s0)?; // the node's name is kept for its lifetime
     if (op == UiOp::CREATE_WINDOW) {
         id = case dom_elements.create_window(s0, x, y, w, h) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
         dom.set_text_copy(id, m->s0);

@@ -11,6 +11,7 @@ import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { InlineString } from "@std/text/inline_string.mln";
 import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
+import { NodeRole, NodeState } from "dom.mln";
 
 // Human-readable tree dump (the kernel debug shell's `dump` command) and the
 // machine-readable JSON snapshot for the MYOS-004 UI automation bridge.
@@ -47,10 +48,10 @@ void print_indent(i32 depth) {
  * @param id DOM node ID.
  */
 void dump_props(i32 id) {
-    Result<i32, UiError> role_result = dom.role_of(id);
-    i32 role = case role_result of { Ok(value) -> value; Err(_) -> ({ return; }); };
-    Result<i32, UiError> state_result = dom.state_of(id);
-    i32 state = case state_result of { Ok(value) -> value; Err(_) -> ({ return; }); };
+    Result<NodeRole, UiError> role_result = dom.role_of(id);
+    NodeRole role = case role_result of { Ok(value) -> value; Err(_) -> ({ return; }); };
+    Result<NodeState, UiError> state_result = dom.state_of(id);
+    NodeState state = case state_result of { Ok(value) -> value; Err(_) -> ({ return; }); };
     Option<i32> x_result = dom.node_x(id);
     Option<i32> y_result = dom.node_y(id);
     Option<i32> width_result = dom.node_w(id);
@@ -193,8 +194,8 @@ void automation_node(i32 id) {
         Ok(None) -> 0;
         Err(_) -> ({ return; });
     };
-    Result<i32, UiError> role_result = dom.role_of(id);
-    i32 role = case role_result of { Ok(value) -> value; Err(_) -> ({ return; }); };
+    Result<NodeRole, UiError> role_result = dom.role_of(id);
+    NodeRole role = case role_result of { Ok(value) -> value; Err(_) -> ({ return; }); };
     if (!g_automation_first) { automation_transport.putc(','); }
     g_automation_first = 0;
 

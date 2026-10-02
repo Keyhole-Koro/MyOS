@@ -7,6 +7,7 @@ import serial from "../../../MyKernel/src/io/serial.mln";
 import str from "@std/text/str.mln";
 import { InlineCString } from "@std/text/inline_c_string.mln";
 import { Option } from "@std/core/option.mln";
+import { KeyCode } from "../../../../contracts/input/keyboard.contract.mln";
 
 /**
  * Blocks until a character is available from the serial input queue, sleeping between polls.
@@ -36,11 +37,11 @@ export void run() {
 
         while (1) {
             i32 c = read_char();
-            if (c == 13 || c == 10) {
+            if (c == '\r' || c == '\n') {
                 debug.println("");
                 break;
             }
-            if (c == 8 || c == 127) {
+            if (c == '\b' || c == KeyCode::DELETE) {
                 if (!buf.is_empty()) {
                     buf.truncate(buf.len() - 1);
                     // Backspace, space, backspace to erase char on terminal
