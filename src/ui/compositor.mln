@@ -17,7 +17,7 @@ import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import irq from "../../../MyKernel/src/arch/irq.mln";
 import { UiError } from "../../../../contracts/ui/widget.contract.mln";
 
-i32 window_id_or_zero(i32 id) {
+i32 compositor_window_id_or_zero(i32 id) {
     Result<Option<i32>, UiError> result = dom.window_of(id);
     return case result of {
         Ok(Some(win)) -> win;
@@ -28,12 +28,12 @@ i32 window_id_or_zero(i32 id) {
 
 // Work owned by outer boundary endpoints that must run on this task. Boot wires
 // the callback; the compositor does not depend on request transport.
-i32 g_request_pump = 0;
+fn() -> bool g_request_pump = 0;
 /**
  * Registers the callback that drains work owned by an outer request endpoint.
  * @param pump Callback function pointer, or 0 when no request pump is installed.
  */
-export void set_request_pump(i32 pump) { g_request_pump = pump; }
+export void set_request_pump(fn() -> bool pump) { g_request_pump = pump; }
 
 // Presents the DOM scene and turns mouse and keyboard events into DOM
 // interactions: hover, press/click, window focus and z-order, title-bar
@@ -79,14 +79,14 @@ i32 g_hot_id = 0;
 
 // Desktop context menu (right-click on the wallpaper), registered by main.
 char *g_desktop_menu_items = (char*)0;
-i32 g_desktop_menu_handler = 0;
+fn(i32 index) -> void g_desktop_menu_handler = 0;
 
 /**
  * Registers the desktop wallpaper context menu items and click handler.
  * @param items Null-separated, double-null-terminated menu item string.
  * @param handler Callback function pointer invoked with selected menu index.
  */
-export void set_desktop_menu(char *items, i32 handler) {
+export void set_desktop_menu(char *items, fn(i32 index) -> void handler) {
     g_desktop_menu_items = items;
     g_desktop_menu_handler = handler;
 }
@@ -138,7 +138,7 @@ void on_press(i32 ex, i32 ey) {
     };
 
     // Anything inside a window activates that window first.
-    i32 win = window_id_or_zero(hit);
+    i32 win = compositor_window_id_or_zero(hit);
     if (win != 0) {
         dom_widgets.focus_window(win);
     }
@@ -147,7 +147,7 @@ void on_press(i32 ex, i32 ey) {
         case dom_render.taskbar_target_at(ex, ey) of {
             TaskbarTarget::Window(target) -> dom_widgets.focus_window(target);
             TaskbarTarget::Launcher -> ({
-                i32 handler = dom.launcher_handler();
+                fn() -> void handler = dom.launcher_handler();
                 if (handler != 0) { handler(); }
             });
             TaskbarTarget::Miss -> 0;
@@ -224,7 +224,7 @@ void on_right_press(i32 ex, i32 ey) {
         });
     };
     if (hit == dom.taskbar_id()) { return; }
-    i32 win = window_id_or_zero(hit);
+    i32 win = compositor_window_id_or_zero(hit);
     if (win != 0) {
         dom_widgets.focus_window(win);
         if (dom_widgets.is_maximized(win)) {

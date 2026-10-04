@@ -13,13 +13,13 @@ export enum UiEventKind {
     TIMER,
 }
 
-i32 g_sink = 0;
+fn(i32 owner, i32 id, i32 kind, i32 arg) -> void g_sink = 0;
 
 /**
  * Installs the callback that receives events produced by UI nodes.
  * @param sink Callback with signature (owner, node_id, kind, argument), or 0 to disable delivery.
  */
-export void set_sink(i32 sink) { g_sink = sink; }
+export void set_sink(fn(i32 owner, i32 id, i32 kind, i32 arg) -> void sink) { g_sink = sink; }
 
 /**
  * Sends a UI event to the currently installed event callback.

@@ -39,9 +39,8 @@ bool writes_typed_result(i32 op) {
 export RequestStatus handle(Request *m) {
     i32 outer = dom.current_owner();
     dom.set_current_owner(m->owner);
-    RequestStatus status = run_request(m);
-    dom.set_current_owner(outer);
-    return status;
+    defer dom.set_current_owner(outer);
+    return run_request(m);
 }
 
 /**
@@ -194,8 +193,8 @@ void input_set(i32 id, char *s) { dom_widgets.set_input_text(id, s); }
  */
 void area_append(i32 id, char *s) {
     i32 was = irq.save_disable();
+    defer irq.restore(was);
     dom_widgets.append_text(id, s);
-    irq.restore(was);
 }
 
 /**

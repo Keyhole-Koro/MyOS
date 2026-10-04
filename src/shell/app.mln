@@ -75,20 +75,22 @@ i32 registry_count = 0;
 
 // Outbound ports installed by boundary endpoints. The shell owns lifecycle
 // policy but does not depend on the transport that delivers it.
-i32 event_sink = 0;
-i32 process_gone_sink = 0;
+fn(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) -> void event_sink = 0;
+fn(i32 pid) -> void process_gone_sink = 0;
 
 /**
  * Installs the callback used to deliver application lifecycle and shortcut events.
  * @param sink Callback with signature (owner, node_id, kind, arg, token, text), or 0 to disable.
  */
-export void set_event_sink(i32 sink) { event_sink = sink; }
+export void set_event_sink(
+    fn(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) -> void sink
+) { event_sink = sink; }
 
 /**
  * Installs the callback invoked after an exited child process is reaped.
  * @param sink Callback accepting the process ID, or 0 when no callback is needed.
  */
-export void set_process_gone_sink(i32 sink) { process_gone_sink = sink; }
+export void set_process_gone_sink(fn(i32 pid) -> void sink) { process_gone_sink = sink; }
 
 /**
  * Forwards an application event through the configured event endpoint.

@@ -10,6 +10,7 @@
 package app_events;
 
 import ipc from "../../../MyKernel/src/kernel/ipc.mln";
+import { ChannelId } from "../../../MyKernel/src/kernel/ipc.mln";
 import { EventKind, TransportSignal } from "../../../../contracts/myapp/message.contract.mln";
 import ui_event from "../ui/events.mln";
 import { UiEventKind } from "../ui/events.mln";
@@ -26,7 +27,7 @@ i32 OWNERS_MAX = 16;
  */
 struct EventBinding {
     i32 owner;        // pid, 0 = free
-    i32 channel;
+    ChannelId channel;
 };
 EventBinding event_bindings[16];
 
@@ -87,7 +88,7 @@ export void push_shell(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *te
  * @param owner Process ID.
  * @param channel Kernel IPC channel handle.
  */
-export void bind(i32 owner, i32 channel) {
+export void bind(i32 owner, ChannelId channel) {
     i32 free = -1;
     i32 i = 0;
     while (i < OWNERS_MAX) {
@@ -106,7 +107,7 @@ export void bind(i32 owner, i32 channel) {
  * @param owner Process ID.
  * @return Some(channel) if bound, or None if this owner has no event channel.
  */
-Option<i32> channel_of(i32 owner) {
+Option<ChannelId> channel_of(i32 owner) {
     i32 i = 0;
     while (i < OWNERS_MAX) {
         if (event_bindings[i].owner == owner) { return Some(event_bindings[i].channel); }
@@ -139,8 +140,8 @@ export i32 dropped() { return dropped_count; }
  * @param text Optional text copied into the queued event's inline payload.
  */
 export void push(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) {
-    Option<i32> bound = channel_of(owner);
-    i32 ch = case bound of {
+    Option<ChannelId> bound = channel_of(owner);
+    ChannelId ch = case bound of {
         Some(value) -> value;
         None -> ({ return; });
     };

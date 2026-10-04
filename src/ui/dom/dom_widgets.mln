@@ -15,7 +15,7 @@ import ascii from "@std/text/ascii.mln";
 import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
 import { KeyEventType, KeyModifier, KeyCode } from "../../../../../contracts/input/keyboard.contract.mln";
 
-i32 child_id_or_zero(Result<Option<i32>, UiError> result) {
+i32 widgets_child_id_or_zero(Result<Option<i32>, UiError> result) {
     return case result of {
         Ok(Some(id)) -> id;
         Ok(None) -> 0;
@@ -23,7 +23,7 @@ i32 child_id_or_zero(Result<Option<i32>, UiError> result) {
     };
 }
 
-i32 window_id_or_zero(i32 id) {
+i32 widgets_window_id_or_zero(i32 id) {
     Result<Option<i32>, UiError> result = dom.window_of(id);
     return case result of {
         Ok(Some(win)) -> win;
@@ -37,8 +37,9 @@ i32 owner_id_or_zero(i32 id) {
     return case result of { Ok(owner) -> owner; Err(_) -> 0; };
 }
 
-i32 close_handler_or_zero(i32 id) {
-    Result<Option<i32>, UiError> result = dom.on_close_of(id);
+fn(i32 owner, i32 id, i32 arg) -> void close_handler_or_zero(i32 id) {
+    Result<Option<fn(i32 owner, i32 id, i32 arg) -> void>, UiError> result =
+        dom.on_close_of(id);
     return case result of {
         Ok(Some(handler)) -> handler;
         Ok(None) -> 0;
@@ -113,7 +114,7 @@ export void focus_window(i32 win) {
         if (dom.active_window_id() != 0) { dom.set_state_flag(dom.active_window_id(), NodeState::FOCUSED, 0); }
         dom.set_active_window_id(win);
         dom.set_state_flag(win, NodeState::FOCUSED, 1);
-        if (window_id_or_zero(dom.focus_id()) != win) { set_focus(0); }
+        if (widgets_window_id_or_zero(dom.focus_id()) != win) { set_focus(0); }
         dom.damage_node(dom.taskbar_id()); // the active entry's highlight moved
     }
     dom.bring_to_front(win);
@@ -124,7 +125,7 @@ export void focus_window(i32 win) {
  */
 export void activate_topmost() {
     i32 top = 0;
-    i32 child_id = child_id_or_zero(dom.first_child(dom.desktop_id()));
+    i32 child_id = widgets_child_id_or_zero(dom.first_child(dom.desktop_id()));
     while (child_id != 0) {
         Node *c = dom.node_ptr(child_id);
         if (c == 0) { child_id = 0; }
@@ -148,7 +149,7 @@ export void activate_topmost() {
  * @param win DOM node ID of the window to close.
  */
 export void close_window(i32 win) {
-    i32 handler = close_handler_or_zero(win);
+    fn(i32 owner, i32 id, i32 arg) -> void handler = close_handler_or_zero(win);
     if (handler != 0) {
         dom.push_event(handler, owner_id_or_zero(win), win, 0);
         return;
@@ -187,7 +188,7 @@ export void minimize_window(i32 win) {
     if (n == 0) { return; }
     dom.set_state_flag(win, NodeState::MINIMIZED, 1);
     dom.set_state_flag(win, NodeState::VISIBLE, 0);
-    if (window_id_or_zero(dom.focus_id()) == win) { set_focus(0); }
+    if (widgets_window_id_or_zero(dom.focus_id()) == win) { set_focus(0); }
     if (dom.active_window_id() == win) {
         dom.set_state_flag(win, NodeState::FOCUSED, 0);
         dom.set_active_window_id(0);
@@ -896,7 +897,8 @@ export i32 menu_target() {
  * @param target Associated target Node ID.
  * @return Menu DOM Node ID.
  */
-export Result<i32, UiError> open_menu(i32 x, i32 y, char *items, i32 handler, i32 target) {
+export Result<i32, UiError> open_menu(i32 x, i32 y, char *items,
+                                      fn(i32 index) -> void handler, i32 target) {
     close_menu();
     i32 s = dom.ui_scale();
     i32 count = 1;
@@ -1007,7 +1009,7 @@ export void menu_click(i32 px, i32 py) {
     i32 id = dom.menu_id();
     if (id == 0) { return; }
     Option<i32> row = list_row_at(id, px, py);
-    i32 handler = dom.menu_handler();
+    fn(i32 index) -> void handler = dom.menu_handler();
     close_menu();
     case row of {
         Some(r) -> ({
@@ -1056,7 +1058,7 @@ export void collect_focusable(i32 id) {
     i32 child = n->first_child;
     while (child != 0) {
         collect_focusable(child);
-        child = child_id_or_zero(dom.next_sibling(child));
+        child = widgets_child_id_or_zero(dom.next_sibling(child));
     }
 }
 
@@ -1120,7 +1122,8 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
             return;
         }
         // App shortcuts (@key) for the active window's app go first.
-        i32 filter = case dom.key_filter() of { Some(value) -> value; None -> 0; };
+        fn(i32 owner, i32 code, i32 mods) -> bool filter =
+            case dom.key_filter() of { Some(value) -> value; None -> 0; };
         if (filter != 0) {
             Result<i32, UiError> owner = dom.owner_of(dom.active_window_id());
             case owner of {
@@ -1133,7 +1136,7 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
     if (n == 0) { return; }
     i32 id = dom.focus_id();
     if (type == KeyEventType::DOWN) {
-        i32 handler = n->on_key;
+        fn(i32 owner, i32 id, i32 arg) -> i32 handler = n->on_key;
         if (handler != 0) {
             // Runs inline, unlike the queued handlers: it decides whether
             // the key goes on to the widget, which cannot wait.
@@ -1240,7 +1243,8 @@ export void tick() {
  * @param handler Server-side tick callback, or 0 to deliver TIMER events to the owning app.
  * @return Timer DOM Node ID.
  */
-export Result<i32, UiError> create_timer(i32 interval, i32 handler) {
+export Result<i32, UiError> create_timer(
+    i32 interval, fn(i32 owner, i32 id, i32 arg) -> void handler) {
     i32 id = dom.create_node(NodeKind::TIMER, "timer")?;
     Node *t = dom.node_ptr(id);
     t->interval = interval;

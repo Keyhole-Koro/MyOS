@@ -14,7 +14,7 @@ import { Result } from "@std/core/result.mln";
 import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
 import { InlineCString } from "@std/text/inline_c_string.mln";
 
-i32 child_id_or_zero(Result<Option<i32>, UiError> result) {
+i32 render_child_id_or_zero(Result<Option<i32>, UiError> result) {
     return case result of {
         Ok(Some(id)) -> id;
         Ok(None) -> 0;
@@ -547,7 +547,7 @@ export void draw_panel(Node *n) {
  */
 export i32 next_window_after(i32 after) {
     i32 best = 0;
-    i32 child_id = child_id_or_zero(dom.first_child(dom.desktop_id()));
+    i32 child_id = render_child_id_or_zero(dom.first_child(dom.desktop_id()));
     while (child_id != 0) {
         Node *c = dom.node_ptr(child_id);
         if (c == 0) { child_id = 0; }
@@ -701,7 +701,7 @@ export TaskbarTarget taskbar_target_at(i32 px, i32 py) {
  * Registers an application launcher callback for the taskbar launcher button.
  * @param handler Function pointer to launcher callback: fn().
  */
-export void set_launcher(i32 handler) {
+export void set_launcher(fn() -> void handler) {
     dom.set_launcher_handler(handler);
 }
 
@@ -788,7 +788,7 @@ export void render(i32 node_id) {
     i32 child_id = n->first_child;
     while (child_id != 0) {
         render(child_id);
-        child_id = child_id_or_zero(dom.next_sibling(child_id));
+        child_id = render_child_id_or_zero(dom.next_sibling(child_id));
     }
     if (clip) { graphics.pop_clip(); }
 }
@@ -803,12 +803,12 @@ export void paint_desktop() {
     i32 dh = graphics.display_height();
     graphics.fill_gradient_v(0, 0, dw, dh, top, bottom);
 
-    i32 child_id = child_id_or_zero(dom.first_child(dom.desktop_id()));
+    i32 child_id = render_child_id_or_zero(dom.first_child(dom.desktop_id()));
     while (child_id != 0) {
         if (child_id != dom.taskbar_id()) {
             if (child_id != dom.menu_id()) { render(child_id); }
         }
-        child_id = child_id_or_zero(dom.next_sibling(child_id));
+        child_id = render_child_id_or_zero(dom.next_sibling(child_id));
     }
     if (dom.taskbar_id() != 0) { render(dom.taskbar_id()); }
     if (dom.menu_id() != 0) { render(dom.menu_id()); }

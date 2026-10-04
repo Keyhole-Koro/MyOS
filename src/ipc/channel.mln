@@ -10,6 +10,7 @@
 package request_channel;
 
 import ipc from "../../../MyKernel/src/kernel/ipc.mln";
+import { ChannelId } from "../../../MyKernel/src/kernel/ipc.mln";
 import { Request, RequestDomain, RequestStatus, TransportSignal } from "../../../../contracts/myapp/message.contract.mln";
 import ui_protocol from "../ui/protocol.mln";
 import shell_protocol from "../shell/protocol.mln";
@@ -18,7 +19,7 @@ import debug from "../../../MyKernel/src/debug/debug.mln";
 import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
 import { Option } from "@std/core/option.mln";
 
-i32 g_requests = 0;   // apps -> server
+ChannelId g_requests = ChannelId(0);   // apps -> server
 
 // Request's wire order is intentionally isolated here. Gateway and protocol
 // code should use the named Request fields, not positional word offsets.
@@ -80,7 +81,7 @@ export void decode_request_words(i32 *words, Request *request) {
  * @param reply_channel Channel that should receive the response.
  * @param words Destination message buffer with at least MSG_WORDS entries.
  */
-void encode_request_words(Request *request, i32 reply_channel, i32 *words) {
+void encode_request_words(Request *request, ChannelId reply_channel, i32 *words) {
     clear_message(words);
     words[RequestWord::DOMAIN] = request->domain;
     words[RequestWord::OP] = request->op;
@@ -95,15 +96,15 @@ void encode_request_words(Request *request, i32 reply_channel, i32 *words) {
     words[RequestWord::S1] = (i32)request->s1;
     words[RequestWord::RESULT_OUT] = request->result_out;
     words[RequestWord::RESULT_SIZE] = request->result_size;
-    words[RequestWord::REPLY_CHANNEL] = reply_channel;
+    words[RequestWord::REPLY_CHANNEL] = (i32)reply_channel;
 }
 
 /**
  * Initializes the server-side request receiving channel and outbound event system.
  */
 export void init() {
-    if (g_requests == 0) {
-        Option<i32> channel = ipc.create();
+    if (g_requests == ChannelId(0)) {
+        Option<ChannelId> channel = ipc.create();
         case channel of {
             Some(value) -> ({ g_requests = value; });
             None -> ({ debug.panic("request_channel: IPC channel table exhausted"); });
@@ -122,7 +123,7 @@ export void init() {
  * @param reply_channel Channel that should receive the response.
  * @return True if successfully queued, false if request ring is full.
  */
-export bool submit(Request *request, i32 reply_channel) {
+export bool submit(Request *request, ChannelId reply_channel) {
     i32 words[24];
     encode_request_words(request, reply_channel, &words[0]);
     return ipc.send(g_requests, &words[0]);
@@ -152,7 +153,7 @@ export i32 serve() {
         r[0] = RequestStatus::INVALID_DOMAIN;
         if (m.domain == RequestDomain::UI) { r[0] = ui_protocol.handle(&m); }
         if (m.domain == RequestDomain::APP) { r[0] = shell_protocol.handle(&m); }
-        i32 reply_channel = w[RequestWord::REPLY_CHANNEL];
+        ChannelId reply_channel = ChannelId(w[RequestWord::REPLY_CHANNEL]);
         if (!ipc.send(reply_channel, &r[0])) {
             debug.panic("request_channel: reply channel full");
         }

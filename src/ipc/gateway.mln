@@ -8,6 +8,7 @@ package request_gateway;
 
 import mem from "../../../MyKernel/src/mm/mem.mln";
 import ipc from "../../../MyKernel/src/kernel/ipc.mln";
+import { ChannelId } from "../../../MyKernel/src/kernel/ipc.mln";
 import debug from "../../../MyKernel/src/debug/debug.mln";
 import str from "@std/text/str.mln";
 import heap from "../../../MyKernel/src/mm/heap.mln";
@@ -42,8 +43,8 @@ i32 RESULT_CAP = 32;
  * @property result_size Size in bytes of the staged typed Result value.
  */
 struct GatewaySlot {
-    i32 reply_ch;
-    i32 event_ch;
+    ChannelId reply_ch;
+    ChannelId event_ch;
     i32 s0;
     i32 s1;
     i32 out;
@@ -169,9 +170,9 @@ bool ready(i32 pid) {
         Some(v) -> v;
         None -> ({ return false; });
     };
-    if (gateway_slots[i].reply_ch == 0) {
-        Option<i32> reply_channel = ipc.create();
-        Option<i32> event_channel = ipc.create();
+    if (gateway_slots[i].reply_ch == ChannelId(0)) {
+        Option<ChannelId> reply_channel = ipc.create();
+        Option<ChannelId> event_channel = ipc.create();
         case reply_channel of {
             Some(value) -> ({ gateway_slots[i].reply_ch = value; });
             None -> ({ debug.panic("request_gateway: IPC reply channel table exhausted"); });
@@ -236,7 +237,7 @@ export bool reply(i32 pid, i32 user_out) {
         Some(v) -> v;
         None -> ({ debug.panic("request_gateway: invalid reply PID"); return false; });
     };
-    if (gateway_slots[i].reply_ch == 0) { return false; }
+    if (gateway_slots[i].reply_ch == ChannelId(0)) { return false; }
     i32 r[24];
     if (!ipc.recv(gateway_slots[i].reply_ch, &r[0])) {
         scheduler.arm_notification(TransportSignal::REPLY);
@@ -301,8 +302,8 @@ export bool poll(i32 pid, i32 user_event) {
 export void process_gone(i32 pid) {
     i32 i = case slot(pid) of { Some(v) -> v; None -> ({ return; }); };
     i32 w[24];
-    if (gateway_slots[i].reply_ch != 0) { while (ipc.recv(gateway_slots[i].reply_ch, &w[0])) { } }
-    if (gateway_slots[i].event_ch != 0) { while (ipc.recv(gateway_slots[i].event_ch, &w[0])) { } }
+    if (gateway_slots[i].reply_ch != ChannelId(0)) { while (ipc.recv(gateway_slots[i].reply_ch, &w[0])) { } }
+    if (gateway_slots[i].event_ch != ChannelId(0)) { while (ipc.recv(gateway_slots[i].event_ch, &w[0])) { } }
     gateway_slots[i].out_user = 0;
     gateway_slots[i].result_user = 0;
     gateway_slots[i].result_size = 0;

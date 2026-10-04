@@ -46,14 +46,14 @@ Result<i32, OsServiceError> handle(i32 pid, i32 service, i32 args) {
     }
     if (service >= OsService::FS_OPEN && service <= OsService::FS_IS_DIR) {
         case fs_syscall.handle(service, args) of {
-            Ok(_) -> return Ok(0);
-            Err(e) -> return Err(e);
+            Ok(_) -> ({ return Ok(0); });
+            Err(e) -> ({ return Err(e); });
         };
     }
     if (service >= OsService::PROC_SPAWN && service <= OsService::PROC_FEED) {
         case process_syscall.handle(service, args) of {
-            Ok(_) -> return Ok(0);
-            Err(e) -> return Err(e);
+            Ok(_) -> ({ return Ok(0); });
+            Err(e) -> ({ return Err(e); });
         };
     }
     if (service == OsService::LOG) {

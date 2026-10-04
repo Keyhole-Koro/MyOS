@@ -19,7 +19,7 @@ import { NodeRole, NodeState } from "dom.mln";
 // it through dom's exported accessors -- kept dom.mln itself readable as it
 // grew past 3000 lines.
 
-i32 child_id_or_zero(Result<Option<i32>, UiError> result) {
+i32 automation_child_id_or_zero(Result<Option<i32>, UiError> result) {
     return case result of {
         Ok(Some(id)) -> id;
         Ok(None) -> 0;
@@ -100,10 +100,10 @@ void dump_node(i32 id, i32 depth) {
     dump_props(id);
     debug.println("");
 
-    i32 child_id = child_id_or_zero(dom.first_child(id));
+    i32 child_id = automation_child_id_or_zero(dom.first_child(id));
     while (child_id != 0) {
         dump_node(child_id, depth + 1);
-        child_id = child_id_or_zero(dom.next_sibling(child_id));
+        child_id = automation_child_id_or_zero(dom.next_sibling(child_id));
     }
 }
 
@@ -217,10 +217,10 @@ void automation_node(i32 id) {
     automation_raw(",\"hitTestable\":"); automation_bool(dom.is_hit_testable(id));
     automation_transport.putc('}');
 
-    i32 child = child_id_or_zero(dom.first_child(id));
+    i32 child = automation_child_id_or_zero(dom.first_child(id));
     while (child != 0) {
         automation_node(child);
-        child = child_id_or_zero(dom.next_sibling(child));
+        child = automation_child_id_or_zero(dom.next_sibling(child));
     }
 }
 
