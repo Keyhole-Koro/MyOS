@@ -9,15 +9,15 @@
  */
 package app_events;
 
-import ipc from "../../../MyKernel/src/kernel/ipc.mln";
-import { ChannelId } from "../../../MyKernel/src/kernel/ipc.mln";
-import { EventKind, TransportSignal } from "../../../../contracts/myapp/message.contract.mln";
-import ui_event from "../ui/events.mln";
-import { UiEventKind } from "../ui/events.mln";
-import { ShellEventKind } from "../shell/events.mln";
+import ipc from "@kernel/kernel/ipc.mln";
+import { ChannelId } from "@kernel/kernel/ipc.mln";
+import { EventKind, TransportSignal } from "@contracts/myapp/message.contract.mln";
+import ui_event from "@os/ui/events.mln";
+import { UiEventKind } from "@os/ui/events.mln";
+import { ShellEventKind } from "@os/shell/events.mln";
 import { Option } from "@std/core/option.mln";
 import str from "@std/text/str.mln";
-import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+import scheduler from "@kernel/kernel/scheduler.mln";
 
 i32 OWNERS_MAX = 16;
 /**

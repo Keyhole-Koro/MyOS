@@ -1,6 +1,6 @@
-import heap from "../../../MyKernel/src/mm/heap.mln";
-import fs from "../../src/fs/fs.mln";
-import { FsError, SeekWhence } from "../../../../contracts/io/fs.contract.mln";
+import heap from "@kernel/mm/heap.mln";
+import fs from "@os/fs/fs.mln";
+import { FsError, SeekWhence } from "@contracts/io/fs.contract.mln";
 import { Result } from "@std/core/result.mln";
 import { assert_eq } from "@std/testing/assert.mln";
 import test_heap from "../alloc_support.mln";

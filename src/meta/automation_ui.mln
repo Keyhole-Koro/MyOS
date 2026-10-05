@@ -1,9 +1,9 @@
 package automation_ui;
 
 import automation_transport from "automation_transport.mln";
-import dom_automation from "../ui/dom/dom_automation.mln";
-import dom from "../ui/dom/dom.mln";
-import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+import dom_automation from "@os/ui/dom/dom_automation.mln";
+import dom from "@os/ui/dom/dom.mln";
+import scheduler from "@kernel/kernel/scheduler.mln";
 
 i32 CMD_DOM_SNAPSHOT = 1;
 i32 CMD_DOM_HIT_TEST = 2;

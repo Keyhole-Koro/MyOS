@@ -1,12 +1,12 @@
-import debug from "../../../MyKernel/src/debug/debug.mln";
-import heap from "../../../MyKernel/src/mm/heap.mln";
-import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
-import irq from "../../../MyKernel/src/arch/irq.mln";
-import irq_dispatch from "../../../MyKernel/src/kernel/irq_dispatch.mln";
-import dom from "../../src/ui/dom/dom.mln";
-import desktop from "../../src/ui/desktop.mln";
-import graphics from "../../src/ui/graphics.mln";
-import counter from "../../src/apps/counter.dom.mln";
+import debug from "@kernel/debug/debug.mln";
+import heap from "@kernel/mm/heap.mln";
+import scheduler from "@kernel/kernel/scheduler.mln";
+import irq from "@kernel/arch/irq.mln";
+import irq_dispatch from "@kernel/kernel/irq_dispatch.mln";
+import dom from "@os/ui/dom/dom.mln";
+import desktop from "@os/ui/desktop.mln";
+import graphics from "@os/ui/graphics.mln";
+import counter from "@os/apps/counter.dom.mln";
 
 // Boots the counter window with no shell, draws one frame, and stops.
 //

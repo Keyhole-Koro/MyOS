@@ -13,12 +13,12 @@ package protocol_elements;
 import dom from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
 import dom_elements from "dom/dom_elements.mln";
-import heap from "../../../MyKernel/src/mm/heap.mln";
+import heap from "@kernel/mm/heap.mln";
 import { NodeStyle } from "dom/dom.mln";
-import { Request } from "../../../../contracts/myapp/message.contract.mln";
-import { UiOp } from "../../../../contracts/myapp/ui.contract.mln";
+import { Request } from "@contracts/myapp/message.contract.mln";
+import { UiOp } from "@contracts/myapp/ui.contract.mln";
 import { Result } from "@std/core/result.mln";
-import { UiError } from "../../../../contracts/ui/widget.contract.mln";
+import { UiError } from "@contracts/ui/widget.contract.mln";
 
 /**
  * Assigns an automation test identifier to a node if specified.

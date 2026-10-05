@@ -1,17 +1,17 @@
 package dom_render;
-import debug from "../../../../MyKernel/src/debug/debug.mln";
-import heap from "../../../../MyKernel/src/mm/heap.mln";
-import scheduler from "../../../../MyKernel/src/kernel/scheduler.mln";
-import graphics from "../graphics.mln";
-import theme from "../theme.mln";
-import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
+import debug from "@kernel/debug/debug.mln";
+import heap from "@kernel/mm/heap.mln";
+import scheduler from "@kernel/kernel/scheduler.mln";
+import graphics from "@os/ui/graphics.mln";
+import theme from "@os/ui/theme.mln";
+import { halt_cpu } from "@kernel/arch/halt.masm";
 import dom_widgets from "dom_widgets.mln";
 import dom_window_chrome from "dom_window_chrome.mln";
 import dom from "dom.mln";
 import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
-import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
+import { UiError } from "@contracts/ui/widget.contract.mln";
 import { InlineCString } from "@std/text/inline_c_string.mln";
 
 i32 render_child_id_or_zero(Result<Option<i32>, UiError> result) {

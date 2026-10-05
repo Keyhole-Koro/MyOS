@@ -6,20 +6,20 @@
  */
 package request_gateway;
 
-import mem from "../../../MyKernel/src/mm/mem.mln";
-import ipc from "../../../MyKernel/src/kernel/ipc.mln";
-import { ChannelId } from "../../../MyKernel/src/kernel/ipc.mln";
-import debug from "../../../MyKernel/src/debug/debug.mln";
+import mem from "@kernel/mm/mem.mln";
+import ipc from "@kernel/kernel/ipc.mln";
+import { ChannelId } from "@kernel/kernel/ipc.mln";
+import debug from "@kernel/debug/debug.mln";
 import str from "@std/text/str.mln";
-import heap from "../../../MyKernel/src/mm/heap.mln";
+import heap from "@kernel/mm/heap.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
-import user_memory from "../syscall/user_memory.mln";
+import user_memory from "@os/syscall/user_memory.mln";
 import request_channel from "channel.mln";
 import app_events from "events.mln";
-import { Request, RequestDomain, TransportSignal } from "../../../../contracts/myapp/message.contract.mln";
-import { UiOp } from "../../../../contracts/myapp/ui.contract.mln";
-import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+import { Request, RequestDomain, TransportSignal } from "@contracts/myapp/message.contract.mln";
+import { UiOp } from "@contracts/myapp/ui.contract.mln";
+import scheduler from "@kernel/kernel/scheduler.mln";
 
 i32 PROCS = 16;
 i32 S0_CAP = 1024;

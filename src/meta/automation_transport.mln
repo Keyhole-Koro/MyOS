@@ -1,6 +1,6 @@
 package automation_transport;
 
-import mem from "../../../MyKernel/src/mm/mem.mln";
+import mem from "@kernel/mm/mem.mln";
 
 // Transport for the metadata/automation boundary. The registers are MMIO in
 // hardware terms, but this package is not an OS I/O driver: it exists solely

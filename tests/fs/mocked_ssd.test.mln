@@ -1,13 +1,13 @@
 import assert from "@std/testing/assert.mln";
 import mock from "../../../../toolchain/MyLangTestKit/runtime/facade.mln";
-import heap from "../../../MyKernel/src/mm/heap.mln";
-import mem from "../../../MyKernel/src/mm/mem.mln";
-import fs from "../../src/fs/fs.mln";
-import fs_config from "../../src/fs/fs_config.mln";
-import ssd from "../../src/fs/ssd.mln";
-import { FsError } from "../../../../contracts/io/fs.contract.mln";
+import heap from "@kernel/mm/heap.mln";
+import mem from "@kernel/mm/mem.mln";
+import fs from "@os/fs/fs.mln";
+import fs_config from "@os/fs/fs_config.mln";
+import ssd from "@os/fs/ssd.mln";
+import { FsError } from "@contracts/io/fs.contract.mln";
 import { Result } from "@std/core/result.mln";
-import { SsdError } from "../../src/fs/ssd.mln";
+import { SsdError } from "@os/fs/ssd.mln";
 import test_heap from "../alloc_support.mln";
 
 // Four blocks are enough for MFS metadata plus the first allocated data block.

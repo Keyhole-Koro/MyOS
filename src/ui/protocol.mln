@@ -10,14 +10,14 @@ package ui_protocol;
 import str from "@std/text/str.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
-import { UiError } from "../../../../contracts/ui/widget.contract.mln";
+import { UiError } from "@contracts/ui/widget.contract.mln";
 import dom from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
-import irq from "../../../MyKernel/src/arch/irq.mln";
+import irq from "@kernel/arch/irq.mln";
 import protocol_elements from "protocol_elements.mln";
 import { NodeKind } from "dom/dom.mln";
-import { Request, RequestStatus } from "../../../../contracts/myapp/message.contract.mln";
-import { UiOp } from "../../../../contracts/myapp/ui.contract.mln";
+import { Request, RequestStatus } from "@contracts/myapp/message.contract.mln";
+import { UiOp } from "@contracts/myapp/ui.contract.mln";
 
 bool writes_typed_result(i32 op) {
     if (op == UiOp::TEXT_COPY || op == UiOp::IS_CHECKED) { return true; }

@@ -1,12 +1,12 @@
 package desktop;
 
-import debug from "../../../MyKernel/src/debug/debug.mln";
+import debug from "@kernel/debug/debug.mln";
 import dom from "dom/dom.mln";
 import graphics from "graphics.mln";
 import ui_metrics from "ui_metrics.mln";
 import { NodeKind, NodeRole, NodeState } from "dom/dom.mln";
 import { Result } from "@std/core/result.mln";
-import { UiError } from "../../../../contracts/ui/widget.contract.mln";
+import { UiError } from "@contracts/ui/widget.contract.mln";
 
 // Owns the initial OS/UI tree and desktop chrome. The DOM package owns node
 // storage and mutation; this package builds the system hierarchy through that

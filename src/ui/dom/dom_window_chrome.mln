@@ -1,8 +1,8 @@
 package dom_window_chrome;
 
 import dom from "dom.mln";
-import ui_config from "../config.mln";
-import ui_metrics from "../ui_metrics.mln";
+import ui_config from "@os/ui/config.mln";
+import ui_metrics from "@os/ui/ui_metrics.mln";
 import { Option } from "@std/core/option.mln";
 
 // Pure display-space geometry for window controls. Window state and mutation

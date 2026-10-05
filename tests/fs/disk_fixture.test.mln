@@ -1,9 +1,9 @@
 import assert from "@std/testing/assert.mln";
 import mock from "../../../../toolchain/MyLangTestKit/runtime/facade.mln";
-import heap from "../../../MyKernel/src/mm/heap.mln";
-import fs from "../../src/fs/fs.mln";
-import ssd from "../../src/fs/ssd.mln";
-import { FsError } from "../../../../contracts/io/fs.contract.mln";
+import heap from "@kernel/mm/heap.mln";
+import fs from "@os/fs/fs.mln";
+import ssd from "@os/fs/ssd.mln";
+import { FsError } from "@contracts/io/fs.contract.mln";
 import { Result } from "@std/core/result.mln";
 
 // The fixture begins with the MFS1 superblock magic. The rest of its sparse

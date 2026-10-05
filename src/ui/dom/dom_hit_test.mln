@@ -3,7 +3,7 @@ package dom_hit_test;
 import dom from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
-import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
+import { UiError } from "@contracts/ui/widget.contract.mln";
 
 // Read-only pointer-to-node lookup. The DOM owns the tree and its state;
 // this module owns the traversal policy used by input dispatch and automation.

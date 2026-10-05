@@ -1,17 +1,17 @@
 import assert from "@std/testing/assert.mln";
-import dom from "../../src/ui/dom/dom.mln";
-import dom_hit_test from "../../src/ui/dom/dom_hit_test.mln";
-import desktop from "../../src/ui/desktop.mln";
-import dom_elements from "../../src/ui/dom/dom_elements.mln";
-import dom_widgets from "../../src/ui/dom/dom_widgets.mln";
-import dom_window_chrome from "../../src/ui/dom/dom_window_chrome.mln";
-import dom_render from "../../src/ui/dom/dom_render.mln";
-import graphics from "../../src/ui/graphics.mln";
-import theme from "../../src/ui/theme.mln";
-import heap from "../../../MyKernel/src/mm/heap.mln";
+import dom from "@os/ui/dom/dom.mln";
+import dom_hit_test from "@os/ui/dom/dom_hit_test.mln";
+import desktop from "@os/ui/desktop.mln";
+import dom_elements from "@os/ui/dom/dom_elements.mln";
+import dom_widgets from "@os/ui/dom/dom_widgets.mln";
+import dom_window_chrome from "@os/ui/dom/dom_window_chrome.mln";
+import dom_render from "@os/ui/dom/dom_render.mln";
+import graphics from "@os/ui/graphics.mln";
+import theme from "@os/ui/theme.mln";
+import heap from "@kernel/mm/heap.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
-import { UiError } from "../../../../contracts/ui/widget.contract.mln";
+import { UiError } from "@contracts/ui/widget.contract.mln";
 
 // Pins the interaction contract the compositor relies on: it holds no node ids
 // and starts every interaction from a hit test, so what must hold is that

@@ -1,5 +1,5 @@
 import assert from "@std/testing/assert.mln";
-import graphics from "../../src/ui/graphics.mln";
+import graphics from "@os/ui/graphics.mln";
 import { Option } from "@std/core/option.mln";
 import { Option } from "@std/core/option.mln";
 

@@ -1,19 +1,19 @@
 package dom_widgets;
-import debug from "../../../../MyKernel/src/debug/debug.mln";
-import heap from "../../../../MyKernel/src/mm/heap.mln";
-import scheduler from "../../../../MyKernel/src/kernel/scheduler.mln";
-import ui_metrics from "../ui_metrics.mln";
-import { halt_cpu } from "../../../../MyKernel/src/arch/halt.masm";
+import debug from "@kernel/debug/debug.mln";
+import heap from "@kernel/mm/heap.mln";
+import scheduler from "@kernel/kernel/scheduler.mln";
+import ui_metrics from "@os/ui/ui_metrics.mln";
+import { halt_cpu } from "@kernel/arch/halt.masm";
 import dom from "dom.mln";
-import { UiEventKind } from "../events.mln";
-import ui_config from "../config.mln";
+import { UiEventKind } from "@os/ui/events.mln";
+import ui_config from "@os/ui/config.mln";
 import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { InlineCString } from "@std/text/inline_c_string.mln";
 import ascii from "@std/text/ascii.mln";
-import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
-import { KeyEventType, KeyModifier, KeyCode } from "../../../../../contracts/input/keyboard.contract.mln";
+import { UiError } from "@contracts/ui/widget.contract.mln";
+import { KeyEventType, KeyModifier, KeyCode } from "@contracts/input/keyboard.contract.mln";
 
 i32 widgets_child_id_or_zero(Result<Option<i32>, UiError> result) {
     return case result of {

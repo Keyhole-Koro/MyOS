@@ -1,14 +1,14 @@
 package dom;
 
-import heap from "../../../../MyKernel/src/mm/heap.mln";
-import scheduler from "../../../../MyKernel/src/kernel/scheduler.mln";
-import ui_metrics from "../ui_metrics.mln";
-import ui_event from "../events.mln";
-import irq from "../../../../MyKernel/src/arch/irq.mln";
-import { UiEventKind } from "../events.mln";
+import heap from "@kernel/mm/heap.mln";
+import scheduler from "@kernel/kernel/scheduler.mln";
+import ui_metrics from "@os/ui/ui_metrics.mln";
+import ui_event from "@os/ui/events.mln";
+import irq from "@kernel/arch/irq.mln";
+import { UiEventKind } from "@os/ui/events.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
-import { UiError } from "../../../../../contracts/ui/widget.contract.mln";
+import { UiError } from "@contracts/ui/widget.contract.mln";
 
 // Kernel object tree + UI DOM. See docs/DOM_SPEC.md and MYOS-014.
 //

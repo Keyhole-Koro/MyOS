@@ -9,14 +9,14 @@
  */
 package request_channel;
 
-import ipc from "../../../MyKernel/src/kernel/ipc.mln";
-import { ChannelId } from "../../../MyKernel/src/kernel/ipc.mln";
-import { Request, RequestDomain, RequestStatus, TransportSignal } from "../../../../contracts/myapp/message.contract.mln";
-import ui_protocol from "../ui/protocol.mln";
-import shell_protocol from "../shell/protocol.mln";
+import ipc from "@kernel/kernel/ipc.mln";
+import { ChannelId } from "@kernel/kernel/ipc.mln";
+import { Request, RequestDomain, RequestStatus, TransportSignal } from "@contracts/myapp/message.contract.mln";
+import ui_protocol from "@os/ui/protocol.mln";
+import shell_protocol from "@os/shell/protocol.mln";
 import app_events from "events.mln";
-import debug from "../../../MyKernel/src/debug/debug.mln";
-import scheduler from "../../../MyKernel/src/kernel/scheduler.mln";
+import debug from "@kernel/debug/debug.mln";
+import scheduler from "@kernel/kernel/scheduler.mln";
 import { Option } from "@std/core/option.mln";
 
 ChannelId g_requests = ChannelId(0);   // apps -> server

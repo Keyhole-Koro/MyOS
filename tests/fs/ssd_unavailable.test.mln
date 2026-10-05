@@ -1,12 +1,12 @@
 import assert from "@std/testing/assert.mln";
 import mock from "../../../../toolchain/MyLangTestKit/runtime/facade.mln";
-import heap from "../../../MyKernel/src/mm/heap.mln";
-import fs from "../../src/fs/fs.mln";
-import fs_config from "../../src/fs/fs_config.mln";
-import ssd from "../../src/fs/ssd.mln";
-import { FsError } from "../../../../contracts/io/fs.contract.mln";
+import heap from "@kernel/mm/heap.mln";
+import fs from "@os/fs/fs.mln";
+import fs_config from "@os/fs/fs_config.mln";
+import ssd from "@os/fs/ssd.mln";
+import { FsError } from "@contracts/io/fs.contract.mln";
 import { Result } from "@std/core/result.mln";
-import { SsdError } from "../../src/fs/ssd.mln";
+import { SsdError } from "@os/fs/ssd.mln";
 
 i32 g_failed_reads = 0;
 

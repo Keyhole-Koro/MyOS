@@ -2,7 +2,7 @@
 // in runtime/MyEmulator/config/hardware.conf; no emulator dependency on MyOS.
 package display_config;
 
-import mem from "../../../MyKernel/src/mm/mem.mln";
+import mem from "@kernel/mm/mem.mln";
 
 /**
  * Reads the hardware screen width in pixels from the display device register.
@@ -19,4 +19,3 @@ export i32 width() {
 export i32 height() {
     return mem.read_word(0x240000D4);
 }
-

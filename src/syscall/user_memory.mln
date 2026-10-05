@@ -6,7 +6,7 @@
  */
 package user_memory;
 
-import mem from "../../../MyKernel/src/mm/mem.mln";
+import mem from "@kernel/mm/mem.mln";
 import bytes from "@std/text/bytes.mln";
 
 /**

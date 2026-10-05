@@ -7,10 +7,10 @@
 package shell_protocol;
 
 import app from "app.mln";
-import { AppError, KeyClaimError, AppOp } from "../../../../contracts/myapp/lifecycle.contract.mln";
+import { AppError, KeyClaimError, AppOp } from "@contracts/myapp/lifecycle.contract.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
-import { Request, RequestStatus } from "../../../../contracts/myapp/message.contract.mln";
+import { Request, RequestStatus } from "@contracts/myapp/message.contract.mln";
 
 /**
  * Dispatches an application host request to the shell subsystem.
