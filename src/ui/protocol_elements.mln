@@ -14,6 +14,7 @@ import dom from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
 import dom_elements from "dom/dom_elements.mln";
 import heap from "@kernel/mm/heap.mln";
+import { HeapBlock } from "@kernel/mm/heap.mln";
 import { NodeStyle } from "dom/dom.mln";
 import { Request } from "@contracts/myapp/message.contract.mln";
 import { UiOp } from "@contracts/myapp/ui.contract.mln";
@@ -79,50 +80,59 @@ export Result<i32, UiError> create(Request *m) {
     if (op == UiOp::CREATE_TIMER) {
         return dom_widgets.create_timer(m->a0, 0); // ticks become TIMER events (owner != 0)
     }
-    char *s0 = dup_string(m->s0)?; // the node's name is kept for its lifetime
+    char *s0 = dup_string(m->s0)?;
+    // The node keeps its name for its lifetime; until one exists, the copy
+    // is freed on every way out.
+    HeapBlock name = HeapBlock { addr: (i32)s0 };
+    bool named = true; // false for the kinds created without a name
     if (op == UiOp::CREATE_WINDOW) {
-        id = case dom_elements.create_window(s0, x, y, w, h) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        id = dom_elements.create_window(s0, x, y, w, h)?;
         dom.set_text_copy(id, m->s0);
     } else if (op == UiOp::CREATE_BUTTON) {
-        id = case dom_elements.create_button(s0, x, y, w, h) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        id = dom_elements.create_button(s0, x, y, w, h)?;
         dom.set_text_copy(id, m->s0);
     } else if (op == UiOp::CREATE_PRIMARY_BUTTON) {
-        id = case dom_elements.create_button(s0, x, y, w, h) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        id = dom_elements.create_button(s0, x, y, w, h)?;
         dom.set_text_copy(id, m->s0);
         dom.set_style(id, NodeStyle::PRIMARY);
     } else if (op == UiOp::CREATE_TEXT) {
-        id = case dom_elements.create_text(s0, x, y) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        id = dom_elements.create_text(s0, x, y)?;
         dom.set_text_copy(id, m->s0);
     } else if (op == UiOp::CREATE_LABEL) {
-        id = case dom_elements.create_text(s0, x, y) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        id = dom_elements.create_text(s0, x, y)?;
         dom.set_text_copy(id, m->s0);
         if (m->a3) { dom.set_style(id, NodeStyle::BOLD); }
         dom.set_color(id, m->a2);
     } else if (op == UiOp::CREATE_BOX) {
-        id = case dom_elements.create_box(x, y, w, h, m->a4, m->a5) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        id = dom_elements.create_box(x, y, w, h, m->a4, m->a5)?;
+        named = false;
     } else if (op == UiOp::CREATE_PANEL) {
-        id = case dom_elements.create_panel(x, y, w, h, m->a4) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        id = dom_elements.create_panel(x, y, w, h, m->a4)?;
+        named = false;
     } else if (op == UiOp::CREATE_COLUMN) {
-        id = case dom_elements.create_column(x, y, w, h, m->a4, m->a5) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        id = dom_elements.create_column(x, y, w, h, m->a4, m->a5)?;
+        named = false;
     } else if (op == UiOp::CREATE_ROW) {
-        id = case dom_elements.create_row(x, y, w, h, m->a4, m->a5) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        id = dom_elements.create_row(x, y, w, h, m->a4, m->a5)?;
+        named = false;
     } else if (op == UiOp::CREATE_TEXT_INPUT) {
-        id = case dom_elements.create_text_input(s0, x, y, w, h, m->a4) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        id = dom_elements.create_text_input(s0, x, y, w, h, m->a4)?;
     } else if (op == UiOp::CREATE_CHECKBOX) {
-        id = case dom_elements.create_checkbox(s0, x, y, m->a2) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        id = dom_elements.create_checkbox(s0, x, y, m->a2)?;
         dom.set_text_copy(id, m->s0);
         dom.set_hit_testable(id, 1); // toggles on click even with no handler
     } else if (op == UiOp::CREATE_SEPARATOR) {
-        id = case dom_elements.create_separator(x, y, w) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        id = dom_elements.create_separator(x, y, w)?;
+        named = false;
     } else if (op == UiOp::CREATE_TEXT_AREA) {
-        id = case dom_elements.create_text_area(s0, x, y, w, h, m->a4, m->a5) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        id = dom_elements.create_text_area(s0, x, y, w, h, m->a4, m->a5)?;
     } else if (op == UiOp::CREATE_LIST) {
-        id = case dom_elements.create_list(s0, x, y, w, h, m->a4) of { Ok(v) -> v; Err(e) -> ({ heap.free((i32)s0); return Err(e); }); };
+        id = dom_elements.create_list(s0, x, y, w, h, m->a4)?;
         dom.set_hit_testable(id, 1); // rows select on click even with no handler
     } else {
-        heap.free((i32)s0);
         return Err(UiError::UnknownOperation(op));
     }
+    if (named) { name.keep(); }
     case tag(id, m->s1) of {
         Ok(_) -> _;
         Err(e) -> ({ dom.remove_node(id); return Err(e); });

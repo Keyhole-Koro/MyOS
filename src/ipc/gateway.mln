@@ -19,13 +19,19 @@ import request_channel from "channel.mln";
 import app_events from "events.mln";
 import { Request, RequestDomain, TransportSignal } from "@contracts/myapp/message.contract.mln";
 import { UiOp } from "@contracts/myapp/ui.contract.mln";
+import { UiError } from "@contracts/ui/widget.contract.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
 
 i32 PROCS = 16;
 i32 S0_CAP = 1024;
 i32 S1_CAP = 128;
 i32 OUT_CAP = 4096;
-i32 RESULT_CAP = 32;
+// A server writes a typed Result through the staged pointer at its full
+// size, whatever result_size the caller asked to have copied back, so the
+// buffer must hold the largest one: Result<Option<i32>, UiError> (48 bytes;
+// see check_result_capacity). At 32 bytes every UI result overflowed into the
+// next heap block.
+i32 RESULT_CAP = 64;
 
 // Keep the transport state for one process together. The old parallel
 // arrays made it easy to update one table and forget its companion table.
@@ -66,6 +72,13 @@ GatewaySlot gateway_slots[16];
 Option<i32> slot(i32 pid) {
     if (pid <= 0 || pid > PROCS) { return None; }
     return Some(pid - 1);
+}
+
+/** Stops the kernel if a typed request result outgrows its staging buffer. */
+void check_result_capacity() {
+    if (sizeof(Result<Option<i32>, UiError>) > RESULT_CAP) {
+        debug.panic("request_gateway: RESULT_CAP is smaller than a UI request result");
+    }
 }
 
 /**
@@ -184,6 +197,7 @@ bool ready(i32 pid) {
         gateway_slots[i].s0 = alloc_or_panic(S0_CAP);
         gateway_slots[i].s1 = alloc_or_panic(S1_CAP);
         gateway_slots[i].out = alloc_or_panic(OUT_CAP);
+        check_result_capacity();
         gateway_slots[i].result = alloc_or_panic(RESULT_CAP);
         app_events.bind(pid, gateway_slots[i].event_ch);
     }

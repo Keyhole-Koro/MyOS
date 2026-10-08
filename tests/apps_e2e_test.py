@@ -31,16 +31,24 @@ def wait_text_contains(locator, needle: str, timeout: float = 8.0) -> str:
     raise AssertionError(f"{needle!r} not found; last text was:\n{last}")
 
 
-def click_point(os, x, y):
+def click_point(os, x, y, timeout: float = 2.0):
+    """Click at (x, y) and wait until the DOM reacts.
+
+    The emulator runs the guest only while it serves a control request, so a
+    host-side sleep lets nothing happen; polling snapshots does."""
+    before = os.snapshot().revision
     os._pointer_sequence([{"type": "move", "x": x, "y": y},
                           {"type": "down", "button": "left"},
                           {"type": "up", "button": "left"}])
-    time.sleep(0.35)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and os.snapshot().revision == before:
+        pass
 
 
 def launch_app(os, row_index):
     """Open the taskbar app menu and click the row'th item."""
     click_point(os, 40, 1516)  # the MyOS launcher at the taskbar's left
+    expect(os.get_by_role("menu")).to_be_visible()
     menu = os.get_by_role("menu").snapshot()
     click_point(os, menu.bounds.x + 40,
                 menu.bounds.y + 16 + ROW_H * row_index + ROW_H // 2)

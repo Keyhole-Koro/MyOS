@@ -328,7 +328,7 @@ void show(i32 win) {
  * @param id UI node ID.
  * @param name Test identifier name.
  */
-void test_id(i32 id, char *name) { dom.set_test_id(id, name); }
+void test_id(i32 id, char *name) { dom.set_test_id_copy(id, name); }
 
 // --- keys ---------------------------------------------------------------------------------------
 

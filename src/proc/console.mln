@@ -2,6 +2,7 @@ package console;
 
 import serial from "@kernel/io/serial.mln";
 import heap from "@kernel/mm/heap.mln";
+import { HeapBlock } from "@kernel/mm/heap.mln";
 import mem from "@kernel/mm/mem.mln";
 import syscall from "@kernel/kernel/syscall.mln";
 import debug from "@kernel/debug/debug.mln";
@@ -16,6 +17,7 @@ import { SpawnError, SpawnFsOperation, SpawnFilesystemError, SpawnReadMismatch }
 import { ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
 import { FsError, SeekWhence } from "@contracts/io/fs.contract.mln";
 import fs from "@os/fs/fs.mln";
+import { FileHandle } from "@os/fs/fs.mln";
 import str from "@std/text/str.mln";
 import { InlineCString } from "@std/text/inline_c_string.mln";
 import ascii from "@std/text/ascii.mln";
@@ -224,7 +226,7 @@ Result<Option<i32>, SpawnError> try_open(char *path) {
     Result<i32, FsError> opened = fs.open(path);
     return case opened of {
         Ok(fd) -> Ok(Some(fd));
-        Err(NotFound) -> Ok(None);
+        Err(FsError::NotFound) -> Ok(None);
         Err(e) -> Err(SpawnError::Filesystem(SpawnFilesystemError {
             operation: SpawnFsOperation::Open,
             cause: e,
@@ -258,60 +260,43 @@ Result<i32, SpawnError> open_executable(char *path) {
  * @param path NUL-terminated path searched as supplied, under bin/, and under apps/.
  * @return Ok(pid) when the process starts, or Err(SpawnError) with the launch failure.
  */
+SpawnError filesystem_failure(SpawnFsOperation operation, FsError cause) {
+    return SpawnError::Filesystem(SpawnFilesystemError {
+        operation: operation,
+        cause: cause,
+    });
+}
+
 export Result<i32, SpawnError> spawn_file(char *path) {
-    i32 fd = open_executable(path)?;
-    i32 size = case fs.seek(fd, 0, SeekWhence::End) of {
+    // The file is closed and the image buffer freed on every path out.
+    FileHandle file = FileHandle { fd: open_executable(path)? };
+    i32 size = case fs.seek(file.fd, 0, SeekWhence::End) of {
         Ok(v) -> v;
-        Err(e) -> ({
-            fs.close(fd);
-            return Err(SpawnError::Filesystem(SpawnFilesystemError {
-                operation: SpawnFsOperation::Measure,
-                cause: e,
-            }));
-        });
+        Err(e) -> ({ return Err(filesystem_failure(SpawnFsOperation::Measure, e)); });
     };
-    if (size <= 0) { fs.close(fd); return Err(SpawnError::EmptyExecutable); }
-    case fs.seek(fd, 0, SeekWhence::Set) of {
+    if (size <= 0) { return Err(SpawnError::EmptyExecutable); }
+    case fs.seek(file.fd, 0, SeekWhence::Set) of {
         Ok(_) -> _;
-        Err(e) -> ({
-            fs.close(fd);
-            return Err(SpawnError::Filesystem(SpawnFilesystemError {
-                operation: SpawnFsOperation::Rewind,
-                cause: e,
-            }));
-        });
+        Err(e) -> ({ return Err(filesystem_failure(SpawnFsOperation::Rewind, e)); });
     };
     Result<i32, AllocationError> allocation = heap.alloc(size);
     i32 buf = 0;
     if (!result_take_ok<i32, AllocationError>(&allocation, &buf)) {
-        fs.close(fd);
         return Err(SpawnError::BufferAllocationFailed(size));
     }
-    i32 got = case fs.read(fd, buf, size) of {
+    HeapBlock image = HeapBlock { addr: buf }; // the loader copies the segments out
+    i32 got = case fs.read(file.fd, image.addr, size) of {
         Ok(v) -> v;
-        Err(e) -> ({
-            fs.close(fd);
-            heap.free(buf);
-            return Err(SpawnError::Filesystem(SpawnFilesystemError {
-                operation: SpawnFsOperation::Read,
-                cause: e,
-            }));
-        });
+        Err(e) -> ({ return Err(filesystem_failure(SpawnFsOperation::Read, e)); });
     };
-    fs.close(fd);
     if (got != size) {
-        heap.free(buf);
         return Err(SpawnError::ShortRead(SpawnReadMismatch {
             expected: size,
             actual: got,
         }));
     }
-    Result<i32, LoaderError> spawned = loader.spawn_from_buffer(buf, size);
-    i32 pid = case spawned of {
-        Ok(p) -> p;
-        Err(e) -> ({ heap.free(buf); return Err(SpawnError::Loader(e)); });
-    };
-    heap.free(buf); // the loader copied the segments into fresh frames
+    // A loader failure becomes SpawnError::Loader through the contract's From.
+    i32 pid = loader.spawn_from_buffer(image.addr, size)?;
     return Ok(pid);
 }
 

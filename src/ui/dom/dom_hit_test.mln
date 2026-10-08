@@ -1,20 +1,11 @@
 package dom_hit_test;
 
 import dom from "dom.mln";
+import { Children } from "dom.mln";
 import { Option } from "@std/core/option.mln";
-import { Result } from "@std/core/result.mln";
-import { UiError } from "@contracts/ui/widget.contract.mln";
 
 // Read-only pointer-to-node lookup. The DOM owns the tree and its state;
 // this module owns the traversal policy used by input dispatch and automation.
-
-i32 hit_test_child_id_or_zero(Result<Option<i32>, UiError> result) {
-    return case result of {
-        Ok(Some(id)) -> id;
-        Ok(None) -> 0;
-        Err(_) -> 0;
-    };
-}
 
 /** Checks whether a point is inside a node's bounding rectangle. */
 export bool node_contains(i32 node_id, i32 px, i32 py) {
@@ -51,11 +42,9 @@ export Option<i32> hit_test(i32 node_id, i32 px, i32 py) {
         if (dom.clips_children_id(node_id)) { return None; }
     }
 
-    i32 child_id = hit_test_child_id_or_zero(dom.first_child(node_id));
-    while (child_id != 0) {
+    for (i32 child_id in dom.children(node_id)) {
         Option<i32> child_hit = hit_test(child_id, px, py);
         case child_hit of { Some(id) -> ({ found = id; }); None -> _; };
-        child_id = hit_test_child_id_or_zero(dom.next_sibling(child_id));
     }
     if (found == 0) { return None; }
     return Some(found);
@@ -75,16 +64,14 @@ export Option<i32> find_at(i32 x, i32 y) {
         case taskbar_hit of { Some(id) -> ({ return Some(id); }); None -> _; };
     }
 
-    i32 child_id = hit_test_child_id_or_zero(dom.first_child(dom.desktop_id()));
     i32 found = 0;
-    while (child_id != 0) {
+    for (i32 child_id in dom.children(dom.desktop_id())) {
         if (child_id != taskbar_id) {
             if (child_id != menu_id) {
                 Option<i32> hit = hit_test(child_id, x, y);
                 case hit of { Some(id) -> ({ found = id; }); None -> _; };
             }
         }
-        child_id = hit_test_child_id_or_zero(dom.next_sibling(child_id));
     }
     if (found == 0) { return None; }
     return Some(found);

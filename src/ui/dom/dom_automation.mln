@@ -11,21 +11,13 @@ import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { InlineString } from "@std/text/inline_string.mln";
 import { UiError } from "@contracts/ui/widget.contract.mln";
-import { NodeRole, NodeState } from "dom.mln";
+import { NodeRole, NodeState, Children } from "dom.mln";
 
 // Human-readable tree dump (the kernel debug shell's `dump` command) and the
 // machine-readable JSON snapshot for the MYOS-004 UI automation bridge.
 // Split out of dom.mln: neither reads nor mutates tree state, they only walk
 // it through dom's exported accessors -- kept dom.mln itself readable as it
 // grew past 3000 lines.
-
-i32 automation_child_id_or_zero(Result<Option<i32>, UiError> result) {
-    return case result of {
-        Ok(Some(id)) -> id;
-        Ok(None) -> 0;
-        Err(_) -> 0;
-    };
-}
 
 // --- human-readable dump -----------------------------------------------------------------
 
@@ -100,10 +92,8 @@ void dump_node(i32 id, i32 depth) {
     dump_props(id);
     debug.println("");
 
-    i32 child_id = automation_child_id_or_zero(dom.first_child(id));
-    while (child_id != 0) {
+    for (i32 child_id in dom.children(id)) {
         dump_node(child_id, depth + 1);
-        child_id = automation_child_id_or_zero(dom.next_sibling(child_id));
     }
 }
 
@@ -217,10 +207,8 @@ void automation_node(i32 id) {
     automation_raw(",\"hitTestable\":"); automation_bool(dom.is_hit_testable(id));
     automation_transport.putc('}');
 
-    i32 child = automation_child_id_or_zero(dom.first_child(id));
-    while (child != 0) {
+    for (i32 child in dom.children(id)) {
         automation_node(child);
-        child = automation_child_id_or_zero(dom.next_sibling(child));
     }
 }
 

@@ -7,21 +7,13 @@ import { halt_cpu } from "@kernel/arch/halt.masm";
 import dom from "dom.mln";
 import { UiEventKind } from "@os/ui/events.mln";
 import ui_config from "@os/ui/config.mln";
-import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
+import { Node, NodeKind, NodeRole, NodeState, NodeStyle, Children } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { InlineCString } from "@std/text/inline_c_string.mln";
 import ascii from "@std/text/ascii.mln";
 import { UiError } from "@contracts/ui/widget.contract.mln";
 import { KeyEventType, KeyModifier, KeyCode } from "@contracts/input/keyboard.contract.mln";
-
-i32 widgets_child_id_or_zero(Result<Option<i32>, UiError> result) {
-    return case result of {
-        Ok(Some(id)) -> id;
-        Ok(None) -> 0;
-        Err(_) -> 0;
-    };
-}
 
 i32 widgets_window_id_or_zero(i32 id) {
     Result<Option<i32>, UiError> result = dom.window_of(id);
@@ -125,15 +117,11 @@ export void focus_window(i32 win) {
  */
 export void activate_topmost() {
     i32 top = 0;
-    i32 child_id = widgets_child_id_or_zero(dom.first_child(dom.desktop_id()));
-    while (child_id != 0) {
+    for (i32 child_id in dom.children(dom.desktop_id())) {
         Node *c = dom.node_ptr(child_id);
-        if (c == 0) { child_id = 0; }
-        else {
-            if (c->kind == NodeKind::WINDOW) {
-                if (!(c->state & NodeState::MINIMIZED)) { top = child_id; }
-            }
-            child_id = c->next_sibling;
+        if (c == 0) { break; }
+        if (c->kind == NodeKind::WINDOW) {
+            if (!(c->state & NodeState::MINIMIZED)) { top = child_id; }
         }
     }
     if (top != 0) { focus_window(top); }
@@ -795,7 +783,8 @@ export Option<i32> list_row_at(i32 id, i32 px, i32 py) {
     i32 rel = py - n->y - pad;
     if (rel < 0) { return None; }
     i32 row = rel / lh + n->scroll;
-    if (n->kind != NodeKind::LIST) { return None; }
+    // A popup menu lays its items out like a List (see open_menu).
+    if (n->kind != NodeKind::LIST && n->kind != NodeKind::MENU) { return None; }
     i32 count = line_of(n, n->len) + 1;
     if (n->len == 0) { count = 0; }
     if (row >= count) { return None; }
@@ -1055,10 +1044,8 @@ export void collect_focusable(i32 id) {
             g_focus_ring_count++;
         }
     }
-    i32 child = n->first_child;
-    while (child != 0) {
+    for (i32 child in dom.children(id)) {
         collect_focusable(child);
-        child = widgets_child_id_or_zero(dom.next_sibling(child));
     }
 }
 

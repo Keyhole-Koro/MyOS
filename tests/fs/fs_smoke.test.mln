@@ -3,7 +3,7 @@ import fs from "@os/fs/fs.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
 import { Result } from "@std/core/result.mln";
 import { assert_eq } from "@std/testing/assert.mln";
-import test_heap from "../alloc_support.mln";
+import myos_test_alloc from "../alloc_support.mln";
 
 // Write one byte to a plain byte buffer (caller buffers are byte arrays).
 void set_byte(i32 addr, i32 value) {
@@ -24,7 +24,7 @@ void filesystem_smoke() {
     heap.init();
     fs.init();
 
-    i32 buf = test_heap.alloc_or_zero(64);
+    i32 buf = myos_test_alloc.alloc_or_zero(64);
     assert_eq<i32>(buf != 0, 1, "heap allocation for file data");
 
     // "hi fs" -> buf, one byte per address.
@@ -52,7 +52,7 @@ void filesystem_smoke() {
         Ok(v) -> v;
         Err(e) -> ({ assert_eq<i32>(1, 0, "reopen hello"); 0; });
     };
-    i32 rbuf = test_heap.alloc_or_zero(64);
+    i32 rbuf = myos_test_alloc.alloc_or_zero(64);
     assert_eq<i32>(rbuf != 0, 1, "heap allocation for read buffer");
     Result<i32, FsError> read_res = fs.read(rfd, rbuf, 64);
     i32 n = case read_res of {

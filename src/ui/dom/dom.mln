@@ -7,6 +7,7 @@ import ui_event from "@os/ui/events.mln";
 import irq from "@kernel/arch/irq.mln";
 import { UiEventKind } from "@os/ui/events.mln";
 import { Option } from "@std/core/option.mln";
+import { Iterator } from "@std/core/iter.mln";
 import { Result } from "@std/core/result.mln";
 import { UiError } from "@contracts/ui/widget.contract.mln";
 
@@ -77,6 +78,7 @@ export enum NodeState {
     MAXIMIZED    = 128,       // Window fills the desktop; sx..sh hold the restore bounds
     MINIMIZED    = 256,       // Window hidden to the taskbar
     TEXT_OWNED   = 512,       // `text` is a heap copy this node frees (set_text_copy)
+    TEST_ID_OWNED = 1024,     // `test_id` is a heap copy this node frees (set_test_id_copy)
 }
 
 /** Presentation flags that change how text and controls are rendered. */
@@ -458,11 +460,8 @@ export void set_owner(i32 id, i32 owner) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
     n->owner = owner;
-    i32 child = n->first_child;
-    while (child != 0) {
+    for (i32 child in children(id)) {
         set_owner(child, owner);
-        Node *c = node_ptr(child);
-        if (c == 0) { child = 0; } else { child = c->next_sibling; }
     }
 }
 
@@ -923,11 +922,8 @@ export void offset_subtree(i32 id, i32 dx, i32 dy) {
     if (n == 0) { return; }
     n->x = (u16)(n->x + dx);
     n->y = (u16)(n->y + dy);
-    i32 child_id = n->first_child;
-    while (child_id != 0) {
+    for (i32 child_id in children(id)) {
         offset_subtree(child_id, dx, dy);
-        Node *c = node_ptr(child_id);
-        if (c == 0) { child_id = 0; } else { child_id = c->next_sibling; }
     }
 }
 
@@ -964,18 +960,14 @@ export void relayout_column(Node *column) {
     i32 child_x = column->x + column->padding;
     i32 cursor_y = column->y + column->padding;
     i32 gap = column->gap;
-    i32 child_id = column->first_child;
 
-    while (child_id != 0) {
+    for (i32 child_id in children(column->id)) {
         Node *child = node_ptr(child_id);
-        if (child == 0) { child_id = 0; }
-        else {
-            i32 child_h = child->h;
-            place_child(child_id, child_x, cursor_y);
-            relayout_container(child);
-            cursor_y = cursor_y + child_h + gap;
-            child_id = child->next_sibling;
-        }
+        if (child == 0) { break; }
+        i32 child_h = child->h;
+        place_child(child_id, child_x, cursor_y);
+        relayout_container(child);
+        cursor_y = cursor_y + child_h + gap;
     }
 }
 
@@ -987,18 +979,14 @@ export void relayout_row(Node *row) {
     i32 cursor_x = row->x + row->padding;
     i32 child_y = row->y + row->padding;
     i32 gap = row->gap;
-    i32 child_id = row->first_child;
 
-    while (child_id != 0) {
+    for (i32 child_id in children(row->id)) {
         Node *child = node_ptr(child_id);
-        if (child == 0) { child_id = 0; }
-        else {
-            i32 child_w = child->w;
-            place_child(child_id, cursor_x, child_y);
-            relayout_container(child);
-            cursor_x = cursor_x + child_w + gap;
-            child_id = child->next_sibling;
-        }
+        if (child == 0) { break; }
+        i32 child_w = child->w;
+        place_child(child_id, cursor_x, child_y);
+        relayout_container(child);
+        cursor_x = cursor_x + child_w + gap;
     }
 }
 
@@ -1124,8 +1112,40 @@ export void set_role(i32 id, i32 role) {
 export void set_test_id(i32 id, char *test_id) {
     Node *n = node_ptr(id);
     if (n == 0) { return; }
+    release_test_id(n);
     n->test_id = test_id;
     touch();
+}
+
+// Frees a test id the node copied (set_test_id_copy) before it is replaced.
+void release_test_id(Node *n) {
+    if (n->state & NodeState::TEST_ID_OWNED) {
+        if (n->test_id != 0) { heap.free((i32)n->test_id); }
+        n->state = (u16)(n->state & ~NodeState::TEST_ID_OWNED);
+    }
+}
+
+/**
+ * Copies a test identifier into kernel-owned storage before assigning it.
+ * A request's strings live in its sender's staging buffer, which the sender's
+ * next request overwrites, so a node must not keep pointing into it.
+ * @param id DOM Node ID.
+ * @param test_id Test identifier to copy.
+ */
+export void set_test_id_copy(i32 id, char *test_id) {
+    if (node_ptr(id) == 0) { return; }
+    i32 len = 0;
+    while (test_id[len] != 0) { len++; }
+    i32 copy_address = case heap.alloc(len + 1) of {
+        Ok(pointer) -> pointer;
+        Err(_) -> ({ return; });
+    };
+    char *copy = (char*)copy_address;
+    i32 k = 0;
+    while (k <= len) { copy[k] = test_id[k]; k++; }
+    set_test_id(id, copy);
+    Node *n = node_ptr(id);
+    n->state = (u16)(n->state | NodeState::TEST_ID_OWNED);
 }
 
 /**
@@ -1600,6 +1620,7 @@ export void free_subtree(i32 id) {
     if (owns_buffer(n) || (n->state & NodeState::TEXT_OWNED)) {
         if (n->text != 0) { heap.free((i32)n->text); }
     }
+    release_test_id(n);
     if (g_menu_id == id) { g_menu_id = 0; }
     if (n->owner != 0) {
         case owner_slot(n->owner, 0) of {
@@ -1667,6 +1688,37 @@ export Result<Option<i32>, UiError> next_sibling(i32 id) {
     if (n == 0) { return Err(UiError::NodeNotFound(id)); }
     if (n->next_sibling == 0) { return Ok(None); }
     return Ok(Some(n->next_sibling));
+}
+
+/**
+ * The children of a node, first to last: `for (i32 child in dom.children(id))`.
+ * Each child's next sibling is read when the child is handed out, before the
+ * loop body runs, so the body may move or unlink that child but not the one
+ * after it.
+ * @property next DOM Node ID of the next child to hand out, or 0 when done.
+ */
+export struct Children {
+    i32 next;
+};
+
+export impl Iterator<i32> for Children {
+    Option<i32> (Self *self) next() {
+        if (self->next == 0) { return None; }
+        i32 id = self->next;
+        Node *n = node_ptr(id);
+        self->next = n == 0 ? 0 : n->next_sibling;
+        return Some(id);
+    }
+}
+
+/**
+ * Iterates the children of a node.
+ * @param id DOM Node ID; an unknown ID has no children.
+ * @return An Iterator over the child node IDs, first to last.
+ */
+export Children children(i32 id) {
+    Node *n = node_ptr(id);
+    return Children { next: n == 0 ? 0 : n->first_child };
 }
 
 /**

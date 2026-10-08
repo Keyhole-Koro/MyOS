@@ -23,10 +23,26 @@ import {
 import fs from "fs.mln";
 import user_memory from "@os/syscall/user_memory.mln";
 import { InlineCString } from "@std/text/inline_c_string.mln";
+import debug from "@kernel/debug/debug.mln";
+import error_trace from "@std/debug/error_trace.mln";
 
 InlineCString<64> g_path;
 char g_io[512];
 InlineCString<16> g_name;
+char g_trace_text[768];
+
+/**
+ * Logs where a filesystem error came from before it crosses to user space.
+ * Only an image built with `--error-trace` records sites; otherwise the trace
+ * is empty and nothing is printed.
+ * @param failed Whether the operation's Result is an Err.
+ */
+void log_error_trace(bool failed) {
+    if (!failed || error_trace.depth() == 0) { return; }
+    error_trace.format(&g_trace_text[0], 768);
+    debug.print(&g_trace_text[0]);
+    error_trace.clear();
+}
 
 /**
  * Reads bytes into a user buffer through a bounded kernel staging buffer.
@@ -52,6 +68,7 @@ void read_user(i32 user_args) {
         case r of {
             Ok(v) -> ({ got = v; });
             Err(e) -> ({
+                log_error_trace(true);
                 Result<i32, FsError> out = Err(e);
                 if (total != 0) { out = Ok(total); }
                 user_memory.copy_out(user_result, (char*)(&out), sizeof(Result<i32, FsError>));
@@ -208,6 +225,7 @@ export Result<_, OsServiceError> handle(i32 service, i32 args) {
         user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
         g_path.sync_from_ptr();
         Result<i32, FsError> r = fs.open(g_path.as_ptr());
+        log_error_trace(case r of { Ok(_) -> false; Err(_) -> true; });
         user_memory.copy_out(
             (i32)request.result_out,
             (char*)(&r),
@@ -221,6 +239,7 @@ export Result<_, OsServiceError> handle(i32 service, i32 args) {
         user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
         g_path.sync_from_ptr();
         Result<i32, FsError> r = fs.create(g_path.as_ptr());
+        log_error_trace(case r of { Ok(_) -> false; Err(_) -> true; });
         user_memory.copy_out(
             (i32)request.result_out,
             (char*)(&r),
@@ -234,6 +253,7 @@ export Result<_, OsServiceError> handle(i32 service, i32 args) {
         user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
         g_path.sync_from_ptr();
         Result<_, FsError> r = fs.remove(g_path.as_ptr());
+        log_error_trace(case r of { Ok(_) -> false; Err(_) -> true; });
         user_memory.copy_out(
             (i32)request.result_out,
             (char*)(&r),
@@ -247,6 +267,7 @@ export Result<_, OsServiceError> handle(i32 service, i32 args) {
         user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
         g_path.sync_from_ptr();
         Result<i32, FsError> r = fs.mkdir(g_path.as_ptr());
+        log_error_trace(case r of { Ok(_) -> false; Err(_) -> true; });
         user_memory.copy_out(
             (i32)request.result_out,
             (char*)(&r),
