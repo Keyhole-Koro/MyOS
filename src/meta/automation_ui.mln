@@ -20,15 +20,17 @@ export void run() {
             i32 command = automation_transport.read_request();
             // Reading the tree while the UI server is mid-pass would give a
             // torn picture: take the DOM lock for the dump.
-            dom.lock();
-            if (command == CMD_DOM_SNAPSHOT) { dom_automation.write_automation_snapshot(); }
-            else if ((command >> 28) == CMD_DOM_HIT_TEST) {
-                i32 x = (command >> 14) & 0x3FFF;
-                i32 y = command & 0x3FFF;
-                dom_automation.write_automation_hit_test(x, y);
+            {
+                dom.lock();
+                defer dom.unlock();
+                if (command == CMD_DOM_SNAPSHOT) { dom_automation.write_automation_snapshot(); }
+                else if ((command >> 28) == CMD_DOM_HIT_TEST) {
+                    i32 x = (command >> 14) & 0x3FFF;
+                    i32 y = command & 0x3FFF;
+                    dom_automation.write_automation_hit_test(x, y);
+                }
+                else { automation_transport.putc('{'); automation_transport.putc('}'); }
             }
-            else { automation_transport.putc('{'); automation_transport.putc('}'); }
-            dom.unlock();
             automation_transport.done();
         }
         scheduler.sleep(1);

@@ -10,6 +10,7 @@ import { Option } from "@std/core/option.mln";
 import { Iterator } from "@std/core/iter.mln";
 import { Result } from "@std/core/result.mln";
 import { UiError } from "@contracts/ui/widget.contract.mln";
+import { Drop } from "@std/core/drop.mln";
 
 // Kernel object tree + UI DOM. See docs/DOM_SPEC.md and MYOS-014.
 //
@@ -349,6 +350,33 @@ Option<Node*> get_node(i32 id) {
  */
 export bool node_exists(i32 id) {
     return node_ptr(id) != 0;
+}
+
+/**
+ * A node still being built: it is removed again if the builder returns
+ * early, so a failed create leaves nothing behind. `keep()` hands the
+ * finished node over.
+ *
+ *     NewNode node = NewNode { id: dom.create_node(kind, name)? };
+ *     ...setup that may `return Err(...)`...
+ *     return Ok(node.keep());
+ */
+export struct NewNode {
+    i32 id;
+};
+
+export impl Drop for NewNode {
+    void (Self *self) drop() {
+        if (self->id != 0) { remove_node(self->id); }
+        self->id = 0;
+    }
+}
+
+/** Gives up the guard and returns the node ID. */
+export i32 (NewNode *self) keep() {
+    i32 id = self->id;
+    self->id = 0;
+    return id;
 }
 
 /**

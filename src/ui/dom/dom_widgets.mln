@@ -7,7 +7,7 @@ import { halt_cpu } from "@kernel/arch/halt.masm";
 import dom from "dom.mln";
 import { UiEventKind } from "@os/ui/events.mln";
 import ui_config from "@os/ui/config.mln";
-import { Node, NodeKind, NodeRole, NodeState, NodeStyle, Children } from "dom.mln";
+import { Node, NodeKind, NodeRole, NodeState, NodeStyle, Children, NewNode } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { InlineCString } from "@std/text/inline_c_string.mln";
@@ -22,11 +22,6 @@ i32 widgets_window_id_or_zero(i32 id) {
         Ok(None) -> 0;
         Err(_) -> 0;
     };
-}
-
-i32 owner_id_or_zero(i32 id) {
-    Result<i32, UiError> result = dom.owner_of(id);
-    return case result of { Ok(owner) -> owner; Err(_) -> 0; };
 }
 
 fn(i32 owner, i32 id, i32 arg) -> void close_handler_or_zero(i32 id) {
@@ -139,7 +134,7 @@ export void activate_topmost() {
 export void close_window(i32 win) {
     fn(i32 owner, i32 id, i32 arg) -> void handler = close_handler_or_zero(win);
     if (handler != 0) {
-        dom.push_event(handler, owner_id_or_zero(win), win, 0);
+        dom.push_event(handler, dom.owner_of(win).unwrap_or(0), win, 0);
         return;
     }
     dom.remove_node(win);
@@ -935,13 +930,14 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, char *items,
     if (x < 0) { x = 0; }
     if (y < 0) { y = 0; }
 
-    i32 id = dom.create_node(NodeKind::MENU, "menu")?;
+    NewNode node = NewNode { id: dom.create_node(NodeKind::MENU, "menu")? };
+    i32 id = node.id;
     dom.set_role(id, NodeRole::MENU);
     Node *n = dom.node_ptr(id);
     i32 cap = i + 2;
     i32 buffer_address = case heap.alloc(cap) of {
         Ok(pointer) -> pointer;
-        Err(_) -> ({ dom.remove_node(id); return Err(UiError::AllocationFailed(cap)); });
+        Err(_) -> ({ return Err(UiError::AllocationFailed(cap)); });
     };
     char *buf = (char*)buffer_address;
     i32 k = 0;
@@ -960,14 +956,11 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, char *items,
     dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
     // Appended to the desktop like a window, but painted last (see
     // paint_desktop) and hit-tested first (see dom_hit_test.find_at).
-    case dom.append_child(dom.desktop_id(), id) of {
-        Ok(_) -> _;
-        Err(e) -> ({ dom.remove_node(id); return Err(e); });
-    };
+    dom.append_child(dom.desktop_id(), id)?;
     // append_child translated by the desktop origin (0,0): bounds stand.
     dom.set_menu_state(id, handler, target);
     dom.touch();
-    return Ok(id);
+    return Ok(node.keep());
 }
 
 /**
@@ -1109,8 +1102,7 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
             return;
         }
         // App shortcuts (@key) for the active window's app go first.
-        fn(i32 owner, i32 code, i32 mods) -> bool filter =
-            case dom.key_filter() of { Some(value) -> value; None -> 0; };
+        fn(i32 owner, i32 code, i32 mods) -> bool filter = dom.key_filter().unwrap_or(0);
         if (filter != 0) {
             Result<i32, UiError> owner = dom.owner_of(dom.active_window_id());
             case owner of {
@@ -1232,14 +1224,11 @@ export void tick() {
  */
 export Result<i32, UiError> create_timer(
     i32 interval, fn(i32 owner, i32 id, i32 arg) -> void handler) {
-    i32 id = dom.create_node(NodeKind::TIMER, "timer")?;
-    Node *t = dom.node_ptr(id);
+    NewNode node = NewNode { id: dom.create_node(NodeKind::TIMER, "timer")? };
+    Node *t = dom.node_ptr(node.id);
     t->interval = interval;
     t->on_tick = handler;
     t->next_due = scheduler.ticks() + interval;
-    case dom.register_timer(id) of {
-        Ok(_) -> _;
-        Err(e) -> ({ dom.remove_node(id); return Err(e); });
-    };
-    return Ok(id);
+    dom.register_timer(node.id)?;
+    return Ok(node.keep());
 }

@@ -225,7 +225,7 @@ export Result<_, OsServiceError> handle(i32 service, i32 args) {
         user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
         g_path.sync_from_ptr();
         Result<i32, FsError> r = fs.open(g_path.as_ptr());
-        log_error_trace(case r of { Ok(_) -> false; Err(_) -> true; });
+        log_error_trace(r.is_err());
         user_memory.copy_out(
             (i32)request.result_out,
             (char*)(&r),
@@ -239,7 +239,7 @@ export Result<_, OsServiceError> handle(i32 service, i32 args) {
         user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
         g_path.sync_from_ptr();
         Result<i32, FsError> r = fs.create(g_path.as_ptr());
-        log_error_trace(case r of { Ok(_) -> false; Err(_) -> true; });
+        log_error_trace(r.is_err());
         user_memory.copy_out(
             (i32)request.result_out,
             (char*)(&r),
@@ -253,7 +253,7 @@ export Result<_, OsServiceError> handle(i32 service, i32 args) {
         user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
         g_path.sync_from_ptr();
         Result<_, FsError> r = fs.remove(g_path.as_ptr());
-        log_error_trace(case r of { Ok(_) -> false; Err(_) -> true; });
+        log_error_trace(r.is_err());
         user_memory.copy_out(
             (i32)request.result_out,
             (char*)(&r),
@@ -267,7 +267,7 @@ export Result<_, OsServiceError> handle(i32 service, i32 args) {
         user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
         g_path.sync_from_ptr();
         Result<i32, FsError> r = fs.mkdir(g_path.as_ptr());
-        log_error_trace(case r of { Ok(_) -> false; Err(_) -> true; });
+        log_error_trace(r.is_err());
         user_memory.copy_out(
             (i32)request.result_out,
             (char*)(&r),

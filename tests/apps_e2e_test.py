@@ -92,10 +92,10 @@ def main() -> int:
             # integer convention in the hosted FS API.
             os._type("cat definitely-missing")
             os._press("enter")
-            wait_text_contains(term_out, "cat: no such file")
+            wait_text_contains(term_out, "cat: no such file or directory")
             os._type("ls definitely-missing")
             os._press("enter")
-            wait_text_contains(term_out, "ls: no such directory")
+            wait_text_contains(term_out, "ls: no such file or directory")
 
             # 2. The editor saves a new file to the disk.
             launch_app(os, 1)  # Editor (menu is alphabetical: Counter, Editor, Files, Notes, Terminal)

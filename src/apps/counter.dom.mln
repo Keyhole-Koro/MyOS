@@ -88,7 +88,5 @@ void (ref mut Counter c) reset(i32 id) {
  */
 void (ref mut Counter c) step_changed(i32 id) {
     c.step = 1;
-    Result<bool, UiError> checked = ui.is_checked(id);
-    bool on = case checked of { Ok(value) -> value; Err(_) -> false; };
-    if (on) { c.step = 2; }
+    if (ui.is_checked(id).unwrap_or(false)) { c.step = 2; }
 }

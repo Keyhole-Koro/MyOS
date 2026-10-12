@@ -222,10 +222,7 @@ void bitmap_set(i32 block_num, i32 value) {
  * @return Option containing allocated block number, or None if disk is full or on I/O error.
  */
 Option<i32> alloc_block() {
-    case ssd.read_block(fs_config.BITMAP_BLOCK, g_buf) of {
-        Ok(_) -> _;
-        Err(_) -> ({ return None; });
-    };
+    ssd.read_block(fs_config.BITMAP_BLOCK, g_buf).ok()?;
     char *bits = (char *)g_buf;
 
     i32 b = case bitset.find_clear(bits, fs_config.BLOCK_COUNT, fs_config.DATA_START) of {
@@ -234,10 +231,7 @@ Option<i32> alloc_block() {
     };
 
     bitset.set(bits, b);
-    case ssd.write_block(fs_config.BITMAP_BLOCK, g_buf) of {
-        Ok(_) -> _;
-        Err(_) -> ({ return None; });
-    };
+    ssd.write_block(fs_config.BITMAP_BLOCK, g_buf).ok()?;
     return Some(b);
 }
 
@@ -331,10 +325,7 @@ export const i32 FLAG_DIR = 1;
 // The entry called `name` directly inside directory `parent_code`
 // (parent index + 1, 0 = root), or None.
 Option<i32> find_entry_in(i32 parent_code, char* name) {
-    case ssd.read_block(fs_config.ENTRY_BLOCK, g_buf) of {
-        Ok(_) -> _;
-        Err(_) -> ({ return None; });
-    };
+    ssd.read_block(fs_config.ENTRY_BLOCK, g_buf).ok()?;
     i32 idx = 0;
     while (idx < fs_config.MAX_FILES) {
         i32 off = idx * fs_config.ENTRY_SIZE;
@@ -395,10 +386,7 @@ Result<i32, PathError> split_path(char* path, char* out_name) {
 Option<i32> find_entry_by_path(char* path) {
     InlineCString<16> name = InlineCString<16> {};
     name.clear();
-    i32 parent_code = case split_path(path, name.as_ptr()) of {
-        Ok(v) -> v;
-        Err(_) -> ({ return None; });
-    };
+    i32 parent_code = split_path(path, name.as_ptr()).ok()?;
     name.sync_from_ptr();
     return find_entry_in(parent_code, name.as_ptr());
 }
@@ -408,10 +396,7 @@ Option<i32> find_entry_by_path(char* path) {
  * @return Option containing free entry index, or None if directory table is full.
  */
 Option<i32> find_free_entry() {
-    case ssd.read_block(fs_config.ENTRY_BLOCK, g_buf) of {
-        Ok(_) -> _;
-        Err(_) -> ({ return None; });
-    };
+    ssd.read_block(fs_config.ENTRY_BLOCK, g_buf).ok()?;
     i32 idx = 0;
     while (idx < fs_config.MAX_FILES) {
         i32 off = idx * fs_config.ENTRY_SIZE;

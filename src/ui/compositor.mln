@@ -313,97 +313,100 @@ export void run() {
     // before interrupts were enabled, so that paint could not be preempted).
 
     while (1) {
-        dom.lock();
+        {
+            // One pass holds the DOM; the lock is given back before sleeping.
+            dom.lock();
+            defer dom.unlock();
 
-        // Consume all queued mouse events. Clicks are dispatched at the
-        // event's own coordinates: where the press happened, not where the
-        // pointer is now.
-        while (mouse.has_event()) {
-            i32 ex = mouse.event_x();
-            i32 ey = mouse.event_y();
-            i32 btn = mouse.event_btn();
-            i32 wheel = mouse.event_wheel();
-            mouse.pop_event();
-            i32 eb = btn & PointerButton::LEFT;
-            i32 er = btn & PointerButton::RIGHT;
+            // Consume all queued mouse events. Clicks are dispatched at the
+            // event's own coordinates: where the press happened, not where the
+            // pointer is now.
+            while (mouse.has_event()) {
+                i32 ex = mouse.event_x();
+                i32 ey = mouse.event_y();
+                i32 btn = mouse.event_btn();
+                i32 wheel = mouse.event_wheel();
+                mouse.pop_event();
+                i32 eb = btn & PointerButton::LEFT;
+                i32 er = btn & PointerButton::RIGHT;
 
-            if (eb) {
-                if (!prev_left) {
-                    on_press(ex, ey);
+                if (eb) {
+                    if (!prev_left) {
+                        on_press(ex, ey);
+                    } else {
+                        on_motion(ex, ey);
+                    }
                 } else {
-                    on_motion(ex, ey);
+                    if (prev_left) {
+                        on_release(ex, ey);
+                    }
                 }
-            } else {
-                if (prev_left) {
-                    on_release(ex, ey);
+                prev_left = eb;
+
+                if (er) {
+                    if (!prev_right) { on_right_press(ex, ey); }
+                }
+                prev_right = er;
+
+                if (wheel != 0) {
+                    case dom_hit_test.find_at(ex, ey) of {
+                        Some(id) -> ({ dom_widgets.dispatch_wheel(id, wheel); });
+                        None -> _;
+                    };
                 }
             }
-            prev_left = eb;
 
-            if (er) {
-                if (!prev_right) { on_right_press(ex, ey); }
+            // Keyboard events go to whichever node holds focus.
+            while (keyboard.has_event()) {
+                i32 t = keyboard.event_type();
+                i32 c = keyboard.event_code();
+                i32 m = keyboard.event_mods();
+                keyboard.pop_event();
+                dom_widgets.dispatch_key_event(t, c, m);
             }
-            prev_right = er;
 
-            if (wheel != 0) {
-                case dom_hit_test.find_at(ex, ey) of {
-                    Some(id) -> ({ dom_widgets.dispatch_wheel(id, wheel); });
-                    None -> _;
-                };
+            // Live state drives the cursor and hover. Moving the pointer is two
+            // register writes and does not dirty the scene; only a change in what
+            // is hovered does.
+            i32 mx = mouse.x();
+            i32 my = mouse.y();
+            graphics.set_cursor(mx, my);
+
+            i32 hit = dom_hit_test.find_at(mx, my).unwrap_or(0);
+            if (hit != g_hot_id) {
+                if (g_hot_id != 0) { dom.set_hovered(g_hot_id, 0); }
+                if (hit != 0) { dom.set_hovered(hit, 1); }
+                g_hot_id = hit;
             }
-        }
+            if (dom_widgets.menu_id() != 0) { dom_widgets.menu_hover(mx, my); }
 
-        // Keyboard events go to whichever node holds focus.
-        while (keyboard.has_event()) {
-            i32 t = keyboard.event_type();
-            i32 c = keyboard.event_code();
-            i32 m = keyboard.event_mods();
-            keyboard.pop_event();
-            dom_widgets.dispatch_key_event(t, c, m);
-        }
+            // Timers (clock, animations) run on this task between events.
+            dom_widgets.tick();
 
-        // Live state drives the cursor and hover. Moving the pointer is two
-        // register writes and does not dirty the scene; only a change in what
-        // is hovered does.
-        i32 mx = mouse.x();
-        i32 my = mouse.y();
-        graphics.set_cursor(mx, my);
+            // Application service work is answered here, on this task. The app
+            // task sleeps on each request until its reply; its handlers run over
+            // there, on events the DOM emitted above.
+            i32 served = 0;
+            if (g_request_pump != 0) { served = g_request_pump(); }
 
-        i32 hit = case dom_hit_test.find_at(mx, my) of { Some(id) -> id; None -> 0; };
-        if (hit != g_hot_id) {
-            if (g_hot_id != 0) { dom.set_hovered(g_hot_id, 0); }
-            if (hit != 0) { dom.set_hovered(hit, 1); }
-            g_hot_id = hit;
-        }
-        if (dom_widgets.menu_id() != 0) { dom_widgets.menu_hover(mx, my); }
+            // The server's own queued handlers (taskbar, menus, the shell's
+            // window-close hook) run here, between input and paint.
+            dom.drain_events();
 
-        // Timers (clock, animations) run on this task between events.
-        dom_widgets.tick();
-
-        // Application service work is answered here, on this task. The app
-        // task sleeps on each request until its reply; its handlers run over
-        // there, on events the DOM emitted above.
-        i32 served = 0;
-        if (g_request_pump != 0) { served = g_request_pump(); }
-
-        // The server's own queued handlers (taskbar, menus, the shell's
-        // window-close hook) run here, between input and paint.
-        dom.drain_events();
-
-        // The setters above record what changed, so the damage region is the
-        // authority on whether a repaint is needed. A pass that answered
-        // requests is likely in the middle of an app's burst (view() is a
-        // dozen creates, each one pass apart): hold the paint until a quiet
-        // pass, but never for more than a few, so a chatty app still shows.
-        if (served > 0) { g_paint_deferred++; } else { g_paint_deferred = 0; }
-        if (dom.has_damage()) {
-            if (served == 0 || g_paint_deferred > 8) {
-                g_paint_deferred = 0;
-                present_frame();
+            // The setters above record what changed, so the damage region is the
+            // authority on whether a repaint is needed. A pass that answered
+            // requests is likely in the middle of an app's burst (view() is a
+            // dozen creates, each one pass apart): hold the paint until a quiet
+            // pass, but never for more than a few, so a chatty app still shows.
+            if (served > 0) { g_paint_deferred++; } else { g_paint_deferred = 0; }
+            if (dom.has_damage()) {
+                if (served == 0 || g_paint_deferred > 8) {
+                    g_paint_deferred = 0;
+                    present_frame();
+                }
             }
-        }
 
-        dom.unlock();
+        }
         scheduler.sleep(1); // yield the CPU to other tasks between passes
     }
 }

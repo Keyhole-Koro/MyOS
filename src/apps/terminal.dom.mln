@@ -79,6 +79,17 @@ void (Terminal *t) say_line(char *s) {
     t->say("\n");
 }
 
+/**
+ * Reports a failed command as `what: <message>`.
+ * @param what The command, as the line's prefix.
+ * @param message Why, typically an error's `describe()`.
+ */
+void (Terminal *t) say_error(char *what, char *message) {
+    t->say(what);
+    t->say(": ");
+    t->say_line(message);
+}
+
 // `ls [dir]`: the root, or a directory (`ls apps`).
 /**
  * Lists entries in a directory in the terminal output.
@@ -94,8 +105,7 @@ void (Terminal *t) cmd_ls(char *dir) {
         Result<Option<i32>, FsError> res = fs.dir_next_at(dir, start, name.as_ptr(), name.data.length);
         i32 idx = case res of {
             Ok(v) -> case v of { Some(n) -> n; None -> ({ break; }); };
-            Err(FsError::NotFound) -> ({ t->say_line("ls: no such directory"); return; });
-            Err(e) -> ({ t->say_line("ls: filesystem error"); return; });
+            Err(e) -> ({ t->say_error("ls", e.describe()); return; });
         };
         name.sync_from_ptr();
         t->line_buf.clear();
@@ -104,7 +114,7 @@ void (Terminal *t) cmd_ls(char *dir) {
         Result<bool, FsError> directory = fs.is_dir(idx);
         bool is_directory = case directory of {
             Ok(value) -> value;
-            Err(_) -> ({ t->say_line("ls: filesystem error"); return; });
+            Err(e) -> ({ t->say_error("ls", e.describe()); return; });
         };
         if (is_directory) {
             t->line_buf.append("/\n");
@@ -112,7 +122,7 @@ void (Terminal *t) cmd_ls(char *dir) {
             Result<i32, FsError> size_result = fs.entry_size(idx);
             i32 size = case size_result of {
                 Ok(value) -> value;
-                Err(_) -> ({ t->say_line("ls: filesystem error"); return; });
+                Err(e) -> ({ t->say_error("ls", e.describe()); return; });
             };
             t->line_buf.append("  ");
             InlineString<12> size_text = size.to_string();
@@ -133,15 +143,15 @@ void (Terminal *t) cmd_ls(char *dir) {
 void (Terminal *t) cmd_cat(char *path) {
     i32 fd = case fs.open(path) of {
         Ok(v) -> v;
-        Err(e) -> ({ t->say_line("cat: no such file"); return; });
+        Err(e) -> ({ t->say_error("cat", e.describe()); return; });
     };
     char chunk[64];
     while (1) {
         i32 got = case fs.read(fd, (i32)(&chunk[0]), 63) of {
             Ok(v) -> v;
-            Err(_) -> ({
+            Err(e) -> ({
                 fs.close(fd);
-                t->say_line("cat: filesystem read error");
+                t->say_error("cat", e.describe());
                 return;
             });
         };
@@ -165,18 +175,7 @@ void (Terminal *t) cmd_run(char *path) {
     Result<i32, SpawnError> started = terminal.spawn_bound(path, t->out);
     i32 pid = case started of {
         Ok(value) -> value;
-        Err(SpawnError::NotFound) -> ({ t->say_line("run: file not found"); return; });
-        Err(SpawnError::EmptyExecutable) -> ({ t->say_line("run: not an executable"); return; });
-        Err(SpawnError::ShortRead(_)) -> ({ t->say_line("run: incomplete executable"); return; });
-        Err(SpawnError::Loader(e)) -> ({
-            case e of {
-                LoaderError::InvalidHeader(_) -> ({ t->say_line("run: not an executable"); });
-                LoaderError::InvalidBounds(_) -> ({ t->say_line("run: invalid executable layout"); });
-                _ -> ({ t->say_line("run: process could not be started"); });
-            };
-            return;
-        });
-        Err(_) -> ({ t->say_line("run: process could not be started"); return; });
+        Err(e) -> ({ t->say_error("run", e.describe()); return; });
     };
     t->pid = pid;
     t->line_buf.clear();

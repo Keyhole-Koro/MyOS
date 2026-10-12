@@ -327,6 +327,7 @@ export void draw_rows(Node *n, Option<i32> hl, i32 hl_color, i32 hl_fg) {
     i32 len = n->len;
     i32 r = theme.BUTTON_RADIUS * s;
     graphics.push_clip(x + s, y + s, w - 2 * s, h - 2 * s);
+    defer graphics.pop_clip();
     i32 rows = dom_widgets.visible_lines(n);
     i32 first = n->scroll;
     i32 start = dom_widgets.line_start(n, first);
@@ -349,7 +350,6 @@ export void draw_rows(Node *n, Option<i32> hl, i32 hl_color, i32 hl_fg) {
         start = start + llen + 1;
         row = row + 1;
     }
-    graphics.pop_clip();
 }
 
 /**
@@ -437,6 +437,7 @@ export void draw_text_input(Node *n) {
     i32 th = graphics.text_height(0, s);
     i32 ty = y + (h - th) / 2;
     graphics.push_clip(x + pad / 2, y, w - pad, h);
+    defer graphics.pop_clip();
     if (n->len == 0) {
         if (n->name != 0) {
             i32 ph = theme.INPUT_PLACEHOLDER;
@@ -453,7 +454,6 @@ export void draw_text_input(Node *n) {
         i32 caret = theme.CARET;
         graphics.fill_rect(caret_x, ty + s, s, th - 2 * s, caret);
     }
-    graphics.pop_clip();
 }
 
 /**

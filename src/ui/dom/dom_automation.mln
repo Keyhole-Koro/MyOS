@@ -231,7 +231,6 @@ export void write_automation_snapshot() {
  */
 export void write_automation_hit_test(i32 x, i32 y) {
     automation_raw("{\"id\":");
-    Option<i32> hit = dom_hit_test.find_at(x, y);
-    automation_i32(case hit of { Some(id) -> id; None -> 0; });
+    automation_i32(dom_hit_test.find_at(x, y).unwrap_or(0));
     automation_raw("}");
 }

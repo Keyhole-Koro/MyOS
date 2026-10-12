@@ -7,7 +7,7 @@ import ui_metrics from "@os/ui/ui_metrics.mln";
 import { halt_cpu } from "@kernel/arch/halt.masm";
 import dom_widgets from "dom_widgets.mln";
 import dom from "dom.mln";
-import { Node, NodeKind, NodeRole, NodeState, NodeStyle } from "dom.mln";
+import { Node, NodeKind, NodeRole, NodeState, NodeStyle, NewNode } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { UiError } from "@contracts/ui/widget.contract.mln";
@@ -164,13 +164,14 @@ export Result<i32, UiError> create_row(i32 x, i32 y, i32 w, i32 h,
  */
 export Result<i32, UiError> create_text_input(char *placeholder, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
     if (capacity < 2) { capacity = 2; }
-    i32 id = dom.create_node(NodeKind::TEXT_INPUT, placeholder)?;
+    NewNode node = NewNode { id: dom.create_node(NodeKind::TEXT_INPUT, placeholder)? };
+    i32 id = node.id;
     dom.set_role(id, NodeRole::TEXTBOX);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     Node *n = dom.node_ptr(id);
     i32 buffer_address = case heap.alloc(capacity) of {
         Ok(pointer) -> pointer;
-        Err(_) -> ({ dom.remove_node(id); return Err(UiError::AllocationFailed(capacity)); });
+        Err(_) -> ({ return Err(UiError::AllocationFailed(capacity)); });
     };
     char *buf = (char*)buffer_address;
     buf[0] = (char)0;
@@ -181,7 +182,7 @@ export Result<i32, UiError> create_text_input(char *placeholder, i32 x, i32 y, i
     dom.set_state_flag(id, NodeState::VISIBLE, 1);
     dom.set_state_flag(id, NodeState::ENABLED, 1);
     dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
-    return Ok(id);
+    return Ok(node.keep());
 }
 
 /**
@@ -238,13 +239,14 @@ export Result<i32, UiError> create_separator(i32 x, i32 y, i32 w) {
  */
 export Result<i32, UiError> create_text_area(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 readonly) {
     if (capacity < 2) { capacity = 2; }
-    i32 id = dom.create_node(NodeKind::TEXT_AREA, name)?;
+    NewNode node = NewNode { id: dom.create_node(NodeKind::TEXT_AREA, name)? };
+    i32 id = node.id;
     dom.set_role(id, NodeRole::TEXTAREA);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     Node *n = dom.node_ptr(id);
     i32 buffer_address = case heap.alloc(capacity) of {
         Ok(pointer) -> pointer;
-        Err(_) -> ({ dom.remove_node(id); return Err(UiError::AllocationFailed(capacity)); });
+        Err(_) -> ({ return Err(UiError::AllocationFailed(capacity)); });
     };
     char *buf = (char*)buffer_address;
     buf[0] = (char)0;
@@ -257,7 +259,7 @@ export Result<i32, UiError> create_text_area(char *name, i32 x, i32 y, i32 w, i3
     dom.set_state_flag(id, NodeState::VISIBLE, 1);
     dom.set_state_flag(id, NodeState::ENABLED, 1);
     dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
-    return Ok(id);
+    return Ok(node.keep());
 }
 
 /**
@@ -272,13 +274,14 @@ export Result<i32, UiError> create_text_area(char *name, i32 x, i32 y, i32 w, i3
  */
 export Result<i32, UiError> create_list(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
     if (capacity < 2) { capacity = 2; }
-    i32 id = dom.create_node(NodeKind::LIST, name)?;
+    NewNode node = NewNode { id: dom.create_node(NodeKind::LIST, name)? };
+    i32 id = node.id;
     dom.set_role(id, NodeRole::LIST);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
     Node *n = dom.node_ptr(id);
     i32 buffer_address = case heap.alloc(capacity) of {
         Ok(pointer) -> pointer;
-        Err(_) -> ({ dom.remove_node(id); return Err(UiError::AllocationFailed(capacity)); });
+        Err(_) -> ({ return Err(UiError::AllocationFailed(capacity)); });
     };
     char *buf = (char*)buffer_address;
     buf[0] = (char)0;
@@ -290,7 +293,7 @@ export Result<i32, UiError> create_list(char *name, i32 x, i32 y, i32 w, i32 h, 
     dom.set_state_flag(id, NodeState::VISIBLE, 1);
     dom.set_state_flag(id, NodeState::ENABLED, 1);
     dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
-    return Ok(id);
+    return Ok(node.keep());
 }
 
 /**

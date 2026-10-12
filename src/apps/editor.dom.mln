@@ -73,9 +73,9 @@ void (Editor *e) open(char *path) {
     while (1) {
         i32 got = case fs.read(fd, (i32)(&chunk[0]), 127) of {
             Ok(v) -> v;
-            Err(_) -> ({
+            Err(error) -> ({
                 fs.close(fd);
-                ui.set_text(e->status, "read failed: filesystem error");
+                ui.set_error(e->status, "read failed", error.describe());
                 return;
             });
         };
@@ -99,7 +99,7 @@ void (Editor *e) save(i32 id) {
     Result<i32, UiError> name_copy = ui.text_copy(e->name, path, e->save_name.data.length);
     case name_copy of {
         Ok(_) -> _;
-        Err(_) -> ({ ui.set_text(e->status, "save failed: filename unavailable"); return; });
+        Err(error) -> ({ ui.set_error(e->status, "save failed", error.describe()); return; });
     };
     e->save_name.sync_from_ptr();
     if (path[0] == 0) { ui.set_text(e->status, "enter a file name first"); return; }
@@ -107,7 +107,7 @@ void (Editor *e) save(i32 id) {
     Result<i32, UiError> text_copy = ui.text_copy(e->area, text, e->save_text.data.length);
     i32 len = case text_copy of {
         Ok(value) -> value;
-        Err(_) -> ({ ui.set_text(e->status, "save failed: editor text unavailable"); return; });
+        Err(error) -> ({ ui.set_error(e->status, "save failed", error.describe()); return; });
     };
     e->save_text.sync_from_ptr();
     // Bind the Result: a discarded aggregate return has no out-pointer.
@@ -115,16 +115,16 @@ void (Editor *e) save(i32 id) {
     case removed of { Ok(_) -> _; Err(_) -> _; };
     i32 fd = case fs.create(path) of {
         Ok(v) -> v;
-        Err(_) -> ({ ui.set_text(e->status, "save failed: cannot create file"); return; });
+        Err(error) -> ({ ui.set_error(e->status, "save failed", error.describe()); return; });
     };
     i32 written = 0;
     if (len > 0) {
         Result<i32, FsError> write_result = fs.write(fd, (i32)text, len);
         written = case write_result of {
             Ok(v) -> v;
-            Err(_) -> ({
+            Err(error) -> ({
                 fs.close(fd);
-                ui.set_text(e->status, "save failed: filesystem error");
+                ui.set_error(e->status, "save failed", error.describe());
                 return;
             });
         };
