@@ -40,14 +40,13 @@ struct Editor {
  * @return DOM node ID of the editor window.
  */
 i32 (Editor *e) view() {
-    i32 muted = ui.rgb(0x6B, 0x72, 0x80);
     i32 win = <Window title="Editor" x={300} y={120} w={520} h={420}>
         <Row x={12} y={12} w={496} h={34} gap={8}>
             <TextInput ref={e->name} placeholder="file name" w={300} h={34} capacity={16} testId="editor-name" />
             <PrimaryButton text="Save" w={90} h={34} onClick={e->save} />
         </Row>
         <TextArea ref={e->area} name="Type here..." x={12} y={56} w={496} h={294} capacity={4096} testId="editor-text" />
-        <Label ref={e->status} text="" x={12} y={360} color={muted} testId="editor-status" />
+        <Label ref={e->status} text="" x={12} y={360} color={ui.TEXT_SECONDARY} testId="editor-status" />
     </Window>;
     // A plain launch starts on a scratch file; ui.open() replaces it.
     e->open("untitled.txt");

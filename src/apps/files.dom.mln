@@ -49,7 +49,6 @@ struct Files {
  * @return DOM node ID of the file-manager window.
  */
 i32 (Files *f) view() {
-    i32 muted = ui.rgb(0x6B, 0x72, 0x80);
     i32 win = <Window title="Files" x={60} y={60} w={440} h={400}>
         <List ref={f->list} name="files" x={12} y={12} w={416} h={270} capacity={1024}
               onChange={f->select} onActivate={f->open} testId="file-list" />
@@ -59,7 +58,7 @@ i32 (Files *f) view() {
             <Button text="Delete" w={90} h={34} onClick={f->delete} />
             <Button text="Refresh" w={96} h={34} onClick={f->refresh} />
         </Row>
-        <Label ref={f->status} text="" x={12} y={340} color={muted} testId="files-status" />
+        <Label ref={f->status} text="" x={12} y={340} color={ui.TEXT_SECONDARY} testId="files-status" />
     </Window>;
     f->refresh(0);
     ui.focus(f->list);

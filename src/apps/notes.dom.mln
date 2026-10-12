@@ -36,10 +36,9 @@ struct Notes {
 i32 (Notes *n) view() {
     i32 offset = 28 * opened_count;
     opened_count++;
-    i32 muted = ui.rgb(0x6B, 0x72, 0x80);
     return <Window title="Notes" x={540 + offset} y={96 + offset} w={380} h={330}>
         <Column x={24} y={20} w={332} h={270} gap={12}>
-            <Label text="Click a field and type. Tab moves between fields." color={muted} />
+            <Label text="Click a field and type. Tab moves between fields." color={ui.TEXT_SECONDARY} />
             <TextInput ref={n->title} placeholder="Title" w={332} h={34} capacity={64} onChange={n->changed} />
             <TextInput ref={n->body} placeholder="Write something..." w={332} h={34} capacity={64} onChange={n->changed} />
             <Separator w={332} />

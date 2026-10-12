@@ -14,7 +14,8 @@ export const i32 ACCENT_HOVER = 0x609AF8;
 export const i32 ACCENT_PRESSED = 0x2563EB;
 export const i32 ON_ACCENT = 0xFFFFFF;
 
-// Text
+// Text (MyAppFramework's ui.mln repeats PRIMARY, SECONDARY, DISABLED, and
+// ACCENT for apps; keep them in step)
 export const i32 TEXT_PRIMARY = 0x1F2328;
 export const i32 TEXT_SECONDARY = 0x6B7280;
 export const i32 TEXT_DISABLED = 0xA0A6B0;
