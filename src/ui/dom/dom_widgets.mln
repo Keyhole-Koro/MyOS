@@ -10,7 +10,7 @@ import ui_config from "@os/ui/config.mln";
 import { Node, NodeKind, NodeRole, NodeState, NodeStyle, Children, NewNode } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
-import { InlineCString } from "@std/text/inline_c_string.mln";
+import { Text } from "@std/text/text.mln";
 import ascii from "@std/text/ascii.mln";
 import { UiError } from "@contracts/ui/widget.contract.mln";
 import { KeyEventType, KeyModifier, KeyCode } from "@contracts/input/keyboard.contract.mln";
@@ -581,7 +581,7 @@ export void append_text(i32 id, char *s) {
  * @param count Number of bytes to read and append.
  */
 export void append_bytes(i32 id, i32 addr, i32 count) {
-    InlineCString<64> tmp = InlineCString<64> {};
+    Text<64> tmp = Text<64> {};
     tmp.clear();
     i32 i = 0;
     while (i < count) {

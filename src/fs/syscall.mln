@@ -22,13 +22,13 @@ import {
 } from "@contracts/myos/fs-args.contract.mln";
 import fs from "fs.mln";
 import user_memory from "@os/syscall/user_memory.mln";
-import { InlineCString } from "@std/text/inline_c_string.mln";
+import { Text } from "@std/text/text.mln";
 import debug from "@kernel/debug/debug.mln";
 import error_trace from "@std/debug/error_trace.mln";
 
-InlineCString<64> g_path;
+Text<64> g_path;
 char g_io[512];
-InlineCString<16> g_name;
+Text<16> g_name;
 char g_trace_text[768];
 
 /**

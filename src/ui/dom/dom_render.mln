@@ -10,7 +10,7 @@ import dom_window_chrome from "dom_window_chrome.mln";
 import dom from "dom.mln";
 import { Node, NodeKind, NodeRole, NodeState, NodeStyle, Children } from "dom.mln";
 import { Option } from "@std/core/option.mln";
-import { InlineCString } from "@std/text/inline_c_string.mln";
+import { Text } from "@std/text/text.mln";
 
 // --- renderer ---------------------------------------------------------------------------------
 // Walk the UI subtree and paint each node with graphics.*. The renderer and
@@ -210,8 +210,8 @@ export void draw_button(Node *n) {
  * @param llen Number of bytes to copy.
  * @return A bounded NUL-terminated copy of the requested line.
  */
-export InlineCString<160> copy_line(char *buf, i32 start, i32 llen) {
-    InlineCString<160> out = InlineCString<160> {};
+export Text<160> copy_line(char *buf, i32 start, i32 llen) {
+    Text<160> out = Text<160> {};
     out.clear();
     i32 i = 0;
     while (i < llen) {
@@ -273,7 +273,7 @@ export void draw_text_area(Node *n) {
         if (start > len) { break; }
         i32 llen = dom_widgets.line_len_at(n, start);
         i32 ty = y + pad + row * lh;
-        InlineCString<160> line = copy_line(buf, start, llen);
+        Text<160> line = copy_line(buf, start, llen);
         graphics.draw_label(x + pad, ty, line.as_ptr(), fg, 0, s);
         i32 cur = n->cursor;
         if (cur >= start) {
@@ -345,7 +345,7 @@ export void draw_rows(Node *n, Option<i32> hl, i32 hl_color, i32 hl_fg) {
             graphics.fill_round_rect(x + 4 * s, ty - s, w - 8 * s, lh + 2 * s, r, hl_color);
             color = hl_fg;
         }
-        InlineCString<160> line = copy_line(buf, start, llen);
+        Text<160> line = copy_line(buf, start, llen);
         graphics.draw_label(x + pad + 4 * s, ty, line.as_ptr(), color, 0, s);
         start = start + llen + 1;
         row = row + 1;
@@ -567,13 +567,13 @@ export i32 taskbar_entry_x(i32 index) {
  * Formats current system uptime as "HH:MM:SS".
  * @return Owned, NUL-terminated clock text.
  */
-export InlineCString<16> format_clock() {
+export Text<16> format_clock() {
     // Uptime from the 1 ms scheduler tick: HH:MM:SS.
     i32 secs = scheduler.ticks() / 1000;
     i32 hh = (secs / 3600) % 100;
     i32 mm = (secs / 60) % 60;
     i32 ss = secs % 60;
-    InlineCString<16> clock = InlineCString<16> {};
+    Text<16> clock = Text<16> {};
     clock.clear();
     clock.push((u8)('0' + hh / 10));
     clock.push((u8)('0' + hh % 10));
@@ -642,7 +642,7 @@ export void draw_taskbar(Node *n) {
     }
 
     // Clock at the right.
-    InlineCString<16> clock = format_clock();
+    Text<16> clock = format_clock();
     i32 cw = graphics.text_width(clock.as_ptr(), 0, s);
     graphics.draw_label(x + w - cw - 16 * s, y + (h - th) / 2, clock.as_ptr(), on_dark, 0, s);
 }

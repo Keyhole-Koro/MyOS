@@ -3,7 +3,7 @@ package notes;
 import elements from "@app/elements.mln";
 import ui from "@app/ui.mln";
 import { app } from "@app/annotations.mln";
-import { InlineCString } from "@std/text/inline_c_string.mln";
+import { Text } from "@std/text/text.mln";
 import { Result } from "@std/core/result.mln";
 import { UiError } from "@contracts/ui/widget.contract.mln";
 
@@ -26,7 +26,7 @@ struct Notes {
     i32 title;
     i32 body;
     i32 echo;
-    InlineCString<128> typed;
+    Text<128> typed;
 };
 
 @app

@@ -5,8 +5,7 @@ import ui from "@app/ui.mln";
 import { app } from "@app/annotations.mln";
 import fs from "@std/hosted/fs.mln";
 import str from "@std/text/str.mln";
-import { InlineString } from "@std/text/inline_string.mln";
-import { InlineCString } from "@std/text/inline_c_string.mln";
+import { Text } from "@std/text/text.mln";
 import { Result } from "@std/core/result.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
 import { UiError } from "@contracts/ui/widget.contract.mln";
@@ -36,11 +35,11 @@ struct Files {
     i32 list;
     i32 status;
     i32 dialog;          // open confirmation window, or 0
-    InlineCString<1024> items;   // "\n"-joined list rows
-    InlineCString<16> selected;  // name of the selected row
-    InlineCString<64> question;  // dialog text
-    InlineCString<64> dir;       // the directory shown ("" = root)
-    InlineCString<80> path;      // dir + "/" + a name
+    Text<1024> items;   // "\n"-joined list rows
+    Text<16> selected;  // name of the selected row
+    Text<64> question;  // dialog text
+    Text<64> dir;       // the directory shown ("" = root)
+    Text<80> path;      // dir + "/" + a name
 };
 
 @app(single)
@@ -89,7 +88,7 @@ char* (Files *f) path_of(char *name) {
  * @param id DOM event argument (unused).
  */
 void (Files *f) refresh(i32 id) {
-    InlineCString<16> name = InlineCString<16> {};
+    Text<16> name = Text<16> {};
     f->items.clear();
     i32 start = 0;
     i32 count = 0;
@@ -122,7 +121,7 @@ void (Files *f) refresh(i32 id) {
                 Err(e) -> ({ ui.set_error(f->status, "cannot list", e.describe()); return; });
             };
             f->items.append("   (");
-            InlineString<12> size_text = size.to_string();
+            Text<12> size_text = size.to_string();
             f->items.append(size_text.as_str());
             f->items.append(" bytes)");
         }
@@ -150,7 +149,7 @@ Result<bool, UiError> (Files *f) selected_is_dir() {
         Some(n) -> n;
         None -> ({ return Ok(false); });
     };
-    InlineCString<48> item = InlineCString<48> {};
+    Text<48> item = Text<48> {};
     item.clear();
     Result<i32, UiError> copied = ui.list_item(f->list, row, item.as_ptr(), item.data.length);
     copied?;
@@ -192,7 +191,7 @@ char* (Files *f) selected_name() {
         };
         Err(_) -> ({ return (char*)0; });
     };
-    InlineCString<48> item = InlineCString<48> {};
+    Text<48> item = Text<48> {};
     item.clear();
     Result<i32, UiError> copied = ui.list_item(f->list, row, item.as_ptr(), item.data.length);
     case copied of {

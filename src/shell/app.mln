@@ -5,7 +5,7 @@ import heap from "@kernel/mm/heap.mln";
 import str from "@std/text/str.mln";
 import ascii from "@std/text/ascii.mln";
 import { ParseIntError } from "@std/text/str.mln";
-import { InlineCString } from "@std/text/inline_c_string.mln";
+import { Text } from "@std/text/text.mln";
 import dom from "@os/ui/dom/dom.mln";
 import dom_widgets from "@os/ui/dom/dom_widgets.mln";
 import dom_render from "@os/ui/dom/dom_render.mln";
@@ -137,10 +137,10 @@ void register_app(char *path, char *type, i32 single, char *name, i32 opens) {
 // Every executable in /apps that declares @app is an installed app: read
 // each file's header (MBIN, section directory) for its annotation rows,
 // without loading it.
-InlineCString<32> scan_path;
+Text<32> scan_path;
 
 void scan_disk() {
-    InlineCString<16> name = InlineCString<16> {};
+    Text<16> name = Text<16> {};
     i32 start = 0;
     while (1) {
         name.clear();
@@ -250,12 +250,12 @@ struct AppInstance {
 Option<AppInstance> instances[32];
 i32 instance_count = 0; // slots in use, including freed ones below the high-water mark
 
-InlineCString<256> menu_buf; // "\n"-joined app names
+Text<256> menu_buf; // "\n"-joined app names
 // One pending OPEN path per instance. A single global scratch buffer loses the
 // first path when two applications are still starting at the same time.
-InlineCString<64> open_paths[32];
+Text<64> open_paths[32];
 
-InlineCString<64> *open_path_for(i32 slot) { return &open_paths[slot]; }
+Text<64> *open_path_for(i32 slot) { return &open_paths[slot]; }
 
 Option<i32> slot_of_owner(i32 owner) {
     i32 i = 0;
@@ -385,7 +385,7 @@ export void window_ready(i32 owner, i32 win) {
     dom_widgets.focus_window(win);
     if (instance.open) {
         instance.open = false;
-        InlineCString<64> *open_path = open_path_for(slot);
+        Text<64> *open_path = open_path_for(slot);
         push_app_event(owner, win, ShellEventKind::OPEN, 0, 0, open_path->as_ptr());
     }
     instances[slot] = Some(instance);
@@ -562,7 +562,7 @@ export Result<Option<i32>, AppError> open(char *path) {
             if (!found) {
                 slot = mount(a)?;
             }
-            InlineCString<64> *open_path = open_path_for(slot);
+            Text<64> *open_path = open_path_for(slot);
             open_path->clear();
             open_path->append(path_text);
             AppInstance instance = case instances[slot] of {
@@ -728,7 +728,7 @@ i32 CLAIMS_MAX = 64;
  */
 struct KeyClaim {
     i32 owner;              // 0 = free
-    InlineCString<16> spec; // copied because the request's string is transient
+    Text<16> spec; // copied because the request's string is transient
 };
 KeyClaim claims[64];
 i32 claim_count = 0;

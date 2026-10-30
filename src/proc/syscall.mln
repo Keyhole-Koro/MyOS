@@ -16,10 +16,10 @@ import user_memory from "@os/syscall/user_memory.mln";
 import { Result, result_take_ok } from "@std/core/result.mln";
 import { SpawnError } from "@contracts/process/spawn.contract.mln";
 import { ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
-import { InlineCString } from "@std/text/inline_c_string.mln";
+import { Text } from "@std/text/text.mln";
 
-InlineCString<64> g_path;
-InlineCString<128> g_line;
+Text<64> g_path;
+Text<128> g_line;
 
 /**
  * Dispatches a process OS_CALL request and performs user-memory copies where needed.

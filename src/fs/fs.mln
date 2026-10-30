@@ -13,7 +13,7 @@ import ssd from "ssd.mln";
 import { SsdError } from "ssd.mln";
 import { Result } from "@std/core/result.mln";
 import { Option } from "@std/core/option.mln";
-import { InlineCString } from "@std/text/inline_c_string.mln";
+import { Text } from "@std/text/text.mln";
 import { FsError, SeekWhence } from "@contracts/io/fs.contract.mln";
 import { From } from "@std/core/convert.mln";
 import { Drop } from "@std/core/drop.mln";
@@ -384,7 +384,7 @@ Result<i32, PathError> split_path(char* path, char* out_name) {
 
 // The entry a path names, or None.
 Option<i32> find_entry_by_path(char* path) {
-    InlineCString<16> name = InlineCString<16> {};
+    Text<16> name = Text<16> {};
     name.clear();
     i32 parent_code = split_path(path, name.as_ptr()).ok()?;
     name.sync_from_ptr();
@@ -542,7 +542,7 @@ Result<i32, FsError> make_entry(char* path, i32 flags) {
         return Err(FsError::Disabled);
     }
 
-    InlineCString<16> clean_name = InlineCString<16> {};
+    Text<16> clean_name = Text<16> {};
     clean_name.clear();
     i32 parent_code = case split_path(path, clean_name.as_ptr()) of {
         Ok(v) -> v;
@@ -987,7 +987,7 @@ export Result<_, FsError> remove(char* path) {
     // A directory goes only when empty.
     bool is_directory = is_dir(idx)?;
     if (is_directory) {
-        InlineCString<16> child = InlineCString<16> {};
+        Text<16> child = Text<16> {};
         child.clear();
         Option<i32> any = dir_next_in(idx + 1, 0, child.as_ptr(), child.data.length)?;
         bool has_child = case any of {

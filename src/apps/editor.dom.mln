@@ -7,7 +7,7 @@ import fs from "@std/hosted/fs.mln";
 import { Result } from "@std/core/result.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
 import { UiError } from "@contracts/ui/widget.contract.mln";
-import { InlineCString } from "@std/text/inline_c_string.mln";
+import { Text } from "@std/text/text.mln";
 import { KeyEventType, KeyCode } from "@contracts/input/keyboard.contract.mln";
 
 // Text editor: a TextArea over one file on the MFS disk. Save rewrites the
@@ -31,8 +31,8 @@ struct Editor {
     i32 area;     // TextArea
     i32 name;     // filename TextInput
     i32 status;   // Label
-    InlineCString<32> save_name;
-    InlineCString<4096> save_text;
+    Text<32> save_name;
+    Text<4096> save_text;
 };
 
 @app(single)

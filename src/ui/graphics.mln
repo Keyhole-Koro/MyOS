@@ -6,7 +6,7 @@ import font from "font8x8.mln";
 import font_sans from "font_sans.mln";
 import str from "@std/text/str.mln";
 import ascii from "@std/text/ascii.mln";
-import { InlineString } from "@std/text/inline_string.mln";
+import { Text } from "@std/text/text.mln";
 import { Option } from "@std/core/option.mln";
 
 export const i32 VRAM_BASE = 0x30000000;
@@ -1220,7 +1220,7 @@ export void draw_text_scaled(i32 x, i32 y, char* s, i32 fg, i32 bg, i32 scale) {
  * @return X coordinate immediately following the rendered number.
  */
 export i32 draw_int(i32 x, i32 y, i32 value, i32 fg, i32 bg) {
-    InlineString<12> digits = value.to_string();
+    Text<12> digits = value.to_string();
 
     i32 cx = x;
     i32 i = 0;

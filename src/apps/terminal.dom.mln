@@ -7,8 +7,7 @@ import terminal from "@app/terminal.mln";
 import fs from "@std/hosted/fs.mln";
 import process from "@std/hosted/process.mln";
 import str from "@std/text/str.mln";
-import { InlineString } from "@std/text/inline_string.mln";
-import { InlineCString } from "@std/text/inline_c_string.mln";
+import { Text } from "@std/text/text.mln";
 import { Result, result_take_ok } from "@std/core/result.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
 import { SpawnError } from "@contracts/process/spawn.contract.mln";
@@ -38,8 +37,8 @@ struct Terminal {
     i32 out;      // output TextArea
     i32 input;    // command TextInput
     i32 pid;      // attached process, 0 = none
-    InlineCString<96> line_buf; // scratch for one formatted line
-    InlineCString<96> cmd;      // mutable copy used by run_line
+    Text<96> line_buf; // scratch for one formatted line
+    Text<96> cmd;      // mutable copy used by run_line
 };
 
 @app
@@ -96,7 +95,7 @@ void (Terminal *t) say_error(char *what, char *message) {
  * @param dir NUL-terminated directory path; empty string selects the root.
  */
 void (Terminal *t) cmd_ls(char *dir) {
-    InlineCString<16> name = InlineCString<16> {};
+    Text<16> name = Text<16> {};
     i32 n = 0;
     i32 start = 0;
     while (1) {
@@ -125,7 +124,7 @@ void (Terminal *t) cmd_ls(char *dir) {
                 Err(e) -> ({ t->say_error("ls", e.describe()); return; });
             };
             t->line_buf.append("  ");
-            InlineString<12> size_text = size.to_string();
+            Text<12> size_text = size.to_string();
             t->line_buf.append(size_text.as_str());
             t->line_buf.append(" bytes\n");
         }
@@ -180,7 +179,7 @@ void (Terminal *t) cmd_run(char *path) {
     t->pid = pid;
     t->line_buf.clear();
     t->line_buf.append("[pid ");
-    InlineString<12> pid_text = pid.to_string();
+    Text<12> pid_text = pid.to_string();
     t->line_buf.append(pid_text.as_str());
     t->line_buf.append("] ");
     t->line_buf.append(str.from_c(path));
@@ -280,13 +279,13 @@ void (Terminal *t) poll() {
     t->pid = 0;
     t->line_buf.clear();
     t->line_buf.append("[pid ");
-    InlineString<12> pid_text = pid.to_string();
+    Text<12> pid_text = pid.to_string();
     t->line_buf.append(pid_text.as_str());
     if (got_status) {
         case exit_status of {
             ProcessExitStatus::Code(code) -> ({
                 t->line_buf.append(" exited with ");
-                InlineString<12> code_text = code.to_string();
+                Text<12> code_text = code.to_string();
                 t->line_buf.append(code_text.as_str());
             });
             ProcessExitStatus::PageFault -> ({

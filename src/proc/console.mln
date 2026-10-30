@@ -20,7 +20,7 @@ import { FsError, SeekWhence } from "@contracts/io/fs.contract.mln";
 import fs from "@os/fs/fs.mln";
 import { FileHandle } from "@os/fs/fs.mln";
 import str from "@std/text/str.mln";
-import { InlineCString } from "@std/text/inline_c_string.mln";
+import { Text } from "@std/text/text.mln";
 import ascii from "@std/text/ascii.mln";
 import dom_widgets from "@os/ui/dom/dom_widgets.mln";
 import dom from "@os/ui/dom/dom.mln";
@@ -219,7 +219,7 @@ i32 on_read(i32 pid, i32 buf, i32 count) {
  * @return Ok(PID) on success, or Err(SpawnError) when the executable cannot
  *         be opened, loaded, or scheduled.
  */
-InlineCString<80> spawn_path;
+Text<80> spawn_path;
 
 // The file for an executable name: a path as given, or a bare name looked
 // up in /bin then /apps (the search path).
@@ -307,7 +307,7 @@ export Result<i32, SpawnError> spawn_file(char *path) {
  * @param result_out Kernel address of Result<i32, SpawnError> output.
  */
 void on_spawn(i32 user_path, Result<i32, SpawnError> *result_out) {
-    InlineCString<32> path = InlineCString<32> {};
+    Text<32> path = Text<32> {};
     path.clear();
     i32 k = 0;
     while (k < path.capacity()) {

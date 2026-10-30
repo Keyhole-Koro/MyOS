@@ -5,7 +5,7 @@ import fs from "@os/fs/fs.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
 import serial from "@kernel/io/serial.mln";
 import str from "@std/text/str.mln";
-import { InlineCString } from "@std/text/inline_c_string.mln";
+import { Text } from "@std/text/text.mln";
 import { Option } from "@std/core/option.mln";
 import { KeyCode } from "@contracts/input/keyboard.contract.mln";
 
@@ -29,7 +29,7 @@ i32 read_char() {
  */
 export void run() {
     debug.println("Starting OS shell...");
-    InlineCString<128> buf = InlineCString<128> {};
+    Text<128> buf = Text<128> {};
 
     while (1) {
         debug.print("MyOS> ");
