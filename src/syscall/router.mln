@@ -61,24 +61,26 @@ Result<i32, OsServiceError> handle(i32 pid, i32 service, i32 args) {
     return Err(OsServiceError::UnknownService(service));
 }
 
-// The kernel callback and user-facing OS_CALL use a raw i32 ABI. Keep the
-// negative unknown-service encoding at this single transport edge.
-i32 handle_raw(i32 pid, i32 service, i32 args) {
-    Result<i32, OsServiceError> result = handle(pid, service, args);
-    return case result of {
-        Ok(value) -> value;
-        Err(_) -> -1;
-    };
+/**
+ * Writes the typed router result into kernel-owned storage.
+ * @param pid Process ID of the caller.
+ * @param service Requested OsService wire value.
+ * @param args User address of the service arguments.
+ * @param result_out Kernel address receiving Result<i32, OsServiceError>.
+ */
+void handle_result(i32 pid, i32 service, i32 args, i32 result_out) {
+    Result<i32, OsServiceError> *out = (Result<i32, OsServiceError>*)result_out;
+    *out = handle(pid, service, args);
 }
 
 /**
  * Initializes the OS service router.
  *
- * Sets up shell event and process cleanup sinks, and registers `handle_raw` as
+ * Sets up shell event and process cleanup sinks, and registers `handle_result` as
  * the OS_CALL handler with the kernel syscall subsystem.
  */
 export void init() {
     app.set_event_sink(app_events.push_shell);
     app.set_process_gone_sink(request_gateway.process_gone);
-    syscall.set_os_handler(handle_raw);
+    syscall.set_os_handler(handle_result);
 }

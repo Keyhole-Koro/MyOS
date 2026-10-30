@@ -1,7 +1,7 @@
 ; User-space syscall stubs (MYOS-015). The MyLang calling convention puts
-; arguments in r5/r6/r7 and the return value in r1; the syscall trap takes
-; the number in r1 and the same argument registers, and leaves the result
-; in r1 (see docs/design/user-space-processes-and-syscalls.md). Numbers
+; arguments in r5/r6/r7. The syscall trap returns status in r1 and a value
+; or error payload in r2; stubs copy r2 through their final out pointer.
+; Numbers
 ; must match SYS_* in system/MyKernel/src/kernel/syscall.mln.
 export sys_exit
 export sys_read
@@ -18,16 +18,21 @@ sys_exit:
 sys_read:
   movi r1, 2
   syscall
+  load r3, sp
+  store r3, r2
   mov pc, lr
 
 sys_write:
   movi r1, 3
   syscall
+  load r3, sp
+  store r3, r2
   mov pc, lr
 
 sys_sbrk:
   movi r1, 7
   syscall
+  store r6, r2
   mov pc, lr
 
 sys_yield:
@@ -38,4 +43,5 @@ sys_yield:
 sys_spawn:
   movi r1, 9
   syscall
+  store r6, r2
   mov pc, lr

@@ -295,6 +295,9 @@ void (Terminal *t) poll() {
             ProcessExitStatus::PrivilegeViolation -> ({
                 t->line_buf.append(" terminated by privilege violation");
             });
+            ProcessExitStatus::IllegalInstruction -> ({
+                t->line_buf.append(" terminated by illegal instruction");
+            });
         };
     } else {
         t->line_buf.append(" could not be reaped");

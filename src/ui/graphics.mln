@@ -1241,7 +1241,7 @@ export i32 draw_int(i32 x, i32 y, i32 value, i32 fg, i32 bg) {
  * @param h Height in pixels.
  * @param src Reference to row-major pixel array.
  */
-export void blit(i32 x, i32 y, i32 w, i32 h, ref i32 src) {
+export void blit(i32 x, i32 y, i32 w, i32 h, borrow i32 src) {
     i32 row = 0;
     while (row < h) {
         i32 col = 0;
@@ -1262,7 +1262,7 @@ export void blit(i32 x, i32 y, i32 w, i32 h, ref i32 src) {
  * @param src Reference to row-major pixel array.
  * @param key_color Color value treated as transparent.
  */
-export void blit_key(i32 x, i32 y, i32 w, i32 h, ref i32 src, i32 key_color) {
+export void blit_key(i32 x, i32 y, i32 w, i32 h, borrow i32 src, i32 key_color) {
     i32 row = 0;
     while (row < h) {
         i32 col = 0;

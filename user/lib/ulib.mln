@@ -1,6 +1,7 @@
 package ulib;
 
 import { sys_read, sys_write, sys_yield, sys_exit } from "sys.masm";
+import { SyscallStatus } from "@contracts/myos/syscall.contract.mln";
 
 // Minimal user-space runtime: stdio over the read/write syscalls and a few
 // string helpers. No heap (sbrk exists but nothing here needs it) and small
@@ -38,7 +39,8 @@ export bool str_eq(char* a, char* b) {
  * @param s String to write.
  */
 export void print(char* s) {
-    sys_write(1, s, strlen(s));
+    i32 written = 0;
+    sys_write(1, s, strlen(s), &written);
 }
 
 /**
@@ -47,7 +49,8 @@ export void print(char* s) {
  */
 export void println(char* s) {
     print(s);
-    sys_write(1, "\n", 1);
+    i32 written = 0;
+    sys_write(1, "\n", 1, &written);
 }
 
 /**
@@ -73,7 +76,8 @@ export void print_i32(i32 v) {
         out[i] = digits[n - 1 - i];
         i++;
     }
-    sys_write(1, &out[0], n);
+    i32 written = 0;
+    sys_write(1, &out[0], n, &written);
 }
 
 /**
@@ -88,8 +92,9 @@ export i32 readline(char* buf, i32 cap) {
     i32 len = 0;
     while (1) {
         char c[1];
-        i32 got = sys_read(0, &c[0], 1);
-        if (got <= 0) {
+        i32 got = 0;
+        SyscallStatus status = sys_read(0, &c[0], 1, &got);
+        if (status != SyscallStatus::Ok || got <= 0) {
             sys_yield();
         } else {
             i32 ch = (i32)c[0] & 0xFF;

@@ -140,7 +140,7 @@ void kernel_init() {
     dom.note_app_starting(1);
 
     debug.println("kernel: spawning shell task");
-    // spawn_task returns a Result; bind it so the callee has somewhere to
+    // spawn_kernel_thread returns a Result; bind it so the callee has somewhere to
     // write it (a bare aggregate-returning call passes no out-pointer).
     // Both tasks run real call chains -- the shell's commands reach the
     // filesystem, and an automation snapshot walks the whole DOM recursively
@@ -148,9 +148,9 @@ void kernel_init() {
     // 1 KiB overflowed into the neighbouring heap block, which is the other
     // task's saved register frame.
     i32 TASK_STACK_BYTES = 16384;
-    Result<i32, SchedulerError> shell_task = scheduler.spawn_task_sized(shell.run, TASK_STACK_BYTES);
+    Result<i32, SchedulerError> shell_task = scheduler.spawn_kernel_thread(shell.run, TASK_STACK_BYTES);
     case shell_task of { Ok(_) -> _; Err(_) -> ({ debug.println("kernel: no task slot for the shell"); }); };
-    Result<i32, SchedulerError> automation_task = scheduler.spawn_task_sized(automation_ui.run, TASK_STACK_BYTES);
+    Result<i32, SchedulerError> automation_task = scheduler.spawn_kernel_thread(automation_ui.run, TASK_STACK_BYTES);
     case automation_task of { Ok(_) -> _; Err(_) -> ({ debug.println("kernel: no task slot for automation"); }); };
 
     // Open a few apps at boot; the last one launched is the active window.

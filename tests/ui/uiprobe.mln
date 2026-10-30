@@ -39,7 +39,7 @@ i32 kernel_main() {
     scheduler.init();
     irq.set_handler();
     irq.enable();
-    scheduler.spawn_task(idler);
+    scheduler.spawn_kernel_thread(idler, 1024);
 
     dom.render_all();
     graphics.present();

@@ -8,6 +8,7 @@ import syscall from "@kernel/kernel/syscall.mln";
 import debug from "@kernel/debug/debug.mln";
 import loader from "@kernel/kernel/loader.mln";
 import process from "@kernel/kernel/process.mln";
+import thread from "@kernel/kernel/thread.mln";
 import { ProcessState, ProcessError } from "@kernel/kernel/process.mln";
 import { LoaderError } from "@contracts/process/loader.contract.mln";
 import { Result, result_take_ok } from "@std/core/result.mln";
@@ -318,7 +319,7 @@ void on_spawn(i32 user_path, Result<i32, SpawnError> *result_out) {
     Result<i32, SpawnError> result = spawn_file(path.as_ptr());
     i32 pid = 0;
     if (result_take_ok<i32, SpawnError>(&result, &pid)) {
-        i32 parent = case process.get_current_pid() of {
+        i32 parent = case thread.current_pid() of {
             Some(value) -> value;
             None -> ({ debug.panic("SYS_SPAWN hook called without a current process"); });
         };

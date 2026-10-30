@@ -13,7 +13,7 @@ import mem from "@kernel/mm/mem.mln";
 import str from "@std/text/str.mln";
 import { Result } from "@std/core/result.mln";
 import { Option } from "@std/core/option.mln";
-import { OsService, OsServiceError } from "@contracts/myos/services.contract.mln";
+import { OsCall, OsServiceError } from "@contracts/myos/services.contract.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
 import {
     FsOpenArgs, FsCreateArgs, FsMkdirArgs, FsRemoveArgs, FsReadArgs,
@@ -45,20 +45,40 @@ void log_error_trace(bool failed) {
 }
 
 /**
+ * Copies the caller's argument record when service is the one its contract
+ * binds to A.
+ * @param service Requested OsService wire value.
+ * @param user_args User address of the caller's record.
+ * @param out Kernel copy of the record.
+ * @return Whether service selects A; out is filled only then.
+ */
+bool accept<A: OsCall>(i32 service, i32 user_args, A *out) {
+    if (service != A::service()) { return false; }
+    user_memory.copy_in(user_args, (char*)out, sizeof(A));
+    return true;
+}
+
+/**
+ * Writes a service result to the reply slot named by an argument record.
+ * @param user_out The record's result_out user address.
+ * @param value Kernel copy of the result.
+ */
+void reply<T>(T *user_out, T *value) {
+    user_memory.copy_out((i32)user_out, (char*)value, sizeof(T));
+}
+
+/**
  * Reads bytes into a user buffer through a bounded kernel staging buffer.
  *
  * Reads data in chunks of up to 512 bytes via an intermediate kernel buffer.
  *
- * @param user_args User address of FsReadArgs<Result<i32, FsError>>.
+ * @param args Kernel copy of the caller's FsReadArgs.
  * Completes the read and writes its typed result to user memory.
  */
-void read_user(i32 user_args) {
-    FsReadArgs<Result<i32, FsError>> args;
-    user_memory.copy_in(user_args, (char*)(&args), sizeof(args));
-    i32 fd = args.fd;
-    i32 user_buf = (i32)args.buffer;
-    i32 size = args.size;
-    i32 user_result = (i32)args.result_out;
+void read_user(FsReadArgs *args) {
+    i32 fd = args->fd;
+    i32 user_buf = (i32)args->buffer;
+    i32 size = args->size;
     i32 total = 0;
     while (total < size) {
         i32 want = size - total;
@@ -71,7 +91,7 @@ void read_user(i32 user_args) {
                 log_error_trace(true);
                 Result<i32, FsError> out = Err(e);
                 if (total != 0) { out = Ok(total); }
-                user_memory.copy_out(user_result, (char*)(&out), sizeof(Result<i32, FsError>));
+                reply<Result<i32, FsError>>(args->result_out, &out);
                 return;
             });
         };
@@ -81,7 +101,7 @@ void read_user(i32 user_args) {
         if (got < want) { break; }
     }
     Result<i32, FsError> out = Ok(total);
-    user_memory.copy_out(user_result, (char*)(&out), sizeof(Result<i32, FsError>));
+    reply<Result<i32, FsError>>(args->result_out, &out);
 }
 
 /**
@@ -89,16 +109,13 @@ void read_user(i32 user_args) {
  *
  * Copies data from user space in chunks of up to 512 bytes before writing.
  *
- * @param user_args User address of FsWriteArgs<Result<i32, FsError>>.
+ * @param args Kernel copy of the caller's FsWriteArgs.
  * Completes the write and writes its typed result to user memory.
  */
-void write_user(i32 user_args) {
-    FsWriteArgs<Result<i32, FsError>> args;
-    user_memory.copy_in(user_args, (char*)(&args), sizeof(args));
-    i32 fd = args.fd;
-    i32 user_buf = (i32)args.buffer;
-    i32 size = args.size;
-    i32 user_result = (i32)args.result_out;
+void write_user(FsWriteArgs *args) {
+    i32 fd = args->fd;
+    i32 user_buf = (i32)args->buffer;
+    i32 size = args->size;
     i32 total = 0;
     while (total < size) {
         i32 n = size - total;
@@ -112,7 +129,7 @@ void write_user(i32 user_args) {
             Err(e) -> ({
                 Result<i32, FsError> out = Err(e);
                 if (total != 0) { out = Ok(total); }
-                user_memory.copy_out(user_result, (char*)(&out), sizeof(Result<i32, FsError>));
+                reply<Result<i32, FsError>>(args->result_out, &out);
                 return;
             });
         };
@@ -120,24 +137,21 @@ void write_user(i32 user_args) {
         if (put < n) { break; }
     }
     Result<i32, FsError> out = Ok(total);
-    user_memory.copy_out(user_result, (char*)(&out), sizeof(Result<i32, FsError>));
+    reply<Result<i32, FsError>>(args->result_out, &out);
 }
 
 /**
  * Enumerates a directory and copies the optional name into user memory.
  *
- * @param user_args User address of FsDirNextArgs<Result<Option<i32>, FsError>>.
+ * @param args Kernel copy of the caller's FsDirNextArgs.
  * Completes the enumeration and writes its typed result to user memory.
  */
-void dir_next_user(i32 user_args) {
-    FsDirNextArgs<Result<Option<i32>, FsError>> args;
-    user_memory.copy_in(user_args, (char*)(&args), sizeof(args));
-    user_memory.copy_in_string((i32)args.path, g_path.as_ptr(), g_path.data.length);
+void dir_next_user(FsDirNextArgs *args) {
+    user_memory.copy_in_string((i32)args->path, g_path.as_ptr(), g_path.data.length);
     g_path.sync_from_ptr();
-    i32 start = args.start;
-    i32 user_out = (i32)args.name_out;
-    i32 cap = args.name_cap;
-    i32 user_result = (i32)args.result_out;
+    i32 start = args->start;
+    i32 user_out = (i32)args->name_out;
+    i32 cap = args->name_cap;
     if (cap < 0) { cap = 0; }
     if (cap > 16) { cap = 16; }
     Result<Option<i32>, FsError> res = fs.dir_next_at(g_path.as_ptr(), start, g_name.as_ptr(), g_name.data.length);
@@ -158,121 +172,85 @@ void dir_next_user(i32 user_args) {
         });
         Err(_) -> _;
     };
-    user_memory.copy_out(
-        user_result,
-        (char*)(&res),
-        sizeof(Result<Option<i32>, FsError>)
-    );
+    reply<Result<Option<i32>, FsError>>(args->result_out, &res);
+}
+
+/**
+ * Copies a path argument into the shared kernel path buffer.
+ * @param user_path User address of a NUL-terminated path.
+ */
+void copy_in_path(char *user_path) {
+    user_memory.copy_in_string((i32)user_path, g_path.as_ptr(), g_path.data.length);
+    g_path.sync_from_ptr();
 }
 
 /**
  * Dispatches a filesystem service OS_CALL request.
+ *
+ * accept() matches service against each record's bound OsService, so a
+ * record is only ever read under its own service number.
  *
  * @param service Filesystem service code (FS_OPEN .. FS_IS_DIR).
  * @param args Virtual address of argument structure in caller's memory.
  * @return Ok(_) when the request was handled, or Err(UnknownService).
  */
 export Result<_, OsServiceError> handle(i32 service, i32 args) {
-    if (service == OsService::FS_READ) { read_user(args); return Ok(_); }
-    if (service == OsService::FS_WRITE) { write_user(args); return Ok(_); }
-    if (service == OsService::FS_DIR_NEXT_AT) { dir_next_user(args); return Ok(_); }
-    if (service == OsService::FS_CLOSE) {
-        FsCloseArgs request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        fs.close(request.fd);
+    FsReadArgs read;
+    if (accept<FsReadArgs>(service, args, &read)) { read_user(&read); return Ok(_); }
+    FsWriteArgs write;
+    if (accept<FsWriteArgs>(service, args, &write)) { write_user(&write); return Ok(_); }
+    FsDirNextArgs dir_next;
+    if (accept<FsDirNextArgs>(service, args, &dir_next)) { dir_next_user(&dir_next); return Ok(_); }
+    FsCloseArgs close;
+    if (accept<FsCloseArgs>(service, args, &close)) { fs.close(close.fd); return Ok(_); }
+    FsEntrySizeArgs entry_size;
+    if (accept<FsEntrySizeArgs>(service, args, &entry_size)) {
+        Result<i32, FsError> r = fs.entry_size(entry_size.entry);
+        reply<Result<i32, FsError>>(entry_size.result_out, &r);
         return Ok(_);
     }
-    if (service == OsService::FS_ENTRY_SIZE) {
-        FsEntrySizeArgs<Result<i32, FsError>> request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        Result<i32, FsError> result = fs.entry_size(request.entry);
-        user_memory.copy_out(
-            (i32)request.result_out,
-            (char*)(&result),
-            sizeof(Result<i32, FsError>)
-        );
+    FsIsDirArgs is_dir;
+    if (accept<FsIsDirArgs>(service, args, &is_dir)) {
+        Result<bool, FsError> r = fs.is_dir(is_dir.entry);
+        reply<Result<bool, FsError>>(is_dir.result_out, &r);
         return Ok(_);
     }
-    if (service == OsService::FS_IS_DIR) {
-        FsIsDirArgs<Result<bool, FsError>> request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        Result<bool, FsError> result = fs.is_dir(request.entry);
-        user_memory.copy_out(
-            (i32)request.result_out,
-            (char*)(&result),
-            sizeof(Result<bool, FsError>)
-        );
+    FsSeekArgs seek;
+    if (accept<FsSeekArgs>(service, args, &seek)) {
+        Result<i32, FsError> r = fs.seek(seek.fd, seek.offset, seek.whence);
+        reply<Result<i32, FsError>>(seek.result_out, &r);
         return Ok(_);
     }
-    if (service == OsService::FS_SEEK) {
-        FsSeekArgs<Result<i32, FsError>> request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        Result<i32, FsError> r = fs.seek(
-            request.fd,
-            request.offset,
-            request.whence
-        );
-        user_memory.copy_out(
-            (i32)request.result_out,
-            (char*)(&r),
-            sizeof(Result<i32, FsError>)
-        );
-        return Ok(_);
-    }
-    if (service == OsService::FS_OPEN) {
-        FsOpenArgs<Result<i32, FsError>> request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
-        g_path.sync_from_ptr();
+    FsOpenArgs open;
+    if (accept<FsOpenArgs>(service, args, &open)) {
+        copy_in_path(open.path);
         Result<i32, FsError> r = fs.open(g_path.as_ptr());
         log_error_trace(r.is_err());
-        user_memory.copy_out(
-            (i32)request.result_out,
-            (char*)(&r),
-            sizeof(Result<i32, FsError>)
-        );
+        reply<Result<i32, FsError>>(open.result_out, &r);
         return Ok(_);
     }
-    if (service == OsService::FS_CREATE) {
-        FsCreateArgs<Result<i32, FsError>> request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
-        g_path.sync_from_ptr();
+    FsCreateArgs create;
+    if (accept<FsCreateArgs>(service, args, &create)) {
+        copy_in_path(create.path);
         Result<i32, FsError> r = fs.create(g_path.as_ptr());
         log_error_trace(r.is_err());
-        user_memory.copy_out(
-            (i32)request.result_out,
-            (char*)(&r),
-            sizeof(Result<i32, FsError>)
-        );
+        reply<Result<i32, FsError>>(create.result_out, &r);
         return Ok(_);
     }
-    if (service == OsService::FS_REMOVE) {
-        FsRemoveArgs<Result<_, FsError>> request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
-        g_path.sync_from_ptr();
+    FsRemoveArgs remove;
+    if (accept<FsRemoveArgs>(service, args, &remove)) {
+        copy_in_path(remove.path);
         Result<_, FsError> r = fs.remove(g_path.as_ptr());
         log_error_trace(r.is_err());
-        user_memory.copy_out(
-            (i32)request.result_out,
-            (char*)(&r),
-            sizeof(r)
-        );
+        reply<Result<_, FsError>>(remove.result_out, &r);
         return Ok(_);
     }
-    if (service == OsService::FS_MKDIR) {
-        FsMkdirArgs<Result<i32, FsError>> request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
-        g_path.sync_from_ptr();
+    FsMkdirArgs mkdir;
+    if (accept<FsMkdirArgs>(service, args, &mkdir)) {
+        copy_in_path(mkdir.path);
         Result<i32, FsError> r = fs.mkdir(g_path.as_ptr());
         log_error_trace(r.is_err());
-        user_memory.copy_out(
-            (i32)request.result_out,
-            (char*)(&r),
-            sizeof(Result<i32, FsError>)
-        );
+        reply<Result<i32, FsError>>(mkdir.result_out, &r);
         return Ok(_);
     }
     return Err(OsServiceError::UnknownService(service));
