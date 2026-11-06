@@ -26,11 +26,11 @@ export i32 button_radius() { return 7 * dom.ui_scale(); }
 
 // The titlebar button of a window at a display point.
 Option<i32> row_button_hit(borrow NodeRow win, i32 px, i32 py) {
-    i32 dy = py - button_cy(win);
+    i32 dy = py - button_cy(&win);
     i32 radius = button_radius() + 3 * dom.ui_scale();
     i32 which = 1;
     while (which <= 3) {
-        i32 dx = px - button_cx(win, which);
+        i32 dx = px - button_cx(&win, which);
         if (dx * dx + dy * dy <= radius * radius) { return Some(which); }
         which++;
     }
@@ -40,7 +40,7 @@ Option<i32> row_button_hit(borrow NodeRow win, i32 px, i32 py) {
 /** Returns the titlebar control button at a display point, or None when no button is hit. */
 export Option<i32> button_hit(NodeId win, i32 px, i32 py) {
     return case dom.find_row(win) of {
-        Some(n) -> row_button_hit(n, px, py);
+        Some(n) -> row_button_hit(&n, px, py);
         None -> None;
     };
 }
@@ -64,7 +64,7 @@ export bool resize_grip_hit(NodeId win, i32 px, i32 py) {
 /** Checks whether a display point hits the draggable titlebar area. */
 export bool titlebar_hit(NodeId win, i32 px, i32 py) {
     borrow NodeRow n = case dom.find_row(win) of { Some(row) -> row; None -> ({ return false; }); };
-    case row_button_hit(n, px, py) of { Some(_) -> ({ return false; }); None -> _; };
+    case row_button_hit(&n, px, py) of { Some(_) -> ({ return false; }); None -> _; };
     i32 titlebar_height = ui_metrics.titlebar_height() * dom.ui_scale();
     if (px < n.x) { return false; }
     if (px >= n.x + n.w) { return false; }

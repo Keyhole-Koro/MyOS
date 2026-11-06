@@ -79,14 +79,14 @@ export void draw_window(borrow NodeRow n) {
 
     // Title-bar buttons: close, minimize, maximize discs; their glyphs
     // (x, -, +) appear while the pointer is over the window.
-    i32 cy = dom_window_chrome.button_cy(n);
+    i32 cy = dom_window_chrome.button_cy(&n);
     i32 cr = dom_window_chrome.button_radius();
     i32 ring = theme.CLOSE_BUTTON_RING;
     i32 g = theme.CLOSE_GLYPH;
     i32 k = cr / 2;
     i32 which = 1;
     while (which <= 3) {
-        i32 bx = dom_window_chrome.button_cx(n, which);
+        i32 bx = dom_window_chrome.button_cx(&n, which);
         i32 face = theme.CLOSE_BUTTON;
         if (which == 2) { face = theme.MINIMIZE_BUTTON; }
         if (which == 3) { face = theme.MAXIMIZE_BUTTON; }
@@ -126,7 +126,7 @@ export void draw_window(borrow NodeRow n) {
         i32 title_color = theme.TEXT_PRIMARY;
         if (!active) { title_color = theme.TEXT_SECONDARY; }
         i32 th = graphics.text_height(1, s);
-        i32 inset = 2 * (dom_window_chrome.button_cx(n, 3) - x);
+        i32 inset = 2 * (dom_window_chrome.button_cx(&n, 3) - x);
         graphics.push_clip(x + inset, y, w - 2 * inset, tb);
         str label_1 = n.text.as_str();
         graphics.draw_label_centered(x, y + (tb - th) / 2, w, label_1, title_color, 1, s);
@@ -166,7 +166,7 @@ export void draw_button(borrow NodeRow n) {
         if (state & NodeState::PRESSED) { face = theme.BUTTON_FACE_PRESSED; }
         else if (state & NodeState::HOVERED) { face = theme.BUTTON_FACE_HOVER; }
     }
-    label = node_fg(n, label);
+    label = node_fg(&n, label);
 
     graphics.fill_round_rect(x, y, w, h, r, face);
     graphics.draw_round_rect(x, y, w, h, r, s, border);
@@ -239,24 +239,24 @@ export void draw_text_area(borrow NodeRow n) {
     i32 h = n.h;
     i32 pad = 8 * s;
     i32 lh = graphics.text_height(0, s);
-    draw_rows_box(n, focused);
+    draw_rows_box(&n, focused);
 
     i32 fg = theme.TEXT_PRIMARY;
-    fg = node_fg(n, fg);
-    bool ro = dom_widgets.is_readonly(n);
+    fg = node_fg(&n, fg);
+    bool ro = dom_widgets.is_readonly(&n);
     Blob buf = n.text;
     i32 len = n.len;
     graphics.push_clip(x + s, y + s, w - 2 * s, h - 2 * s);
-    i32 rows = dom_widgets.visible_lines(n);
+    i32 rows = dom_widgets.visible_lines(&n);
     i32 first = n.scroll;
-    i32 start = dom_widgets.line_start(n, first);
+    i32 start = dom_widgets.line_start(&n, first);
     i32 row = 0;
     bool has_caret = false;
     i32 caret_x = 0;
     i32 caret_y = 0;
     while (row < rows) {
         if (start > len) { break; }
-        i32 llen = dom_widgets.line_len_at(n, start);
+        i32 llen = dom_widgets.line_len_at(&n, start);
         i32 ty = y + pad + row * lh;
         Text<160> line = copy_line(buf, start, llen);
         str label_3 = line.as_str();
@@ -309,19 +309,19 @@ export void draw_rows(borrow NodeRow n, i32 hl_color, i32 hl_fg) {
     i32 pad = 8 * s;
     i32 lh = graphics.text_height(0, s);
     i32 fg = theme.TEXT_PRIMARY;
-    fg = node_fg(n, fg);
+    fg = node_fg(&n, fg);
     Blob buf = n.text;
     i32 len = n.len;
     i32 r = theme.BUTTON_RADIUS * s;
     graphics.push_clip(x + s, y + s, w - 2 * s, h - 2 * s);
     defer graphics.pop_clip();
-    i32 rows = dom_widgets.visible_lines(n);
+    i32 rows = dom_widgets.visible_lines(&n);
     i32 first = n.scroll;
-    i32 start = dom_widgets.line_start(n, first);
+    i32 start = dom_widgets.line_start(&n, first);
     i32 row = 0;
     while (row < rows) {
         if (start >= len) { break; }
-        i32 llen = dom_widgets.line_len_at(n, start);
+        i32 llen = dom_widgets.line_len_at(&n, start);
         i32 ty = y + pad + row * lh;
         i32 color = fg;
         bool highlighted = case n.sel of {
@@ -347,14 +347,14 @@ export void draw_rows(borrow NodeRow n, i32 hl_color, i32 hl_fg) {
 export void draw_list(borrow NodeRow n) {
     i32 state = n.state;
     i32 focused = state & NodeState::FOCUSED;
-    draw_rows_box(n, focused);
+    draw_rows_box(&n, focused);
     i32 hl = theme.ACCENT;
     i32 hl_fg = theme.ON_ACCENT;
     if (!focused) {
         hl = theme.BUTTON_FACE_PRESSED;
         hl_fg = theme.TEXT_PRIMARY;
     }
-    draw_rows(n, hl, hl_fg);
+    draw_rows(&n, hl, hl_fg);
 }
 
 /**
@@ -371,7 +371,7 @@ export void draw_menu(borrow NodeRow n) {
     graphics.draw_round_rect(n.x, n.y, n.w, n.h, r, s, border);
     i32 hl = theme.ACCENT;
     i32 hl_fg = theme.ON_ACCENT;
-    draw_rows(n, hl, hl_fg);
+    draw_rows(&n, hl, hl_fg);
 }
 
 /**
@@ -382,9 +382,9 @@ export void draw_text_node(borrow NodeRow n) {
     if (!n.text.is_live()) { return; }
     i32 s = dom.ui_scale();
     i32 color = theme.TEXT_PRIMARY;
-    color = node_fg(n, color);
+    color = node_fg(&n, color);
     i32 bold = 0;
-    if (dom.text_bold(n)) { bold = 1; }
+    if (dom.text_bold(&n)) { bold = 1; }
     i32 style = n.style;
     if (style & NodeStyle::CENTER) {
         str label_7 = n.text.as_str();
@@ -432,7 +432,7 @@ export void draw_text_input(borrow NodeRow n) {
         }
     } else {
         i32 fg = theme.TEXT_PRIMARY;
-        fg = node_fg(n, fg);
+        fg = node_fg(&n, fg);
         str label_10 = n.text.as_str();
         graphics.draw_label(x + pad, ty, label_10, fg, 0, s);
     }
@@ -495,7 +495,7 @@ export void draw_checkbox(borrow NodeRow n) {
     }
     if (n.text.is_live()) {
         i32 fg = theme.TEXT_PRIMARY;
-        fg = node_fg(n, fg);
+        fg = node_fg(&n, fg);
         i32 th = graphics.text_height(0, s);
         str label_12 = n.text.as_str();
         graphics.draw_label(x + box + 8 * s, y + (h - th) / 2, label_12, fg, 0, s);
@@ -706,31 +706,31 @@ export void draw_node(borrow NodeRow n) {
     i32 scale = dom.ui_scale();
 
     if (kind == NodeKind::TEXT_AREA) {
-        draw_text_area(n);
+        draw_text_area(&n);
     } else if (kind == NodeKind::LIST) {
-        draw_list(n);
+        draw_list(&n);
     } else if (kind == NodeKind::MENU) {
-        draw_menu(n);
+        draw_menu(&n);
     } else if (kind == NodeKind::BOX) {
         graphics.fill_rect(x, y, w, h, n.background_color);
         graphics.draw_rect_scaled(x, y, w, h, n.border_color, scale);
     } else if (kind == NodeKind::WINDOW) {
-        draw_window(n);
+        draw_window(&n);
     } else if (kind == NodeKind::BUTTON) {
-        draw_button(n);
+        draw_button(&n);
     } else if (kind == NodeKind::TEXT) {
-        draw_text_node(n);
+        draw_text_node(&n);
     } else if (kind == NodeKind::TEXT_INPUT) {
-        draw_text_input(n);
+        draw_text_input(&n);
     } else if (kind == NodeKind::CHECKBOX) {
-        draw_checkbox(n);
+        draw_checkbox(&n);
     } else if (kind == NodeKind::SEPARATOR) {
         i32 sep = theme.SEPARATOR;
         graphics.blend_rect(x, y, w, h, sep);
     } else if (kind == NodeKind::PANEL) {
-        draw_panel(n);
+        draw_panel(&n);
     } else if (kind == NodeKind::TASKBAR) {
-        draw_taskbar(n);
+        draw_taskbar(&n);
     }
     // Structural nodes (root/system/process/...) draw nothing.
 }
@@ -741,7 +741,7 @@ export void draw_node(borrow NodeRow n) {
  * @return True if node overlaps damage area or full repaint active, false otherwise.
  */
 export bool node_in_damage(borrow NodeRow n) {
-    return dom.node_intersects_paint(n);
+    return dom.node_intersects_paint(&n);
 }
 
 /**
@@ -751,21 +751,21 @@ export bool node_in_damage(borrow NodeRow n) {
 export void render(borrow NodeRow n) {
     if (!(n.state & NodeState::VISIBLE)) { return; }
 
-    bool in_damage = node_in_damage(n);
+    bool in_damage = node_in_damage(&n);
     if (in_damage) {
-        draw_node(n);
+        draw_node(&n);
     }
 
     // Children are visited regardless: a child can overlap the damage region
     // even when its parent does not -- unless the parent clips them, in
     // which case an off-damage parent means off-damage children.
-    bool clip = dom.clips_children(n);
+    bool clip = dom.clips_children(&n);
     if (clip) {
         if (!in_damage) { return; }
         graphics.push_clip(n.x, n.y, n.w, n.h);
     }
     for (NodeId child_id in dom.children(n.id)) {
-        render(dom.row_of(child_id));
+        render(&dom.row_of(child_id));
     }
     if (clip) { graphics.pop_clip(); }
 }
@@ -784,11 +784,11 @@ export void paint_desktop() {
     Option<NodeId> menu = dom.menu_id();
     for (NodeId child_id in dom.children(dom.desktop_id())) {
         if (!dom.holds(taskbar, child_id) && !dom.holds(menu, child_id)) {
-            render(dom.row_of(child_id));
+            render(&dom.row_of(child_id));
         }
     }
-    case dom.row_in(taskbar) of { Some(row) -> render(row); None -> _; };
-    case dom.row_in(menu) of { Some(row) -> render(row); None -> _; };
+    case dom.row_in(taskbar) of { Some(row) -> render(&row); None -> _; };
+    case dom.row_in(menu) of { Some(row) -> render(&row); None -> _; };
 }
 
 /**

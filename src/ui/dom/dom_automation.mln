@@ -168,7 +168,7 @@ void automation_node(NodeId id) {
     automation_raw(",\"name\":"); automation_json_string(n.name.as_str());
     automation_raw(",\"text\":"); automation_json_string(n.text.as_str());
     automation_raw(",\"testId\":"); automation_json_string(n.test_id.as_str());
-    automation_raw(",\"value\":"); automation_json_string(dom.automation_value_of(n));
+    automation_raw(",\"value\":"); automation_json_string(dom.automation_value_of(&n));
     automation_raw(",\"bounds\":{\"x\":"); automation_i32(n.x);
     automation_raw(",\"y\":"); automation_i32(n.y);
     automation_raw(",\"width\":"); automation_i32(n.w);

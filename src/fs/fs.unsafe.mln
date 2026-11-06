@@ -1063,7 +1063,7 @@ export void list() {
  */
 export Result<Option<i32>, FsError> dir_next_at(str path, i32 start, borrow Text<16> out) {
     i32 code = dir_code_of(path)?;
-    return dir_next_in(code, start, out);
+    return dir_next_in(code, start, &out);
 }
 
 // dir_next for the directory with parent code `parent_code` (index + 1, 0 = root).

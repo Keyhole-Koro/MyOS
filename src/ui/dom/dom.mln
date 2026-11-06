@@ -345,7 +345,7 @@ export Option<NodeId> parent_id(NodeId id) {
 // Lays out a node's parent again after the node changed size.
 void relayout_parent(NodeId id) {
     case parent_id(id) of {
-        Some(parent) -> relayout_container(row_of(parent));
+        Some(parent) -> relayout_container(&row_of(parent));
         None -> _;
     };
 }
@@ -744,7 +744,7 @@ export void node_extent(borrow NodeRow n) {
  * @param n DOM Node row.
  */
 export void damage_row(borrow NodeRow n) {
-    node_extent(n);
+    node_extent(&n);
     damage_rect(g_ext_x, g_ext_y, g_ext_w, g_ext_h);
 }
 
@@ -754,7 +754,7 @@ export void damage_row(borrow NodeRow n) {
  */
 export void damage_node(NodeId id) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
-    damage_row(n);
+    damage_row(&n);
 }
 
 /**
@@ -791,7 +791,7 @@ export bool text_bold(borrow NodeRow n) {
 export i32 text_width_of(borrow NodeRow n) {
     if (!n.text.is_live()) { return 0; }
     i32 bold = 0;
-    if (text_bold(n)) { bold = 1; }
+    if (text_bold(&n)) { bold = 1; }
     i32 s = ui_scale();
     return ui_metrics.text_width(n.text.as_str(), bold, s);
 }
@@ -803,7 +803,7 @@ export i32 text_width_of(borrow NodeRow n) {
  */
 export i32 text_height_of(borrow NodeRow n) {
     i32 bold = 0;
-    if (text_bold(n)) { bold = 1; }
+    if (text_bold(&n)) { bold = 1; }
     i32 s = ui_scale();
     return ui_metrics.text_height(bold, s);
 }
@@ -838,9 +838,9 @@ export void place_child(NodeId child_id, i32 x, i32 y) {
     if (dx == 0) {
         if (dy == 0) { return; }
     }
-    damage_row(child);
+    damage_row(&child);
     offset_subtree(child_id, dx, dy);
-    damage_row(child);
+    damage_row(&child);
 }
 
 /**
@@ -862,7 +862,7 @@ export void relayout_column(borrow NodeRow column) {
         borrow NodeRow child = row_of(child_id);
         i32 child_h = child.h;
         place_child(child_id, child_x, cursor_y);
-        relayout_container(child);
+        relayout_container(&child);
         cursor_y = cursor_y + child_h + gap;
     }
 }
@@ -880,7 +880,7 @@ export void relayout_row(borrow NodeRow row) {
         borrow NodeRow child = row_of(child_id);
         i32 child_w = child.w;
         place_child(child_id, cursor_x, child_y);
-        relayout_container(child);
+        relayout_container(&child);
         cursor_x = cursor_x + child_w + gap;
     }
 }
@@ -891,8 +891,8 @@ export void relayout_row(borrow NodeRow row) {
  */
 export void relayout_container(borrow NodeRow n) {
     i32 k = n.kind;
-    if (k == NodeKind::COLUMN) { relayout_column(n); }
-    if (k == NodeKind::ROW) { relayout_row(n); }
+    if (k == NodeKind::COLUMN) { relayout_column(&n); }
+    if (k == NodeKind::ROW) { relayout_row(&n); }
 }
 
 // --- prop accessors ---------------------------------------------------------------------
@@ -909,13 +909,13 @@ export void set_bounds(NodeId id, i32 x, i32 y, i32 w, i32 h) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     // Damage the old area as well as the new one, so vacating a region repaints
     // the background that was underneath.
-    damage_row(n);
+    damage_row(&n);
     n.x = (u16)x;
     n.y = (u16)y;
     n.w = (u16)w;
     n.h = (u16)h;
-    damage_row(n);
-    relayout_container(n);
+    damage_row(&n);
+    relayout_container(&n);
     relayout_parent(id);
     touch();
 }
@@ -928,9 +928,9 @@ export void set_bounds(NodeId id, i32 x, i32 y, i32 w, i32 h) {
  */
 export void move_node(NodeId id, i32 dx, i32 dy) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
-    damage_row(n);
+    damage_row(&n);
     offset_subtree(id, dx, dy);
-    damage_row(n);
+    damage_row(&n);
     touch();
 }
 
@@ -941,18 +941,18 @@ export void move_node(NodeId id, i32 dx, i32 dy) {
  */
 export void set_text(NodeId id, str text) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
-    damage_row(n);   // old string's extent
+    damage_row(&n);   // old string's extent
     n.text = replaced_text(n.text, text);
     // Text keeps physical bounds equal to its measured size so damage,
     // clipping, layout, and hit testing all agree. Windows and buttons also
     // have text, but their authored layout bounds must never be replaced by
     // caption size.
     if (n.kind == NodeKind::TEXT) {
-        n.w = (u16)text_width_of(n);
-        n.h = (u16)text_height_of(n);
+        n.w = (u16)text_width_of(&n);
+        n.h = (u16)text_height_of(&n);
         relayout_parent(id);
     }
-    damage_row(n);   // new string may be longer
+    damage_row(&n);   // new string may be longer
     touch();
 }
 
@@ -986,7 +986,7 @@ export void set_test_id(NodeId id, str test_id) {
  */
 export void set_colors(NodeId id, i32 background, i32 border) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
-    damage_row(n);
+    damage_row(&n);
     n.background_color = background;
     n.border_color = border;
 }
@@ -999,7 +999,7 @@ export void set_colors(NodeId id, i32 background, i32 border) {
 export void set_color(NodeId id, i32 color) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     n.color = Some(color);
-    damage_row(n);
+    damage_row(&n);
 }
 
 /**
@@ -1011,10 +1011,10 @@ export void set_style(NodeId id, i32 style) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     n.style = (u16)style;
     if (n.kind == NodeKind::TEXT) {
-        n.w = (u16)text_width_of(n);
-        n.h = (u16)text_height_of(n);
+        n.w = (u16)text_width_of(&n);
+        n.h = (u16)text_height_of(&n);
     }
-    damage_row(n);
+    damage_row(&n);
 }
 
 /**
@@ -1027,7 +1027,7 @@ export void set_column_layout(NodeId id, i32 padding, i32 gap) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     n.padding = (u16)padding;
     n.gap = (u16)gap;
-    relayout_container(n);
+    relayout_container(&n);
 }
 
 /**
@@ -1079,8 +1079,8 @@ export void set_state_flag(NodeId id, i32 flag, i32 on) {
     // defeat the whole point.
     if (next != state) {
         n.state = (u16)next;
-        if (state_is_visible(n, flag)) {
-            damage_row(n);
+        if (state_is_visible(&n, flag)) {
+            damage_row(&n);
         }
         touch();
     }
@@ -1182,7 +1182,7 @@ export Result<Option<fn(i32 owner, NodeId id, i32 arg) -> void>, UiError> on_clo
  * @param n Pointer to DOM Node.
  */
 export void fire_change(borrow NodeRow n) {
-    emit(n, UiEventKind::CHANGE, n.on_change, 0);
+    emit(&n, UiEventKind::CHANGE, n.on_change, 0);
 }
 
 /**
@@ -1196,9 +1196,9 @@ export bool dispatch_click(NodeId id) {
     if (n.kind == NodeKind::CHECKBOX) {
         i32 now = n.state & NodeState::CHECKED;
         set_state_flag(id, NodeState::CHECKED, !now);
-        fire_change(n);
+        fire_change(&n);
     }
-    return emit(n, UiEventKind::CLICK, n.on_click, 0);
+    return emit(&n, UiEventKind::CLICK, n.on_click, 0);
 }
 
 // --- tree structure -----------------------------------------------------------------------
@@ -1229,13 +1229,13 @@ export Result<_, UiError> append_child(NodeId parent_id, NodeId child_id) {
 
     // Authored coordinates are relative to the parent's content origin;
     // stored coordinates are absolute, so shift the whole subtree once.
-    content_origin(parent);
+    content_origin(&parent);
     offset_subtree(child_id, g_ext_x, g_ext_y);
     damage_node(child_id);
 
     // A Column/Row controls the positions of its direct children. This runs
     // after linking so the new child participates immediately.
-    relayout_container(parent);
+    relayout_container(&parent);
     touch();
     return Ok(_);
 }
@@ -1301,8 +1301,8 @@ export void free_subtree(NodeId id) {
  */
 export void remove_node(NodeId id) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
-    damage_row(n);
-    unlink(n);
+    damage_row(&n);
+    unlink(&n);
     free_subtree(id);
     touch();
 }
@@ -1475,7 +1475,7 @@ export void select_full_paint() { g_painting_all = true; }
 /** Returns true when a node overlaps the selected paint region. */
 export bool node_intersects_paint(borrow NodeRow node) {
     if (g_painting_all) { return true; }
-    node_extent(node);
+    node_extent(&node);
     if (g_ext_x + g_ext_w <= g_paint.x0) { return false; }
     if (g_ext_y + g_ext_h <= g_paint.y0) { return false; }
     if (g_ext_x >= g_paint.x1) { return false; }

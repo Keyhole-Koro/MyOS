@@ -21,7 +21,7 @@ bool row_contains(borrow NodeRow n, i32 px, i32 py) {
 Option<NodeId> hit_row(borrow NodeRow n, i32 px, i32 py) {
     if (!(n.state & NodeState::VISIBLE)) { return None; }
 
-    bool inside = row_contains(n, px, py);
+    bool inside = row_contains(&n, px, py);
     Option<NodeId> found = None;
     if (inside) {
         if (n.state & NodeState::HIT_TESTABLE) { found = Some(n.id); }
@@ -29,11 +29,11 @@ Option<NodeId> hit_row(borrow NodeRow n, i32 px, i32 py) {
 
     // Children of a clipping container cannot be hit outside its bounds.
     if (!inside) {
-        if (dom.clips_children(n)) { return None; }
+        if (dom.clips_children(&n)) { return None; }
     }
 
     for (NodeId child_id in dom.children(n.id)) {
-        Option<NodeId> hit = hit_row(dom.row_of(child_id), px, py);
+        Option<NodeId> hit = hit_row(&dom.row_of(child_id), px, py);
         if (hit.is_some()) { found = hit; }
     }
     return found;
@@ -42,7 +42,7 @@ Option<NodeId> hit_row(borrow NodeRow n, i32 px, i32 py) {
 // The topmost visible, hit-testable node within an optional node's subtree.
 Option<NodeId> hit_test(Option<NodeId> node, i32 px, i32 py) {
     return case dom.row_in(node) of {
-        Some(n) -> hit_row(n, px, py);
+        Some(n) -> hit_row(&n, px, py);
         None -> None;
     };
 }
@@ -60,7 +60,7 @@ export Option<NodeId> find_at(i32 x, i32 y) {
     Option<NodeId> found = None;
     for (NodeId child_id in dom.children(dom.desktop_id())) {
         if (!dom.holds(taskbar, child_id) && !dom.holds(menu, child_id)) {
-            Option<NodeId> hit = hit_row(dom.row_of(child_id), x, y);
+            Option<NodeId> hit = hit_row(&dom.row_of(child_id), x, y);
             if (hit.is_some()) { found = hit; }
         }
     }

@@ -270,7 +270,7 @@ export void window_ready(i32 owner, NodeId win) {
         None -> ({ return; });
     };
     borrow InstanceRow row = instance.row();
-    if (!has_window(row)) { dom.note_app_starting(-1); }
+    if (!has_window(&row)) { dom.note_app_starting(-1); }
     dom.set_owner(win, owner);
     dom.set_on_close(win, window_closed);
     case dom.append_child(dom.desktop_id(), win) of {
@@ -351,7 +351,7 @@ void reap_exited(i32 owner, NodeId id, i32 arg) {
             };
             if (collected) {
                 borrow InstanceRow row = instance.row();
-                if (!has_window(row)) { dom.note_app_starting(-1); }
+                if (!has_window(&row)) { dom.note_app_starting(-1); }
                 if (!row.done) {
                     dom.remove_owned(pid);
                     release_claims(pid);

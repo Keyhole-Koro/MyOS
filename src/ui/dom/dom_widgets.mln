@@ -160,10 +160,10 @@ export void resize_window(NodeId win, i32 w, i32 h) {
     i32 min_h = 120 * s;
     if (w < min_w) { w = min_w; }
     if (h < min_h) { h = min_h; }
-    dom.damage_row(n);
+    dom.damage_row(&n);
     n.w = (u16)w;
     n.h = (u16)h;
-    dom.damage_row(n);
+    dom.damage_row(&n);
     dom.touch();
 }
 
@@ -274,7 +274,7 @@ export EditResult input_handle(borrow NodeRow n, i32 type, i32 code) {
     i32 len = n.len;
     if (type == KeyEventType::CHAR) {
         if (ascii.is_printable(code)) {
-            input_insert(n, code);
+            input_insert(&n, code);
             return EditResult::Changed;
         }
         return EditResult::Unhandled;
@@ -282,14 +282,14 @@ export EditResult input_handle(borrow NodeRow n, i32 type, i32 code) {
     if (type != KeyEventType::DOWN) { return EditResult::Unhandled; }
     if (code == KeyCode::BACKSPACE) {
         if (cur > 0) {
-            input_delete_at(n, cur - 1);
+            input_delete_at(&n, cur - 1);
             n.cursor = (u16)(cur - 1);
             return EditResult::Changed;
         }
         return EditResult::Unhandled;
     }
     if (code == KeyCode::DELETE) {
-        if (cur < len) { input_delete_at(n, cur); return EditResult::Changed; }
+        if (cur < len) { input_delete_at(&n, cur); return EditResult::Changed; }
         return EditResult::Unhandled;
     }
     if (code == KeyCode::LEFT) {
@@ -384,7 +384,7 @@ export i32 line_len_at(borrow NodeRow n, i32 start) {
 export Result<i32, UiError> text_area_line_count(NodeId id) {
     borrow NodeRow n = dom.require_row(id)?;
     if (n.kind != NodeKind::TEXT_AREA) { return Err(UiError::WrongNodeKind(id)); }
-    return Ok(line_of(n, n.len) + 1);
+    return Ok(line_of(&n, n.len) + 1);
 }
 
 /**
@@ -406,8 +406,8 @@ export i32 visible_lines(borrow NodeRow n) {
  * @param n Pointer to TextArea Node.
  */
 export void text_area_reveal_cursor(borrow NodeRow n) {
-    i32 line = line_of(n, n.cursor);
-    i32 rows = visible_lines(n);
+    i32 line = line_of(&n, n.cursor);
+    i32 rows = visible_lines(&n);
     i32 scroll = n.scroll;
     if (line < scroll) { scroll = line; }
     if (line >= scroll + rows) { scroll = line - rows + 1; }
@@ -420,13 +420,13 @@ export void text_area_reveal_cursor(borrow NodeRow n) {
  * @param line Target line index.
  */
 export void text_area_goto_line(borrow NodeRow n, i32 line) {
-    i32 total = line_of(n, n.len) + 1;
+    i32 total = line_of(&n, n.len) + 1;
     if (line < 0) { line = 0; }
     if (line >= total) { line = total - 1; }
-    i32 cur_start = line_start(n, line_of(n, n.cursor));
+    i32 cur_start = line_start(&n, line_of(&n, n.cursor));
     i32 col = n.cursor - cur_start;
-    i32 start = line_start(n, line);
-    i32 llen = line_len_at(n, start);
+    i32 start = line_start(&n, line);
+    i32 llen = line_len_at(&n, start);
     if (col > llen) { col = llen; }
     n.cursor = (u16)(start + col);
 }
@@ -440,14 +440,14 @@ export void text_area_goto_line(borrow NodeRow n, i32 line) {
  * @return EditResult enum indicating outcome (Changed, Moved, Unhandled).
  */
 export EditResult text_area_handle(borrow NodeRow n, i32 type, i32 code, i32 mods) {
-    bool ro = is_readonly(n);
+    bool ro = is_readonly(&n);
     i32 cur = n.cursor;
     i32 len = n.len;
     if (type == KeyEventType::CHAR) {
         if (ro) { return EditResult::Unhandled; }
         if (ascii.is_printable(code)) {
-            input_insert(n, code);
-            text_area_reveal_cursor(n);
+            input_insert(&n, code);
+            text_area_reveal_cursor(&n);
             return EditResult::Changed;
         }
         return EditResult::Unhandled;
@@ -455,16 +455,16 @@ export EditResult text_area_handle(borrow NodeRow n, i32 type, i32 code, i32 mod
     if (type != KeyEventType::DOWN) { return EditResult::Unhandled; }
     if (code == KeyCode::ENTER) {
         if (ro) { return EditResult::Unhandled; }
-        input_insert(n, 10);
-        text_area_reveal_cursor(n);
+        input_insert(&n, 10);
+        text_area_reveal_cursor(&n);
         return EditResult::Changed;
     }
     if (code == KeyCode::BACKSPACE) {
         if (ro) { return EditResult::Unhandled; }
         if (cur > 0) {
-            input_delete_at(n, cur - 1);
+            input_delete_at(&n, cur - 1);
             n.cursor = (u16)(cur - 1);
-            text_area_reveal_cursor(n);
+            text_area_reveal_cursor(&n);
             return EditResult::Changed;
         }
         return EditResult::Unhandled;
@@ -472,48 +472,48 @@ export EditResult text_area_handle(borrow NodeRow n, i32 type, i32 code, i32 mod
     if (code == KeyCode::DELETE) {
         if (ro) { return EditResult::Unhandled; }
         if (cur < len) {
-            input_delete_at(n, cur);
+            input_delete_at(&n, cur);
             return EditResult::Changed;
         }
         return EditResult::Unhandled;
     }
     if (code == KeyCode::LEFT) {
         if (cur > 0) { n.cursor = (u16)(cur - 1); }
-        text_area_reveal_cursor(n);
+        text_area_reveal_cursor(&n);
         return EditResult::Moved;
     }
     if (code == KeyCode::RIGHT) {
         if (cur < len) { n.cursor = (u16)(cur + 1); }
-        text_area_reveal_cursor(n);
+        text_area_reveal_cursor(&n);
         return EditResult::Moved;
     }
     if (code == KeyCode::UP) {
-        text_area_goto_line(n, line_of(n, cur) - 1);
-        text_area_reveal_cursor(n);
+        text_area_goto_line(&n, line_of(&n, cur) - 1);
+        text_area_reveal_cursor(&n);
         return EditResult::Moved;
     }
     if (code == KeyCode::DOWN) {
-        text_area_goto_line(n, line_of(n, cur) + 1);
-        text_area_reveal_cursor(n);
+        text_area_goto_line(&n, line_of(&n, cur) + 1);
+        text_area_reveal_cursor(&n);
         return EditResult::Moved;
     }
     if (code == KeyCode::PAGE_UP) {
-        text_area_goto_line(n, line_of(n, cur) - visible_lines(n));
-        text_area_reveal_cursor(n);
+        text_area_goto_line(&n, line_of(&n, cur) - visible_lines(&n));
+        text_area_reveal_cursor(&n);
         return EditResult::Moved;
     }
     if (code == KeyCode::PAGE_DOWN) {
-        text_area_goto_line(n, line_of(n, cur) + visible_lines(n));
-        text_area_reveal_cursor(n);
+        text_area_goto_line(&n, line_of(&n, cur) + visible_lines(&n));
+        text_area_reveal_cursor(&n);
         return EditResult::Moved;
     }
     if (code == KeyCode::HOME) {
-        n.cursor = (u16)line_start(n, line_of(n, cur));
+        n.cursor = (u16)line_start(&n, line_of(&n, cur));
         return EditResult::Moved;
     }
     if (code == KeyCode::END) {
-        i32 start = line_start(n, line_of(n, cur));
-        n.cursor = (u16)(start + line_len_at(n, start));
+        i32 start = line_start(&n, line_of(&n, cur));
+        n.cursor = (u16)(start + line_len_at(&n, start));
         return EditResult::Moved;
     }
     return EditResult::Unhandled;
@@ -559,8 +559,8 @@ export void append_text(NodeId id, str s) {
     buf.put(len, (char)0);
     n.len = (u16)len;
     n.cursor = (u16)len;
-    text_area_reveal_cursor(n);
-    dom.damage_row(n);
+    text_area_reveal_cursor(&n);
+    dom.damage_row(&n);
     dom.touch();
 }
 
@@ -601,7 +601,7 @@ export void clear_text_area(NodeId id) {
     n.cursor = 0;
     n.scroll = 0;
     n.sel = None;
-    dom.damage_row(n);
+    dom.damage_row(&n);
     dom.touch();
 }
 
@@ -613,8 +613,8 @@ export void clear_text_area(NodeId id) {
 export void scroll_by(NodeId id, i32 lines) {
     borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     if (n.kind != NodeKind::TEXT_AREA) { if (n.kind != NodeKind::LIST) { return; } }
-    i32 total = line_of(n, n.len) + 1;
-    i32 rows = visible_lines(n);
+    i32 total = line_of(&n, n.len) + 1;
+    i32 rows = visible_lines(&n);
     i32 max_scroll = total - rows;
     if (max_scroll < 0) { max_scroll = 0; }
     i32 scroll = n.scroll + lines;
@@ -622,7 +622,7 @@ export void scroll_by(NodeId id, i32 lines) {
     if (scroll > max_scroll) { scroll = max_scroll; }
     if (scroll != n.scroll) {
         n.scroll = (u16)scroll;
-        dom.damage_row(n);
+        dom.damage_row(&n);
     }
 }
 
@@ -659,7 +659,7 @@ export void list_set_items(NodeId id, str items) {
     n.len = (u16)i;
     n.sel = None;
     n.scroll = 0;
-    dom.damage_row(n);
+    dom.damage_row(&n);
     dom.touch();
 }
 
@@ -684,7 +684,7 @@ export Result<i32, UiError> list_count(NodeId id) {
     borrow NodeRow n = dom.require_row(id)?;
     if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
     if (n.len == 0) { return Ok(0); }
-    return Ok(line_of(n, n.len) + 1);
+    return Ok(line_of(&n, n.len) + 1);
 }
 
 /**
@@ -698,8 +698,8 @@ export Result<str, UiError> list_item(NodeId id, i32 index) {
     if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
     i32 count = list_count(id)?;
     if (index < 0 || index >= count) { return Err(UiError::InvalidIndex(index)); }
-    i32 start = line_start(n, index);
-    i32 llen = line_len_at(n, start);
+    i32 start = line_start(&n, index);
+    i32 llen = line_len_at(&n, start);
     str all = n.text.view(n.len);
     return case all.slice(start, start + llen) of {
         Some(line) -> Ok(line);
@@ -714,19 +714,19 @@ export Result<str, UiError> list_item(NodeId id, i32 index) {
  */
 export void list_select(NodeId id, i32 index) {
     borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
-    i32 count = line_of(n, n.len) + 1;
+    i32 count = line_of(&n, n.len) + 1;
     if (n.len == 0) { count = 0; }
     if (index < 0 || index >= count) { n.sel = None; }
     else {
         n.sel = Some(index);
         // keep it in view
-        i32 rows = visible_lines(n);
+        i32 rows = visible_lines(&n);
         i32 scroll = n.scroll;
         if (index < scroll) { scroll = index; }
         if (index >= scroll + rows) { scroll = index - rows + 1; }
         n.scroll = (u16)scroll;
     }
-    dom.damage_row(n);
+    dom.damage_row(&n);
     dom.touch();
 }
 
@@ -747,7 +747,7 @@ export Option<i32> list_row_at(NodeId id, i32 px, i32 py) {
     i32 row = rel / lh + n.scroll;
     // A popup menu lays its items out like a List (see open_menu).
     if (n.kind != NodeKind::LIST && n.kind != NodeKind::MENU) { return None; }
-    i32 count = line_of(n, n.len) + 1;
+    i32 count = line_of(&n, n.len) + 1;
     if (n.len == 0) { count = 0; }
     if (row >= count) { return None; }
     return Some(row);
@@ -765,9 +765,9 @@ export void list_click(NodeId id, i32 px, i32 py) {
     bool again = case n.sel of { Some(was) -> was == row; None -> false; };
     list_select(id, row);
     if (again) {
-        dom.emit(n, UiEventKind::ACTIVATE, n.on_click, 0);
+        dom.emit(&n, UiEventKind::ACTIVATE, n.on_click, 0);
     } else {
-        dom.fire_change(n);
+        dom.fire_change(&n);
     }
 }
 
@@ -781,26 +781,26 @@ export void list_click(NodeId id, i32 px, i32 py) {
 export EditResult list_handle(borrow NodeRow n, i32 type, i32 code) {
     if (type != KeyEventType::DOWN) { return EditResult::Unhandled; }
     NodeId id = n.id;
-    i32 count = line_of(n, n.len) + 1;
+    i32 count = line_of(&n, n.len) + 1;
     if (n.len == 0) { count = 0; }
     if (count == 0) { return EditResult::Unhandled; }
     if (code == KeyCode::UP) {
         i32 above = case n.sel of { Some(row) -> row - 1; None -> 0; };
         list_select(id, above > 0 ? above : 0);
-        dom.fire_change(n);
+        dom.fire_change(&n);
         return EditResult::Moved;
     }
     if (code == KeyCode::DOWN) {
         i32 below = case n.sel of { Some(row) -> row + 1; None -> 0; };
         if (below < count) { list_select(id, below); }
-        dom.fire_change(n);
+        dom.fire_change(&n);
         return EditResult::Moved;
     }
-    if (code == KeyCode::HOME) { list_select(id, 0); dom.fire_change(n); return EditResult::Moved; }
-    if (code == KeyCode::END) { list_select(id, count - 1); dom.fire_change(n); return EditResult::Moved; }
+    if (code == KeyCode::HOME) { list_select(id, 0); dom.fire_change(&n); return EditResult::Moved; }
+    if (code == KeyCode::END) { list_select(id, count - 1); dom.fire_change(&n); return EditResult::Moved; }
     if (code == KeyCode::ENTER) {
         if (n.sel.is_some()) {
-            dom.emit(n, UiEventKind::ACTIVATE, n.on_click, 0);
+            dom.emit(&n, UiEventKind::ACTIVATE, n.on_click, 0);
         }
         return EditResult::Moved;
     }
@@ -944,7 +944,7 @@ export void menu_hover(i32 px, i32 py) {
     Option<i32> next = list_row_at(n.id, px, py);
     if (!same_row(next, n.sel)) {
         n.sel = next;
-        dom.damage_row(n);
+        dom.damage_row(&n);
     }
 }
 
@@ -993,7 +993,7 @@ i32 g_focus_ring_count = 0;
  */
 export void collect_focusable(NodeId id) {
     borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
-    if (is_focusable(n)) {
+    if (is_focusable(&n)) {
         if (g_focus_ring_count < ui_config.FOCUS_MAX) {
             g_focus_ring[g_focus_ring_count] = id;
             g_focus_ring_count++;
@@ -1073,15 +1073,15 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
     NodeId id = n.id;
     i32 kind = n.kind;
     if (kind == NodeKind::TEXT_INPUT) {
-        EditResult r = input_handle(n, type, code);
+        EditResult r = input_handle(&n, type, code);
         case r of {
             EditResult::Changed -> ({
-                dom.damage_row(n);
+                dom.damage_row(&n);
                 dom.touch();
-                dom.fire_change(n);
+                dom.fire_change(&n);
             });
             EditResult::Moved -> ({
-                dom.damage_row(n);
+                dom.damage_row(&n);
                 dom.touch();
             });
             EditResult::Unhandled -> _;
@@ -1089,15 +1089,15 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
         return;
     }
     if (kind == NodeKind::TEXT_AREA) {
-        EditResult r = text_area_handle(n, type, code, mods);
+        EditResult r = text_area_handle(&n, type, code, mods);
         case r of {
             EditResult::Changed -> ({
-                dom.damage_row(n);
+                dom.damage_row(&n);
                 dom.touch();
-                dom.fire_change(n);
+                dom.fire_change(&n);
             });
             EditResult::Moved -> ({
-                dom.damage_row(n);
+                dom.damage_row(&n);
                 dom.touch();
             });
             EditResult::Unhandled -> _;
@@ -1105,7 +1105,7 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
         return;
     }
     if (kind == NodeKind::LIST) {
-        list_handle(n, type, code);
+        list_handle(&n, type, code);
         return;
     }
     if (type == KeyEventType::DOWN) {
@@ -1136,7 +1136,7 @@ export void set_input_text(NodeId id, str s) {
     buf.put(i, (char)0);
     n.len = (u16)i;
     n.cursor = (u16)i;
-    dom.damage_row(n);
+    dom.damage_row(&n);
     dom.touch();
 }
 
@@ -1156,7 +1156,7 @@ export void tick() {
             Some(t) -> ({
                 if (now >= t.next_due) {
                     t.next_due = now + t.interval;
-                    dom.emit(t, UiEventKind::TIMER, t.on_tick, 0);
+                    dom.emit(&t, UiEventKind::TIMER, t.on_tick, 0);
                 }
             });
             None -> _;
