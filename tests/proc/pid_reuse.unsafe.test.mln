@@ -1,0 +1,271 @@
+package test_pid_reuse;
+
+import assert from "@std/testing/assert.mln";
+import { assert_eq } from "@std/testing/assert.mln";
+import allocator from "@std/memory/allocator.mln";
+import heap from "@kernel/mm/heap.mln";
+import mem from "@kernel/mm/mem.mln";
+import mmu from "@kernel/mm/mmu.mln";
+import irq from "@kernel/arch/irq.mln";
+import debug from "@kernel/debug/debug.mln";
+import loader from "@kernel/kernel/loader.mln";
+import process from "@kernel/kernel/process.mln";
+import scheduler from "@kernel/kernel/scheduler.mln";
+import console from "@os/proc/console.mln";
+import consoles from "@os/proc/consoles.mln";
+import { Console, ConsoleRow } from "@os/proc/consoles.mln";
+import request_channel from "@os/ipc/channel.mln";
+import request_gateway from "@os/ipc/gateway.mln";
+import app_events from "@os/ipc/events.mln";
+import dom from "@os/ui/dom/dom.mln";
+import dom_elements from "@os/ui/dom/dom_elements.mln";
+import desktop from "@os/ui/desktop.mln";
+import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
+import { Event, EventKind } from "@contracts/myapp/message.contract.mln";
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
+import { UserAddress } from "@std/core/address.mln";
+import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
+
+// What a reused pid does today, on the real process table, loader, console,
+// gateway and DOM. These tests pin behaviour, not a wish: a pid is a process
+// table slot plus one, and the lowest free slot is taken first, so a reaped
+// pid is the very next one handed out. Whoever still holds the old number then
+// names the new process. A fix that gives pids a generation has to turn these
+// expectations around.
+
+void write_be32(i32 addr, i32 value) {
+    mem.write_byte(addr + 0, (value >> 24) & 0xFF);
+    mem.write_byte(addr + 1, (value >> 16) & 0xFF);
+    mem.write_byte(addr + 2, (value >> 8) & 0xFF);
+    mem.write_byte(addr + 3, value & 0xFF);
+}
+
+void write_instruction(i32 addr, i32 a, i32 b, i32 c, i32 d) {
+    mem.write_byte(addr + 0, a);
+    mem.write_byte(addr + 1, b);
+    mem.write_byte(addr + 2, c);
+    mem.write_byte(addr + 3, d);
+}
+
+// An MBIN image of `exit(code)`: three instructions and no data.
+i32 EXIT_IMAGE_BYTES = 44;
+
+i32 exit_image(i32 code) {
+    i32 image = case heap.alloc(EXIT_IMAGE_BYTES) of {
+        Ok(address) -> address;
+        Err(_) -> ({ debug.panic("no memory for an image"); });
+    };
+    write_be32(image + 0, 0x4D42494E);  // magic: 'MBIN'
+    write_be32(image + 4, 1);           // version
+    write_be32(image + 8, 0x40000000);  // entry point
+    write_be32(image + 12, 32);         // text offset
+    write_be32(image + 16, 12);         // text size
+    write_be32(image + 20, EXIT_IMAGE_BYTES); // data offset
+    write_be32(image + 24, 0);          // data size
+    write_be32(image + 28, 0);          // bss size
+    write_instruction(image + 32, 8, 32, 0, 1);      // movi r1, SYS_EXIT
+    write_instruction(image + 36, 8, 160, 0, code);  // movi r5, code
+    write_instruction(image + 40, 248, 0, 0, 0);     // syscall
+    return image;
+}
+
+Pid spawn_exiting(i32 code) {
+    return case loader.spawn_from_buffer(exit_image(code), EXIT_IMAGE_BYTES) of {
+        Ok(pid) -> pid;
+        Err(_) -> ({ debug.panic("spawn failed"); });
+    };
+}
+
+void wait_for_exit(Pid pid) {
+    bool exited = false;
+    while (!exited) {
+        exited = case console.has_exited(pid) of {
+            Ok(value) -> value;
+            Err(_) -> ({ debug.panic("process vanished before it exited"); });
+        };
+    }
+}
+
+// The real exit path is what makes a Zombie, so processes really run.
+void boot() {
+    heap.init();
+    allocator.configure(heap.alloc, heap.free);
+    desktop.init();
+    request_channel.init();
+    process.init();
+    scheduler.init();
+    irq.set_handler();
+    i32 directory = case mmu.create_page_directory() of {
+        Some(value) -> value;
+        None -> ({ debug.panic("no page directory"); });
+    };
+    case mmu.setup_identity_kernel_mapping(directory) of {
+        Ok(_) -> _;
+        Err(_) -> ({ debug.panic("no identity mapping"); });
+    };
+    mmu.enable_paging(directory);
+}
+
+void assert_same(Pid actual, Pid expected, str message) {
+    assert_eq<i32>((i32)actual, (i32)expected, message);
+}
+
+i32 exit_code(Result<ProcessExitStatus, ProcessControlError> reaped) {
+    return case reaped of {
+        Ok(status) -> case status of { ProcessExitStatus::Code(code) -> code; _ -> -1; };
+        Err(_) -> -1;
+    };
+}
+
+void reap_with_code(Pid pid, i32 expected, str message) {
+    Result<ProcessExitStatus, ProcessControlError> reaped = console.reap(pid);
+    assert_eq<i32>(exit_code(reaped), expected, message);
+}
+
+/*@Test "the lowest free slot goes to the next process" { step: 20000000; }*/
+void the_lowest_free_slot_goes_to_the_next_process() {
+    process.init();
+    Pid first = process.reserve_process().ok().unwrap_or(Pid(0));
+    Pid second = process.reserve_process().ok().unwrap_or(Pid(0));
+    Pid third = process.reserve_process().ok().unwrap_or(Pid(0));
+    assert_eq<i32>((i32)first, 1, "pids count up from one");
+    assert_eq<i32>((i32)third, 3, "pids count up from one");
+
+    // Slots 4 to 16 have never been used, and still the freed one is taken.
+    process.free_proc(second);
+    Pid reused = process.reserve_process().ok().unwrap_or(Pid(0));
+    assert_same(reused, second, "a freed pid is the next one handed out");
+}
+
+/*@Test "a stale pid names the next process" {
+    timer_interval: 3000;
+    step: 50000000;
+}*/
+void a_stale_pid_names_the_next_process() {
+    boot();
+    Pid stale = spawn_exiting(11);
+    irq.enable();
+    wait_for_exit(stale);
+    reap_with_code(stale, 11, "the first process reaps with its own code");
+
+    // While the slot is empty the old number is honestly invalid...
+    bool invalid = case console.has_exited(stale) of {
+        Ok(_) -> false;
+        Err(ProcessControlError::InvalidPid(_)) -> true;
+        Err(ProcessControlError::NotExited(_)) -> false;
+    };
+    assert.assert_true(invalid, "a reaped pid is invalid until the slot is taken");
+
+    // ...and with the next spawn it is a process again. Interrupts stay off so
+    // the new process stays Alive while it is looked at.
+    bool was_enabled = irq.save_disable();
+    Pid next = spawn_exiting(22);
+    assert_same(next, stale, "the next process gets the reaped pid");
+    bool still_running = case console.has_exited(stale) of {
+        Ok(exited) -> !exited;
+        Err(_) -> false;
+    };
+    assert.assert_true(still_running, "the stale pid reports on the new process");
+
+    // A stale caller reaches the new process's stdio.
+    console.bind(stale, 9);
+    bool rebound = case console.output_of(next) of { Some(node) -> node == 9; None -> false; };
+    assert.assert_true(rebound, "binding the stale pid moves the new process's stdout");
+    console.feed_line(stale, "x");
+    bool fed = case consoles.console_by_pid(next) of {
+        Some(bound) -> ({
+            borrow ConsoleRow row = bound.row();
+            row.in_tail != row.in_head;
+        });
+        None -> false;
+    };
+    assert.assert_true(fed, "a line fed to the stale pid is in the new process's stdin");
+
+    // The stale holder collects the status, and the real parent gets nothing.
+    irq.restore(was_enabled);
+    wait_for_exit(next);
+    reap_with_code(stale, 22, "reaping the stale pid takes the new process's status");
+    bool lost = case console.reap(next) of {
+        Ok(_) -> false;
+        Err(ProcessControlError::InvalidPid(_)) -> true;
+        Err(ProcessControlError::NotExited(_)) -> false;
+    };
+    assert.assert_true(lost, "the real parent's reap finds nothing");
+}
+
+// console.reap() frees the slot and the console row, and nothing else: the
+// transport and the nodes go only through the shell's reap_exited(), for the
+// processes it started. So a process started any other way (a Terminal child)
+// leaves them behind for whoever gets its pid.
+/*@Test "a reaped process leaves its events and nodes to the next one" {
+    timer_interval: 3000;
+    step: 50000000;
+}*/
+void a_reaped_process_leaves_its_events_and_nodes_to_the_next_one() {
+    boot();
+    Pid stale = spawn_exiting(11);
+    Event event;
+    UserAddress out = UserAddress((i32)(&event));
+
+    // What the process's first POLL and CREATE_BUTTON do.
+    assert.assert_true(!request_gateway.poll(stale, out), "no event is queued yet");
+    dom.set_current_owner(Some(stale));
+    NodeId node = case dom_elements.create_button("B", 0, 0, 10, 10) of {
+        Ok(id) -> id;
+        Err(_) -> ({ debug.panic("no node"); });
+    };
+    dom.set_current_owner(None);
+    app_events.push(stale, (i32)node, EventKind::CLICK, 5, 0, "");
+
+    irq.enable();
+    wait_for_exit(stale);
+    reap_with_code(stale, 11, "the first process reaps with its own code");
+    bool was_enabled = irq.save_disable();
+    Pid next = spawn_exiting(22);
+    assert_same(next, stale, "the next process gets the reaped pid");
+
+    assert.assert_true(request_gateway.poll(next, out), "the new process polls the old click");
+    assert_eq<i32>(event.id, (i32)node, "the event names the old process's node");
+    assert_eq<i32>(event.arg, 5, "the event is the old process's");
+    bool inherited = case dom.owner_of(node) of {
+        Ok(Some(owner)) -> owner == next;
+        Ok(None) -> false;
+        Err(_) -> false;
+    };
+    assert.assert_true(inherited, "the old process's node now belongs to the new one");
+    irq.restore(was_enabled);
+}
+
+// The shell's teardown is what keeps this from happening to desktop apps.
+/*@Test "the shell's teardown leaves the next process nothing" {
+    timer_interval: 3000;
+    step: 50000000;
+}*/
+void the_shells_teardown_leaves_the_next_process_nothing() {
+    boot();
+    Pid stale = spawn_exiting(11);
+    Event event;
+    UserAddress out = UserAddress((i32)(&event));
+    assert.assert_true(!request_gateway.poll(stale, out), "no event is queued yet");
+    dom.set_current_owner(Some(stale));
+    NodeId node = case dom_elements.create_button("B", 0, 0, 10, 10) of {
+        Ok(id) -> id;
+        Err(_) -> ({ debug.panic("no node"); });
+    };
+    dom.set_current_owner(None);
+    app_events.push(stale, (i32)node, EventKind::CLICK, 5, 0, "");
+
+    irq.enable();
+    wait_for_exit(stale);
+    reap_with_code(stale, 11, "the first process reaps with its own code");
+    dom.remove_owned(stale);
+    request_gateway.process_gone(stale);
+    bool was_enabled = irq.save_disable();
+    Pid next = spawn_exiting(22);
+    assert_same(next, stale, "the next process gets the reaped pid");
+
+    assert.assert_true(!request_gateway.poll(next, out), "the old click was drained");
+    assert_eq<bool>(dom.owner_of(node).is_ok(), false, "the old node is gone");
+    irq.restore(was_enabled);
+}

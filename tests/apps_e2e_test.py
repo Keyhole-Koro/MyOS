@@ -5,6 +5,7 @@ the file manager lists the disk, and the editor round-trips a file.
 Drives the real system through the v2 automation bridge (mydomtester), the
 same path a person would use with mouse and keyboard.
 """
+import re
 import sys
 import time
 from pathlib import Path
@@ -90,7 +91,11 @@ def main() -> int:
             wait_text_contains(term_out, "exited with 42")
             os._type("spawner")
             os._press("enter")
-            wait_text_contains(term_out, "exited with 47")
+            text = wait_text_contains(term_out, "exited with 47")
+            # A reaped pid is the next one handed out, so each of these ran
+            # under the same number (tests/proc/pid_reuse.unsafe.test.mln).
+            pids = re.findall(r"^\[pid (\d+)\] \w+$", text, re.MULTILINE)
+            assert len(pids) == 3 and len(set(pids)) == 1, f"pids: {pids}"
 
             # `ls` is a terminal built-in reading the MFS disk.
             os._type("ls")
