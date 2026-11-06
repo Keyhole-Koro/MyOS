@@ -511,6 +511,7 @@ radius / on_tick / interval / next_due` を追加）。`state` に `STATE_CHECKE
   ノードの `on_key(id, code, mods)` が DOWN を先に受け、非 0 を返すと消費。
   TextInput の既定動作: CHAR 挿入、Backspace/Delete、←/→/Home/End。
   変更のたびに `on_change(id)`。`set_input_text(id, s)` / `text_of(id)`。
+  `set_input_text` は TextArea では中身を置き換える。
 
 ### 再描画
 

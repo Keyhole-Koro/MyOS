@@ -1120,12 +1120,17 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
 }
 
 /**
- * Sets text content of a TextInput node, updating length, cursor and redrawing.
- * @param id DOM Node ID of TextInput.
+ * Sets text content of a TextInput or TextArea node, updating length, cursor and redrawing.
+ * @param id DOM Node ID of the node.
  * @param s Replacement string.
  */
 export void set_input_text(NodeId id, str s) {
     borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    if (n.kind == NodeKind::TEXT_AREA) {
+        clear_text_area(id);
+        append_text(id, s);
+        return;
+    }
     if (n.kind != NodeKind::TEXT_INPUT) { return; }
     Blob buf = n.text;
     i32 cap = n.cap;

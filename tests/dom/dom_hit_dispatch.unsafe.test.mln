@@ -227,6 +227,18 @@ void dom_hit_dispatch() {
     assert.assert_true(typed.length == 2, "terminated");
     assert.assert_true(g_changes == 5, "each edit fires on_change");
 
+    // A TextArea takes the same write as a TextInput: its text is replaced.
+    NodeId area = require_node(dom_elements.create_text_area("area", 10, 170, 200, 60, 32, 0));
+    require_append(dom.append_child(win2, area));
+    dom_widgets.append_text(area, "old text");
+    dom_widgets.set_input_text(area, "new");
+    str written = dom.text_of(area);
+    assert.assert_true(written.length == 3, "a write replaces a text area's text");
+    assert.assert_true(written.data[0] == 'n', "a write leaves the new text");
+    dom_widgets.set_input_text(area, "");
+    str emptied = dom.text_of(area);
+    assert.assert_true(emptied.length == 0, "an empty write clears a text area");
+
     // List queries preserve the semantic difference between no selection and
     // an invalid request; neither path is encoded as a negative integer.
     NodeId list = require_node(dom_elements.create_list("rows", 10, 170, 200, 80, 64));
