@@ -140,9 +140,9 @@ export Option<i32> output_of(i32 pid) {
 /**
  * Queues one line of text into the process's stdin buffer.
  * @param pid Target process ID.
- * @param line Pointer to null-terminated string to feed as input.
+ * @param line Text to feed as input; a newline follows it.
  */
-export void feed_line(i32 pid, char *line) {
+export void feed_line(i32 pid, str line) {
     i32 i = case slot_of(pid) of {
         Some(v) -> v;
         None -> ({ return; });
@@ -151,12 +151,12 @@ export void feed_line(i32 pid, char *line) {
     i32 k = 0;
     while (1) {
         i32 c = 10;
-        if (line[k] != 0) { c = ascii.byte(line[k]); }
+        if (k < line.length) { c = line.byte(k); }
         i32 next = (consoles[i].in_tail + 1) % STDIN_CAP;
         if (next == consoles[i].in_head) { return; } // full
         mem.write_byte(base + consoles[i].in_tail, c);
         consoles[i].in_tail = next;
-        if (line[k] == 0) { return; }
+        if (k >= line.length) { return; }
         k++;
     }
 }
@@ -188,8 +188,7 @@ i32 on_write(i32 pid, UserAddress buf, i32 count) {
         }
         return count;
     }
-    str bytes = str { data: (char*)(i32)buf, length: count };
-    dom_widgets.append_bytes(out, bytes);
+    dom_widgets.append_bytes(out, user_memory.view(buf, count));
     return count;
 }
 
@@ -217,17 +216,11 @@ i32 on_read(i32 pid, UserAddress buf, i32 count) {
     return got;
 }
 
-/**
- * Loads an executable file from the filesystem and starts it as a new process.
- * @param path Pointer to null-terminated file path.
- * @return Ok(PID) on success, or Err(SpawnError) when the executable cannot
- *         be opened, loaded, or scheduled.
- */
 Text<80> spawn_path;
 
 // The file for an executable name: a path as given, or a bare name looked
 // up in /bin then /apps (the search path).
-Result<Option<i32>, SpawnError> try_open(char *path) {
+Result<Option<i32>, SpawnError> try_open(str path) {
     Result<i32, FsError> opened = fs.open(path);
     return case opened of {
         Ok(fd) -> Ok(Some(fd));
@@ -239,20 +232,18 @@ Result<Option<i32>, SpawnError> try_open(char *path) {
     };
 }
 
-Result<i32, SpawnError> open_executable(char *path) {
-    bool has_slash = false;
-    i32 i = 0;
-    while (path[i] != 0) { if (path[i] == '/') { has_slash = true; } i++; }
+Result<i32, SpawnError> open_executable(str path) {
+    bool has_slash = case path.find("/") of { Some(_) -> true; None -> false; };
     if (!has_slash) {
         spawn_path.clear();
         spawn_path.append("bin/");
-        spawn_path.append(str.from_c(path));
-        Option<i32> bin = try_open(spawn_path.as_ptr())?;
+        spawn_path.append(path);
+        Option<i32> bin = try_open(spawn_path.as_str())?;
         case bin of { Some(fd) -> ({ return Ok(fd); }); None -> _; };
         spawn_path.clear();
         spawn_path.append("apps/");
-        spawn_path.append(str.from_c(path));
-        Option<i32> apps = try_open(spawn_path.as_ptr())?;
+        spawn_path.append(path);
+        Option<i32> apps = try_open(spawn_path.as_str())?;
         case apps of { Some(fd) -> ({ return Ok(fd); }); None -> _; };
     }
     Option<i32> direct = try_open(path)?;
@@ -260,11 +251,6 @@ Result<i32, SpawnError> open_executable(char *path) {
     return Err(SpawnError::NotFound);
 }
 
-/**
- * Opens an executable image, loads it as a user process, and releases the image buffer.
- * @param path NUL-terminated path searched as supplied, under bin/, and under apps/.
- * @return Ok(pid) when the process starts, or Err(SpawnError) with the launch failure.
- */
 SpawnError filesystem_failure(SpawnFsOperation operation, FsError cause) {
     return SpawnError::Filesystem(SpawnFilesystemError {
         operation: operation,
@@ -272,7 +258,12 @@ SpawnError filesystem_failure(SpawnFsOperation operation, FsError cause) {
     });
 }
 
-export Result<i32, SpawnError> spawn_file(char *path) {
+/**
+ * Opens an executable image, loads it as a user process, and releases the image buffer.
+ * @param path Path searched as supplied, under bin/, and under apps/.
+ * @return Ok(pid) when the process starts, or Err(SpawnError) with the launch failure.
+ */
+export Result<i32, SpawnError> spawn_file(str path) {
     // The file is closed and the image buffer freed on every path out.
     FileHandle file = FileHandle { fd: open_executable(path)? };
     i32 size = case fs.seek(file.fd, 0, SeekWhence::End) of {
@@ -320,7 +311,7 @@ Result<i32, SpawnError> on_spawn(UserAddress user_path) {
         path.push((u8)c);
         k++;
     }
-    Result<i32, SpawnError> result = spawn_file(path.as_ptr());
+    Result<i32, SpawnError> result = spawn_file(path.as_str());
     i32 pid = 0;
     if (result_take_ok<i32, SpawnError>(&result, &pid)) {
         i32 parent = case thread.current_pid() of {

@@ -289,23 +289,28 @@ Result<i32, FsError> load_entry(i32 idx) {
  * @param name Target filename string.
  * @return True if matched, false otherwise.
  */
-bool name_match(i32 off, char* name) {
-    char *stored = (char *)(g_buf + off);
-    return str.ncmp(stored, name, fs_config.NAME_MAX) == 0;
+bool name_match(i32 off, str name) {
+    i32 i = 0;
+    while (i < fs_config.NAME_MAX) {
+        i32 stored = buf_byte(off + i);
+        if (stored != name.byte(i)) { return false; }
+        if (stored == 0) { return true; }
+        i++;
+    }
+    return true;
 }
 
 /**
  * Copies a filename into g_buf at `off` and zeroes all remaining padding bytes up to NAME_MAX.
  * @param off Byte offset in g_buf.
- * @param name Null-terminated filename string.
+ * @param name Filename, at most NAME_MAX - 1 bytes.
  */
-void store_name(i32 off, char* name) {
-    char *dst = (char *)(g_buf + off);
-    i32 written = str.ncopy(dst, name, fs_config.NAME_MAX);
-    // ncopy stops at the terminator it just wrote; the on-disk entry still
-    // needs every byte through fs_config.NAME_MAX zeroed, the way the original
-    // byte-at-a-time loop left it.
-    bytes.zero(&dst[written], fs_config.NAME_MAX - written);
+void store_name(i32 off, str name) {
+    i32 i = 0;
+    while (i < fs_config.NAME_MAX) {
+        set_buf_byte(off + i, name.byte(i));
+        i++;
+    }
 }
 
 /**
@@ -324,7 +329,7 @@ export const i32 FLAG_DIR = 1;
 
 // The entry called `name` directly inside directory `parent_code`
 // (parent index + 1, 0 = root), or None.
-Option<i32> find_entry_in(i32 parent_code, char* name) {
+Option<i32> find_entry_in(i32 parent_code, str name) {
     ssd.read_block(fs_config.ENTRY_BLOCK, g_buf).ok()?;
     i32 idx = 0;
     while (idx < fs_config.MAX_FILES) {
@@ -344,32 +349,31 @@ Option<i32> find_entry_in(i32 parent_code, char* name) {
 // Split `path` into the directory holding its last component (as a parent
 // code) and that component. Empty names and missing/non-directory parents
 // are returned as typed path errors.
-Result<i32, PathError> split_path(char* path, char* out_name) {
-    out_name[0] = 0;
-    if (path == 0) { return Err(PathError::EmptyName); }
+Result<i32, PathError> split_path(str path, borrow Text<16> out_name) {
+    out_name.clear();
     i32 i = 0;
-    if (path[0] == '/') { i = 1; }
+    if (path.byte(0) == '/') { i = 1; }
     i32 parent_code = 0;
     while (1) {
-        // Copy one component.
-        i32 n = 0;
-        while (path[i] != 0 && path[i] != '/') {
-            if (n + 1 < fs_config.NAME_MAX) { out_name[n] = path[i]; n++; }
+        // Copy one component; push() drops what does not fit.
+        out_name.clear();
+        while (i < path.length && path.byte(i) != '/') {
+            out_name.push((u8)path.byte(i));
             i++;
         }
-        out_name[n] = 0;
-        if (path[i] == 0) {
+        i32 n = out_name.len();
+        if (i >= path.length) {
             if (n == 0) { return Err(PathError::EmptyName); }
             return Ok(parent_code);
         }
         // A directory on the way; skip the slash(es).
-        while (path[i] == '/') { i++; }
-        if (path[i] == 0) {
+        while (path.byte(i) == '/') { i++; }
+        if (i >= path.length) {
             // Trailing slash: the directory itself is the target.
             return Ok(parent_code);
         }
         if (n == 0) { continue; }
-        i32 dir = case find_entry_in(parent_code, out_name) of {
+        i32 dir = case find_entry_in(parent_code, out_name.as_str()) of {
             Some(v) -> v;
             None -> ({ return Err(PathError::MissingDirectory); });
         };
@@ -379,16 +383,13 @@ Result<i32, PathError> split_path(char* path, char* out_name) {
         }
         parent_code = dir + 1;
     }
-    return Err(PathError::MissingDirectory);
 }
 
 // The entry a path names, or None.
-Option<i32> find_entry_by_path(char* path) {
+Option<i32> find_entry_by_path(str path) {
     Text<16> name = Text<16> {};
-    name.clear();
-    i32 parent_code = split_path(path, name.as_ptr()).ok()?;
-    name.sync_from_ptr();
-    return find_entry_in(parent_code, name.as_ptr());
+    i32 parent_code = split_path(path, &name).ok()?;
+    return find_entry_in(parent_code, name.as_str());
 }
 
 /**
@@ -530,29 +531,22 @@ export void init() {
 // 7. File Operations (open, create, read, write, seek, close, remove, list)
 // =========================================================================
 
-/**
- * Creates a new file by path and opens it for read/write access.
- * @param path Pointer to null-terminated file path string.
- * @return Ok(fd) with opened file descriptor, or Err(FsError).
- */
 // Make an entry for `path` in its directory: a file, or with FLAG_DIR a
 // directory. Its first data block is allocated and zeroed either way.
-Result<i32, FsError> make_entry(char* path, i32 flags) {
+Result<i32, FsError> make_entry(str path, i32 flags) {
     if (!g_enabled) {
         return Err(FsError::Disabled);
     }
 
     Text<16> clean_name = Text<16> {};
-    clean_name.clear();
-    i32 parent_code = case split_path(path, clean_name.as_ptr()) of {
+    i32 parent_code = case split_path(path, &clean_name) of {
         Ok(v) -> v;
         Err(PathError::EmptyName) -> ({ return Err(FsError::InvalidName); });
         Err(PathError::MissingDirectory) -> ({ return Err(FsError::NotFound); });
     };
-    clean_name.sync_from_ptr();
     if (clean_name.is_empty()) { return Err(FsError::InvalidName); }
 
-    case find_entry_in(parent_code, clean_name.as_ptr()) of {
+    case find_entry_in(parent_code, clean_name.as_str()) of {
         Some(_) -> ({ return Err(FsError::AlreadyExists); });
         None -> _;
     };
@@ -571,7 +565,7 @@ Result<i32, FsError> make_entry(char* path, i32 flags) {
 
     // Write entry to disk
     i32 off = load_entry(idx)?;
-    store_name(off, clean_name.as_ptr());
+    store_name(off, clean_name.as_str());
     set_buf_word(off + 16, first);       // first_block
     set_buf_word(off + 20, 0);           // file_size
     set_buf_word(off + 24, flags);       // flags
@@ -582,10 +576,10 @@ Result<i32, FsError> make_entry(char* path, i32 flags) {
 
 /**
  * Creates an empty file and opens it for use.
- * @param path NUL-terminated path for the new file.
+ * @param path Path for the new file.
  * @return Open file descriptor on success, or an FsError if creation/opening fails.
  */
-export Result<i32, FsError> create(char* path) {
+export Result<i32, FsError> create(str path) {
     Result<i32, FsError> made = make_entry(path, 0);
     made?;
     return open(path);
@@ -593,10 +587,10 @@ export Result<i32, FsError> create(char* path) {
 
 /**
  * Creates a directory at the requested path.
- * @param path NUL-terminated path for the new directory.
+ * @param path Path for the new directory.
  * @return Directory entry index on success, or an FsError if creation fails.
  */
-export Result<i32, FsError> mkdir(char* path) {
+export Result<i32, FsError> mkdir(str path) {
     return make_entry(path, FLAG_DIR);
 }
 
@@ -620,11 +614,10 @@ export Result<bool, FsError> is_dir(i32 idx) {
 
 // The entry index of the directory `path` names (root: "/" or ""), as a
 // parent code for dir_next_in: 0 for the root, index + 1 otherwise.
-Result<i32, FsError> dir_code_of(char* path) {
-    if (path == 0) { return Ok(0); }
+Result<i32, FsError> dir_code_of(str path) {
     i32 i = 0;
-    while (path[i] == '/') { i++; }
-    if (path[i] == 0) { return Ok(0); }
+    while (path.byte(i) == '/') { i++; }
+    if (i >= path.length) { return Ok(0); }
     i32 idx = case find_entry_by_path(path) of {
         Some(v) -> v;
         None -> ({ return Err(FsError::NotFound); });
@@ -639,10 +632,10 @@ Result<i32, FsError> dir_code_of(char* path) {
 
 /**
  * Opens an existing file by path.
- * @param path Pointer to null-terminated file path string.
+ * @param path File path.
  * @return Ok(fd) with allocated file descriptor, or Err(FsError).
  */
-export Result<i32, FsError> open(char* path) {
+export Result<i32, FsError> open(str path) {
     if (!g_enabled) {
         return Err(FsError::Disabled);
     }
@@ -976,10 +969,10 @@ export Result<i32, FsError> write(i32 fd, i32 buf, i32 size) {
 
 /**
  * Removes a file by path, freeing its allocated block chain and entry.
- * @param path Pointer to null-terminated file path string.
+ * @param path File path.
  * @return Ok(_) on success, or Err(FsError).
  */
-export Result<_, FsError> remove(char* path) {
+export Result<_, FsError> remove(str path) {
     i32 idx = case find_entry_by_path(path) of {
         Some(v) -> v;
         None -> ({ return Err(FsError::NotFound); });
@@ -988,8 +981,7 @@ export Result<_, FsError> remove(char* path) {
     bool is_directory = is_dir(idx)?;
     if (is_directory) {
         Text<16> child = Text<16> {};
-        child.clear();
-        Option<i32> any = dir_next_in(idx + 1, 0, child.as_ptr(), child.data.length)?;
+        Option<i32> any = dir_next_in(idx + 1, 0, &child)?;
         bool has_child = case any of {
             Some(_) -> true;
             None -> false;
@@ -1071,21 +1063,20 @@ export void list() {
 // =========================================================================
 
 /**
- * Returns the next entry in a directory and copies its name to the output buffer.
+ * Returns the next entry in a directory and copies its name out.
  * Use the returned entry index plus one as `start` for the next call.
  * @param path Directory path; an empty string or "/" selects the root.
  * @param start Entry index at which to begin searching.
- * @param out Destination buffer for the NUL-terminated entry name.
- * @param cap Capacity of `out` in bytes, including space for the terminator.
+ * @param out Replaced by the entry name when one is found.
  * @return Ok(Some(index)) when found, Ok(None) at end, or Err(FsError).
  */
-export Result<Option<i32>, FsError> dir_next_at(char* path, i32 start, char* out, i32 cap) {
+export Result<Option<i32>, FsError> dir_next_at(str path, i32 start, borrow Text<16> out) {
     i32 code = dir_code_of(path)?;
-    return dir_next_in(code, start, out, cap);
+    return dir_next_in(code, start, out);
 }
 
 // dir_next for the directory with parent code `parent_code` (index + 1, 0 = root).
-Result<Option<i32>, FsError> dir_next_in(i32 parent_code, i32 start, char* out, i32 cap) {
+Result<Option<i32>, FsError> dir_next_in(i32 parent_code, i32 start, borrow Text<16> out) {
     if (!g_enabled) { return Err(FsError::Disabled); }
     if (start < 0) { start = 0; }
     ssd.read_block(fs_config.ENTRY_BLOCK, g_buf)?;
@@ -1093,15 +1084,14 @@ Result<Option<i32>, FsError> dir_next_in(i32 parent_code, i32 start, char* out, 
     while (idx < fs_config.MAX_FILES) {
         i32 off = idx * fs_config.ENTRY_SIZE;
         if (buf_word(off + 16) != 0 && buf_word(off + 28) == parent_code) {
+            out.clear();
             i32 i = 0;
             while (i < fs_config.NAME_MAX) {
                 i32 c = buf_byte(off + i);
                 if (c == 0) { break; }
-                if (i + 1 >= cap) { break; }
-                out[i] = (char)c;
+                out.push((u8)c);
                 i++;
             }
-            out[i] = (char)0;
             return Ok(Some(idx));
         }
         idx++;

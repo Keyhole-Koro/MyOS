@@ -47,7 +47,7 @@ void forward_ui_event(i32 owner, i32 id, i32 kind, i32 arg) {
         kind == UiEventKind::CHANGE ||
         kind == UiEventKind::ACTIVATE ||
         kind == UiEventKind::TIMER) {
-        push(owner, id, kind, arg, 0, (char*)0);
+        push(owner, id, kind, arg, 0, "");
     }
 }
 
@@ -72,7 +72,7 @@ export void init() { ui_event.set_sink(forward_ui_event); }
  * @param token Correlation token or modifier flags.
  * @param text Optional text payload (e.g. file path on OPEN).
  */
-export void push_shell(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) {
+export void push_shell(i32 owner, i32 id, i32 kind, i32 arg, i32 token, str text) {
     if (kind == ShellEventKind::KEY) {
         push(owner, id, EventKind::KEY, arg, token, text);
     } else if (kind == ShellEventKind::CLOSE) {
@@ -143,7 +143,7 @@ export i32 dropped() { return dropped_count; }
  * @param token Correlation token or secondary argument.
  * @param text Optional text copied into the queued event's inline payload.
  */
-export void push(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) {
+export void push(i32 owner, i32 id, i32 kind, i32 arg, i32 token, str text) {
     Option<ChannelId> bound = channel_of(owner);
     ChannelId ch = case bound of {
         Some(value) -> value;
@@ -161,10 +161,11 @@ export void push(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) {
     char *inline_text = (char*)(&w[5]);
     i32 text_i = 0;
     while (text_i < 64) {
-        inline_text[text_i] = (char)0;
+        i32 c = 0;
+        if (text_i < 63) { c = text.byte(text_i); }
+        inline_text[text_i] = (char)c;
         text_i++;
     }
-    if (text != 0) { str.ncopy(inline_text, text, 64); }
     if (!ipc.send(ch, &w[0])) {
         dropped_count++;
         return;

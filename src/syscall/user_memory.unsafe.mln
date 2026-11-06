@@ -9,6 +9,7 @@ package user_memory;
 import mem from "@kernel/mm/mem.mln";
 import bytes from "@std/text/bytes.mln";
 import { UserAddress } from "@std/core/address.mln";
+import { Text } from "@std/text/text.mln";
 
 /** Reads one byte of the active process's memory. */
 export i32 read_byte(UserAddress user) { return mem.read_byte((i32)user); }
@@ -21,6 +22,16 @@ export i32 read_word(UserAddress user) { return mem.read_word((i32)user); }
 
 /** Writes one word of the active process's memory. */
 export void write_word(UserAddress user, i32 value) { mem.write_word((i32)user, value); }
+
+/**
+ * Views bytes of the active process's memory, valid while its page tables are.
+ * @param user Virtual memory address of the first byte.
+ * @param length Number of bytes.
+ * @return The view; it must not outlive the syscall.
+ */
+export str view(UserAddress user, i32 length) {
+    return str { data: (char*)(i32)user, length: length };
+}
 
 /**
  * Copies a fixed-size argument record from the active user address space.
@@ -40,26 +51,21 @@ export void copy_in(UserAddress user, char *dst, i32 n) {
 }
 
 /**
- * Copies a null-terminated string from the user process address space into a kernel buffer.
+ * Copies a length-delimited string from user space into a kernel Text.
  *
- * Reads byte-by-byte from `user` virtual address until a null terminator (0) is
- * encountered or `cap - 1` bytes have been copied. Ensures null-termination of `dst`.
+ * Stops at the Text's capacity, and at a NUL, which a Text cannot hold.
  *
- * @param user Virtual memory address of the string in user process space (0 for no-op).
- * @param dst Destination buffer in kernel address space.
- * @param cap Maximum capacity of destination buffer in bytes (including null terminator).
+ * @param user Virtual memory address of the first byte.
+ * @param length Byte length; zero or negative means empty.
+ * @param dst Destination, replaced by the copy.
  */
-export void copy_in_string(UserAddress user, char *dst, i32 cap) {
+export void copy_in_text<const N>(UserAddress user, i32 length, borrow Text<N> dst) {
+    dst.clear();
     i32 k = 0;
-    if ((i32)user != 0) {
-        while (k + 1 < cap) {
-            i32 c = read_byte(user.plus(k));
-            if (c == 0) { break; }
-            dst[k] = (char)c;
-            k++;
-        }
+    while (k < length) {
+        if (!dst.push((u8)read_byte(user.plus(k)))) { return; }
+        k++;
     }
-    dst[k] = (char)0;
 }
 
 /**

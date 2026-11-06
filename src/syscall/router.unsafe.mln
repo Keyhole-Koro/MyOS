@@ -8,9 +8,10 @@ package os_call_router;
 
 import syscall from "@kernel/kernel/syscall.mln";
 import debug from "@kernel/debug/debug.mln";
-import { OsService, OsServiceError } from "@contracts/myos/services.contract.mln";
+import { OsService, OsServiceError, LogArgs } from "@contracts/myos/services.contract.mln";
 import { Result } from "@std/core/result.mln";
 import user_memory from "user_memory.mln";
+import { copy_in_text } from "user_memory.mln";
 import { UserAddress } from "@std/core/address.mln";
 import request_gateway from "@os/ipc/gateway.mln";
 import fs_syscall from "@os/fs/syscall.mln";
@@ -54,9 +55,11 @@ Result<i32, OsServiceError> handle(i32 pid, i32 service, UserAddress args) {
         return Ok(0);
     }
     if (service == OsService::LOG) {
-        user_memory.copy_in_string(args, g_log_line.as_ptr(), g_log_line.data.length);
-        g_log_line.sync_from_ptr();
-        debug.printf("[pid %d] %s\n", pid, (i32)(g_log_line.as_ptr()));
+        LogArgs request;
+        user_memory.copy_in(args, (char*)(&request), sizeof(request));
+        copy_in_text<128>(UserAddress((i32)request.text), request.length, &g_log_line);
+        debug.printf("[pid %d] ", pid);
+        debug.println(g_log_line.as_str());
         return Ok(0);
     }
     return Err(OsServiceError::UnknownService(service));

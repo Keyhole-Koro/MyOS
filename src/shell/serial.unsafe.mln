@@ -67,7 +67,7 @@ export void run() {
                 debug.println("Hello from MyOS Shell!");
             } else {
                 debug.print("Unknown command: ");
-                debug.println(buf.as_ptr());
+                debug.println(command);
             }
         }
     }

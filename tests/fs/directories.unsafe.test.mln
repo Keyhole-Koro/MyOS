@@ -5,6 +5,7 @@ import { Result } from "@std/core/result.mln";
 import { Option } from "@std/core/option.mln";
 import { assert_eq } from "@std/testing/assert.mln";
 import str from "@std/text/str.mln";
+import { Text } from "@std/text/text.mln";
 
 // Directories: an entry with FLAG_DIR and a parent; paths walk them.
 
@@ -13,7 +14,7 @@ i32 classify(FsError e) {
 }
 
 // open(path): 1 = opened (and closed again), 2 = NotFound, 3 = WrongType, 4 = other error.
-i32 open_status(char *path) {
+i32 open_status(str path) {
     Result<i32, FsError> r = fs.open(path);
     i32 code = 0;
     i32 fd = 0;
@@ -26,7 +27,7 @@ i32 open_status(char *path) {
 }
 
 // create(path): 1 = created (and closed), 2 = NotFound (missing directory), 4 = other.
-i32 create_status(char *path) {
+i32 create_status(str path) {
     Result<i32, FsError> r = fs.create(path);
     i32 code = 0;
     i32 fd = 0;
@@ -38,12 +39,12 @@ i32 create_status(char *path) {
     return code;
 }
 
-i32 count_in(char *dir) {
-    char name[16];
+i32 count_in(str dir) {
+    Text<16> name = Text<16> {};
     i32 n = 0;
     i32 start = 0;
     while (1) {
-        Result<Option<i32>, FsError> res = fs.dir_next_at(dir, start, &name[0], 16);
+        Result<Option<i32>, FsError> res = fs.dir_next_at(dir, start, &name);
         i32 idx = case res of {
             Ok(v) -> case v of { Some(i) -> i; None -> ({ break; }); };
             Err(_) -> ({ return -1; });

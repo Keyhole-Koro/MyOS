@@ -7,6 +7,7 @@
 package shell_protocol;
 
 import app from "app.mln";
+import str from "@std/text/str.mln";
 import { AppError, KeyClaimError, AppOp } from "@contracts/myapp/lifecycle.contract.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
@@ -25,13 +26,13 @@ export RequestStatus handle(Request *m) {
     if (m->op == AppOp::OPEN) {
         if (m->result_out == 0) { return RequestStatus::MISSING_RESULT; }
         Result<Option<i32>, AppError> *out = (Result<Option<i32>, AppError>*)m->result_out;
-        *out = app.open(m->s0);
+        *out = app.open(str.from_c(m->s0));
         return RequestStatus::OK;
     }
     if (m->op == AppOp::CLAIM_KEY) {
         if (m->result_out == 0) { return RequestStatus::MISSING_RESULT; }
         Result<i32, KeyClaimError> *out = (Result<i32, KeyClaimError>*)m->result_out;
-        *out = app.claim_key(m->owner, m->s0);
+        *out = app.claim_key(m->owner, str.from_c(m->s0));
         return RequestStatus::OK;
     }
     if (m->op == AppOp::MAIN_WINDOW) { app.window_ready(m->owner, m->a0); return RequestStatus::OK; }

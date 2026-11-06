@@ -22,6 +22,7 @@ import {
 } from "@contracts/myos/fs-args.contract.mln";
 import fs from "fs.mln";
 import user_memory from "@os/syscall/user_memory.mln";
+import { copy_in_text } from "@os/syscall/user_memory.mln";
 import { UserAddress } from "@std/core/address.mln";
 import { Text } from "@std/text/text.mln";
 import debug from "@kernel/debug/debug.mln";
@@ -30,7 +31,7 @@ import error_trace from "@std/debug/error_trace.mln";
 Text<64> g_path;
 char g_io[512];
 Text<16> g_name;
-char g_trace_text[768];
+Text<768> g_trace_text;
 
 /**
  * Logs where a filesystem error came from before it crosses to user space.
@@ -40,8 +41,8 @@ char g_trace_text[768];
  */
 void log_error_trace(bool failed) {
     if (!failed || error_trace.depth() == 0) { return; }
-    error_trace.format(&g_trace_text[0], 768);
-    debug.print(&g_trace_text[0]);
+    error_trace.format(&g_trace_text);
+    debug.print(g_trace_text.as_str());
     error_trace.clear();
 }
 
@@ -148,15 +149,13 @@ void write_user(FsWriteArgs *args) {
  * Completes the enumeration and writes its typed result to user memory.
  */
 void dir_next_user(FsDirNextArgs *args) {
-    user_memory.copy_in_string(UserAddress((i32)args->path), g_path.as_ptr(), g_path.data.length);
-    g_path.sync_from_ptr();
+    copy_in_path(args->path, args->path_length);
     i32 start = args->start;
     UserAddress user_out = UserAddress((i32)args->name_out);
     i32 cap = args->name_cap;
     if (cap < 0) { cap = 0; }
     if (cap > 16) { cap = 16; }
-    Result<Option<i32>, FsError> res = fs.dir_next_at(g_path.as_ptr(), start, g_name.as_ptr(), g_name.data.length);
-    g_name.sync_from_ptr();
+    Result<Option<i32>, FsError> res = fs.dir_next_at(g_path.as_str(), start, &g_name);
     case res of {
         Ok(v) -> ({
             case v of {
@@ -178,11 +177,11 @@ void dir_next_user(FsDirNextArgs *args) {
 
 /**
  * Copies a path argument into the shared kernel path buffer.
- * @param user_path User address of a NUL-terminated path.
+ * @param user_path User address of the path's first byte.
+ * @param length Byte length of the path.
  */
-void copy_in_path(char *user_path) {
-    user_memory.copy_in_string(UserAddress((i32)user_path), g_path.as_ptr(), g_path.data.length);
-    g_path.sync_from_ptr();
+void copy_in_path(char *user_path, i32 length) {
+    copy_in_text<64>(UserAddress((i32)user_path), length, &g_path);
 }
 
 /**
@@ -224,32 +223,32 @@ export Result<_, OsServiceError> handle(i32 service, UserAddress args) {
     }
     FsOpenArgs open;
     if (accept<FsOpenArgs>(service, args, &open)) {
-        copy_in_path(open.path);
-        Result<i32, FsError> r = fs.open(g_path.as_ptr());
+        copy_in_path(open.path, open.path_length);
+        Result<i32, FsError> r = fs.open(g_path.as_str());
         log_error_trace(r.is_err());
         reply<Result<i32, FsError>>(open.result_out, &r);
         return Ok(_);
     }
     FsCreateArgs create;
     if (accept<FsCreateArgs>(service, args, &create)) {
-        copy_in_path(create.path);
-        Result<i32, FsError> r = fs.create(g_path.as_ptr());
+        copy_in_path(create.path, create.path_length);
+        Result<i32, FsError> r = fs.create(g_path.as_str());
         log_error_trace(r.is_err());
         reply<Result<i32, FsError>>(create.result_out, &r);
         return Ok(_);
     }
     FsRemoveArgs remove;
     if (accept<FsRemoveArgs>(service, args, &remove)) {
-        copy_in_path(remove.path);
-        Result<_, FsError> r = fs.remove(g_path.as_ptr());
+        copy_in_path(remove.path, remove.path_length);
+        Result<_, FsError> r = fs.remove(g_path.as_str());
         log_error_trace(r.is_err());
         reply<Result<_, FsError>>(remove.result_out, &r);
         return Ok(_);
     }
     FsMkdirArgs mkdir;
     if (accept<FsMkdirArgs>(service, args, &mkdir)) {
-        copy_in_path(mkdir.path);
-        Result<i32, FsError> r = fs.mkdir(g_path.as_ptr());
+        copy_in_path(mkdir.path, mkdir.path_length);
+        Result<i32, FsError> r = fs.mkdir(g_path.as_str());
         log_error_trace(r.is_err());
         reply<Result<i32, FsError>>(mkdir.result_out, &r);
         return Ok(_);

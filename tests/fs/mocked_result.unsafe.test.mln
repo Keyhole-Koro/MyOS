@@ -7,7 +7,7 @@ import { Result } from "@std/core/result.mln";
 // This has the same aggregate return type as fs.create. It proves that the
 // TestKit callback path handles MyOS's real Result<i32, FsError> ABI rather
 // than only a test-local struct.
-Result<i32, FsError> fake_create_disabled(char* path) {
+Result<i32, FsError> fake_create_disabled(str path) {
     return Err(FsError::Disabled);
 }
 

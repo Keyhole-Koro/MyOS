@@ -49,8 +49,7 @@ import { KeyModifier, KeyCode } from "@contracts/input/keyboard.contract.mln";
 // A process owns every DOM node it creates (requests carry its pid as the
 // owner), so closing its window sweeps dialogs and timers with it.
 // Registry and instances are fixed-size tables, like the rest of the
-// kernel's bookkeeping; strings are kept in i32 arrays (see the note on
-// pointer arrays in docs/APP_FRAMEWORK.md).
+// kernel's bookkeeping.
 
 // --- registry --------------------------------------------------------------------------------
 
@@ -58,28 +57,28 @@ i32 APPS_MAX = 16;
 
 /**
  * Metadata read from an installed executable's @app annotation.
- * @property path NUL-terminated executable path copied into the shell's stable string storage.
+ * @property path Executable path.
  * @property type Application receiver type recorded in the @app annotation.
  * @property single True when launch requests should reuse an existing instance.
  * @property name Launcher label; falls back to type when the annotation omits a name.
  * @property opens True when this application declares an @open handler.
  */
 struct AppRecord {
-    i32 path;                   // char*: the executable on disk
-    i32 type;                   // char*: "Counter", the @app row's receiver type
+    Text<32> path;
+    Text<32> type;              // "Counter", the @app row's receiver type
     bool single;
-    i32 name;                   // char*: launcher label
-    bool opens;                 // the type has an @open method
+    Text<32> name;
+    bool opens;
 };
 AppRecord registry[16];
 i32 registry_count = 0;
 
 // Outbound ports installed by boundary endpoints. The shell owns lifecycle
 // policy but does not depend on the transport that delivers it.
-void no_event_sink(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) { }
+void no_event_sink(i32 owner, i32 id, i32 kind, i32 arg, i32 token, str text) { }
 void no_process_gone_sink(i32 pid) { }
 
-fn(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) -> void event_sink = no_event_sink;
+fn(i32 owner, i32 id, i32 kind, i32 arg, i32 token, str text) -> void event_sink = no_event_sink;
 fn(i32 pid) -> void process_gone_sink = no_process_gone_sink;
 
 /**
@@ -87,7 +86,7 @@ fn(i32 pid) -> void process_gone_sink = no_process_gone_sink;
  * @param sink Callback with signature (owner, node_id, kind, arg, token, text), or 0 to disable.
  */
 export void set_event_sink(
-    fn(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) -> void sink
+    fn(i32 owner, i32 id, i32 kind, i32 arg, i32 token, str text) -> void sink
 ) { event_sink = sink; }
 
 /**
@@ -103,59 +102,76 @@ export void set_process_gone_sink(fn(i32 pid) -> void sink) { process_gone_sink 
  * @param kind ShellEventKind event code.
  * @param arg Event-specific integer argument.
  * @param token Correlation token or event-specific secondary value.
- * @param text Optional NUL-terminated text payload, such as an opened path.
+ * @param text Text payload, such as an opened path, or "".
  */
-void push_app_event(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) {
+void push_app_event(i32 owner, i32 id, i32 kind, i32 arg, i32 token, str text) {
     event_sink(owner, id, kind, arg, token, text);
 }
 
-// Names, types and paths read out of images on disk are copied here: the
-// image buffer is freed once its header has been read.
-char names[512];
-i32 names_used = 0;
-
-char *keep(char *s) {
-    i32 n = str.len(s) + 1;
-    if (names_used + n > 512) { return ""; }
-    char *out = &names[names_used];
-    str.copy(out, s);
-    names_used = names_used + n;
-    return out;
-}
-
-void register_app(char *path, char *type, bool single, char *name, bool opens) {
+// Names, types and paths read out of images on disk are copied into the
+// record: the image buffer is freed once its header has been read.
+void register_app(str path, str type, bool single, str name, bool opens) {
     if (registry_count >= APPS_MAX) {
         debug.println("app: registry full");
         return;
     }
-    i32 i = registry_count;
+    AppRecord record = AppRecord { single: single, opens: opens };
+    record.path.append(path);
+    record.type.append(type);
+    if (name.is_empty()) { record.name.append(type); }
+    else { record.name.append(name); }
+    registry[registry_count] = record;
     registry_count++;
-    registry[i].path = (i32)path;
-    registry[i].type = (i32)type;
-    registry[i].single = single;
-    registry[i].name = (i32)name;
-    if (name[0] == 0) { registry[i].name = (i32)type; }
-    registry[i].opens = opens;
 }
 
-// Every executable in /apps that declares @app is an installed app: read
-// each file's header (MBIN, section directory) for its annotation rows,
-// without loading it.
+str label_of(i32 index) {
+    AppRecord *record = &registry[index];
+    return record->name.as_str();
+}
+
+// Register the app an image declares, if it does: read its header (MBIN,
+// section directory) for its annotation rows, without loading it.
+void register_image(str path, str image) {
+    if (!mbin.is_image(image)) { return; }
+    Annotations rows = annotations.in_image(image);
+    rows.on("app", "");
+    if (!rows.next()) { return; }
+    str type = case rows.type() of {
+        Ok(value) -> value;
+        Err(_) -> ({ return; });
+    };
+    bool single = case rows.flag(0) of {
+        Ok(value) -> value;
+        Err(_) -> ({ return; });
+    };
+    str label = case rows.text(1) of {
+        Ok(value) -> value;
+        Err(_) -> ({ return; });
+    };
+    Annotations opens = annotations.in_image(image);
+    opens.on("open", type);
+    register_app(path, type, single, label, opens.next());
+    debug.print("app: installed ");
+    debug.print(type);
+    debug.print(" (");
+    debug.print(path);
+    debug.println(")");
+}
+
+// Every executable in /apps that declares @app is an installed app.
 Text<32> scan_path;
 
 void scan_disk() {
     Text<16> name = Text<16> {};
     i32 start = 0;
     while (1) {
-        name.clear();
-        Result<Option<i32>, FsError> res = fs.dir_next_at("apps", start, name.as_ptr(), name.data.length);
+        Result<Option<i32>, FsError> res = fs.dir_next_at("apps", start, &name);
         Option<i32> entry = None;
         if (!result_take_ok<Option<i32>, FsError>(&res, &entry)) { return; }
         i32 idx = case entry of {
             Some(n) -> n;
             None -> ({ break; });
         };
-        name.sync_from_ptr();
         start = idx + 1;
         Result<i32, FsError> size_result = fs.entry_size(idx);
         i32 size = 0;
@@ -164,51 +180,22 @@ void scan_disk() {
         scan_path.clear();
         scan_path.append("apps/");
         scan_path.append(name.as_str());
-        Result<i32, FsError> opened = fs.open(scan_path.as_ptr());
+        Result<i32, FsError> opened = fs.open(scan_path.as_str());
         i32 fd = 0;
         if (result_take_ok<i32, FsError>(&opened, &fd)) {
-            i32 image_address = case heap.alloc(size) of {
+            i32 image = case heap.alloc(size) of {
                 Ok(pointer) -> pointer;
                 Err(_) -> 0;
             };
-            char *image = (char*)image_address;
             if (image != 0) {
-                Result<i32, FsError> read_result = fs.read(fd, (i32)image, size);
+                Result<i32, FsError> read_result = fs.read(fd, image, size);
                 i32 got = 0;
                 bool read_ok = result_take_ok<i32, FsError>(&read_result, &got);
                 if (read_ok && got == size) {
-                    if (mbin.is_image(image, size)) {
-                        Annotations rows = annotations.in_image(image);
-                        rows.on("app", (char*)0);
-                        if (rows.next()) {
-                            Result<char*, AnnotationError> type_result = rows.type();
-                            case type_result of {
-                                Ok(type_text) -> ({
-                                    char *type = keep(type_text);
-                                    Result<bool, AnnotationError> single_result = rows.flag(0);
-                                    Result<char*, AnnotationError> name_result = rows.text(1);
-                                    case single_result of {
-                                        Ok(single) -> ({
-                                            case name_result of {
-                                                Ok(label) -> ({
-                                                    Annotations opens = annotations.in_image(image);
-                                                    opens.on("open", type);
-                                                    bool has_open = opens.next();
-                                                    register_app(keep(scan_path.as_ptr()), type, single, keep(label), has_open);
-                                                    debug.printf("app: installed %s (%s)\n", (i32)type, (i32)(scan_path.as_ptr()));
-                                                });
-                                                Err(_) -> _;
-                                            };
-                                        });
-                                        Err(_) -> _;
-                                    };
-                                });
-                                Err(_) -> _;
-                            };
-                        }
-                    }
+                    str bytes = str { data: (char*)image, length: size };
+                    register_image(scan_path.as_str(), bytes);
                 }
-                heap.free((i32)image);
+                heap.free(image);
             }
             fs.close(fd);
         }
@@ -220,17 +207,6 @@ void scan_disk() {
  * @return Number of installed application records.
  */
 export i32 count() { return registry_count; }
-
-/**
- * Returns the launcher label for an installed application.
- * @param index Zero-based application registry index.
- * @return NUL-terminated label, or an empty string when index is invalid.
- */
-export char* app_name(i32 index) {
-    if (index < 0) { return ""; }
-    if (index >= registry_count) { return ""; }
-    return (char*)registry[index].name;
-}
 
 // --- instances -------------------------------------------------------------------------------
 
@@ -334,11 +310,13 @@ Result<i32, AppError> mount(i32 a) {
             return Err(AppError::NoFreeSlot);
         });
     };
-    Result<i32, SpawnError> spawned = console.spawn_file((char*)registry[a].path);
+    AppRecord *record = &registry[a];
+    Result<i32, SpawnError> spawned = console.spawn_file(record->path.as_str());
     i32 pid = case spawned of {
         Ok(value) -> value;
         Err(_) -> ({
-            debug.printf("app: cannot start %s\n", registry[a].path);
+            debug.print("app: cannot start ");
+            debug.println(record->path.as_str());
             return Err(AppError::SpawnFailed);
         });
     };
@@ -389,7 +367,8 @@ export void window_ready(i32 owner, i32 win) {
     if (instance.open) {
         instance.open = false;
         Text<64> *open_path = open_path_for(slot);
-        push_app_event(owner, win, ShellEventKind::OPEN, 0, 0, open_path->as_ptr());
+        str opened = open_path->as_str();
+        push_app_event(owner, win, ShellEventKind::OPEN, 0, 0, opened);
     }
     instances[slot] = Some(instance);
 }
@@ -412,7 +391,7 @@ void window_closed(i32 owner, i32 win, i32 arg) {
             return;
         });
     };
-    push_app_event(owner, win, ShellEventKind::CLOSE, 0, 0, (char*)0);
+    push_app_event(owner, win, ShellEventKind::CLOSE, 0, 0, "");
 }
 
 // The instance is done (EXIT): remove everything it owns -- its window,
@@ -523,14 +502,14 @@ export Result<Option<i32>, AppError> launch(i32 index) {
 
 /**
  * Launches an installed application by its launcher label.
- * @param name NUL-terminated application label shown in the launcher.
+ * @param name Application label shown in the launcher.
  * @return Ok(Some(window)) when available, Ok(None) while starting, or Err when
  *         the name is not installed or launching fails.
  */
-export Result<Option<i32>, AppError> launch_named(char *name) {
+export Result<Option<i32>, AppError> launch_named(str name) {
     i32 i = 0;
     while (i < registry_count) {
-    if (str.eq((char*)registry[i].name, name)) { return launch(i); }
+        if (label_of(i) == name) { return launch(i); }
         i++;
     }
     return Err(AppError::NotFound);
@@ -544,13 +523,12 @@ export Result<Option<i32>, AppError> launch_named(char *name) {
 /**
  * Routes a file path to the first installed app that declares an @open handler.
  * Queues the path until the app's main window exists when the app is starting.
- * @param path NUL-terminated path to open.
+ * @param path Path to open.
  * @return Ok(Some(window)) when delivered immediately, Ok(None) while the app
  *         starts, or Err when the path, handler, or launch request is invalid.
  */
-export Result<Option<i32>, AppError> open(char *path) {
-    str path_text = str.from_c(path);
-    if (path_text.length > 63) { return Err(AppError::PathTooLong(path_text.length)); }
+export Result<Option<i32>, AppError> open(str path) {
+    if (path.length > 63) { return Err(AppError::PathTooLong(path.length)); }
     i32 a = 0;
     while (a < registry_count) {
         if (registry[a].opens) {
@@ -567,7 +545,7 @@ export Result<Option<i32>, AppError> open(char *path) {
             }
             Text<64> *open_path = open_path_for(slot);
             open_path->clear();
-            open_path->append(path_text);
+            open_path->append(path);
             AppInstance instance = case instances[slot] of {
                 Some(value) -> value;
                 None -> ({ return Err(AppError::InstanceUnavailable); });
@@ -576,7 +554,8 @@ export Result<Option<i32>, AppError> open(char *path) {
             case instance_ptr->win of {
                 Some(win) -> ({
                     dom_widgets.focus_window(win);
-                    push_app_event(instance_ptr->pid, win, ShellEventKind::OPEN, 0, 0, open_path->as_ptr());
+                    str opened = open_path->as_str();
+                    push_app_event(instance_ptr->pid, win, ShellEventKind::OPEN, 0, 0, opened);
                     return Ok(Some(win));
                 });
                 None -> ({
@@ -595,17 +574,17 @@ export Result<Option<i32>, AppError> open(char *path) {
 
 /**
  * Builds the launcher's newline-separated list of application labels.
- * @return Pointer to a NUL-terminated string in shell-owned static storage.
+ * @return View of shell-owned static storage.
  */
-export char* menu_items() {
+export str menu_items() {
     menu_buf.clear();
     i32 i = 0;
     while (i < registry_count) {
         if (i > 0) { menu_buf.append("\n"); }
-        menu_buf.append(str.from_c((char*)registry[i].name));
+        menu_buf.append(label_of(i));
         i++;
     }
-    return menu_buf.as_ptr();
+    return menu_buf.as_str();
 }
 
 /**
@@ -622,7 +601,7 @@ export void launch_menu() {
     i32 rows = registry_count;
     if (rows < 1) { rows = 1; }
     i32 y = graphics.display_height() - dom_widgets.taskbar_height() - (rows * 34 + 20) * s;
-    str items = str.from_c(menu_items());
+    str items = menu_items();
     case dom_widgets.open_menu(8 * s, y, items, on_menu, 0) of {
         Ok(_) -> _;
         Err(_) -> _;
@@ -631,46 +610,47 @@ export void launch_menu() {
 
 // --- keyboard shortcuts ----------------------------------------------------------------------
 
-// True if `word` (n chars, case-insensitive) is `name`.
-bool word_is(char *word, i32 n, char *name) {
+// True if `word` is `name`, whatever the case of `word`.
+bool word_is(str word, str name) {
+    if (word.length != name.length) { return false; }
     i32 i = 0;
-    while (i < n) {
-        i32 c = ascii.to_lower(word[i]);
-        i32 d = ascii.byte(name[i]);
-        if (d == 0) { return false; }
-        if (c != d) { return false; }
+    while (i < word.length) {
+        if (ascii.to_lower(word.byte(i)) != name.byte(i)) { return false; }
         i++;
     }
-    if (name[n] != 0) { return false; }
     return true;
 }
 
 // The key code a spec's final word names: a single character (as lower
 // case), or a named key in the kernel's keyboard.mln encoding. None if unknown.
-Option<i32> named_key(char *word, i32 n) {
-    if (n == 1) {
-        i32 c = ascii.to_lower(word[0]);
+Option<i32> named_key(str word) {
+    if (word.length == 1) {
+        i32 c = ascii.to_lower(word.byte(0));
         return Some(c);
     }
-    if (word_is(word, n, "enter")) { return Some(KeyCode::ENTER); }
-    if (word_is(word, n, "return")) { return Some(KeyCode::ENTER); }
-    if (word_is(word, n, "tab")) { return Some(KeyCode::TAB); }
-    if (word_is(word, n, "escape")) { return Some(KeyCode::ESCAPE); }
-    if (word_is(word, n, "esc")) { return Some(KeyCode::ESCAPE); }
-    if (word_is(word, n, "space")) { return Some(KeyCode::SPACE); }
-    if (word_is(word, n, "backspace")) { return Some(KeyCode::BACKSPACE); }
-    if (word_is(word, n, "delete")) { return Some(KeyCode::DELETE); }
-    if (word_is(word, n, "left")) { return Some(KeyCode::LEFT); }
-    if (word_is(word, n, "right")) { return Some(KeyCode::RIGHT); }
-    if (word_is(word, n, "up")) { return Some(KeyCode::UP); }
-    if (word_is(word, n, "down")) { return Some(KeyCode::DOWN); }
-    if (word_is(word, n, "home")) { return Some(KeyCode::HOME); }
-    if (word_is(word, n, "end")) { return Some(KeyCode::END); }
-    if (word_is(word, n, "pageup")) { return Some(KeyCode::PAGE_UP); }
-    if (word_is(word, n, "pagedown")) { return Some(KeyCode::PAGE_DOWN); }
-    if (n >= 2) {
-        if (ascii.to_lower(word[0]) == 'f') {
-            Result<i32, ParseIntError> parsed = str.atoi(&word[1]);
+    if (word_is(word, "enter")) { return Some(KeyCode::ENTER); }
+    if (word_is(word, "return")) { return Some(KeyCode::ENTER); }
+    if (word_is(word, "tab")) { return Some(KeyCode::TAB); }
+    if (word_is(word, "escape")) { return Some(KeyCode::ESCAPE); }
+    if (word_is(word, "esc")) { return Some(KeyCode::ESCAPE); }
+    if (word_is(word, "space")) { return Some(KeyCode::SPACE); }
+    if (word_is(word, "backspace")) { return Some(KeyCode::BACKSPACE); }
+    if (word_is(word, "delete")) { return Some(KeyCode::DELETE); }
+    if (word_is(word, "left")) { return Some(KeyCode::LEFT); }
+    if (word_is(word, "right")) { return Some(KeyCode::RIGHT); }
+    if (word_is(word, "up")) { return Some(KeyCode::UP); }
+    if (word_is(word, "down")) { return Some(KeyCode::DOWN); }
+    if (word_is(word, "home")) { return Some(KeyCode::HOME); }
+    if (word_is(word, "end")) { return Some(KeyCode::END); }
+    if (word_is(word, "pageup")) { return Some(KeyCode::PAGE_UP); }
+    if (word_is(word, "pagedown")) { return Some(KeyCode::PAGE_DOWN); }
+    if (word.length >= 2) {
+        if (ascii.to_lower(word.byte(0)) == 'f') {
+            str digits = case word.slice(1, word.length) of {
+                Some(value) -> value;
+                None -> ({ return None; });
+            };
+            Result<i32, ParseIntError> parsed = str.atoi(digits);
             i32 f = case parsed of {
                 Ok(value) -> value;
                 Err(_) -> ({ return None; });
@@ -683,38 +663,42 @@ Option<i32> named_key(char *word, i32 n) {
 
 // Does "Ctrl+Shift+S" describe this key DOWN? Words before the last are
 // modifiers (Ctrl, Shift, Alt); the last is the key.
-bool key_spec_matches(char *spec, i32 code, i32 mods) {
+bool key_spec_matches(str spec, i32 code, i32 mods) {
     i32 want_mods = 0;
     i32 i = 0;
     while (1) {
         i32 start = i;
-        while (spec[i] != 0) {
-            if (spec[i] == '+') { break; }
-            i++;
-        }
+        while (i < spec.length && spec.byte(i) != '+') { i++; }
         i32 n = i - start;
-        if (spec[i] == '+') {
+        if (i < spec.length) {
             if (n == 0) {
                 // "Ctrl++": the '+' key itself.
-                if (spec[i + 1] != 0) { return false; }
+                if (i + 1 < spec.length) { return false; }
                 n = 1;
             } else {
-                if (word_is(&spec[start], n, "ctrl")) { want_mods = want_mods | KeyModifier::CTRL; }
-                else if (word_is(&spec[start], n, "shift")) { want_mods = want_mods | KeyModifier::SHIFT; }
-                else if (word_is(&spec[start], n, "alt")) { want_mods = want_mods | KeyModifier::ALT; }
+                str modifier = case spec.slice(start, i) of {
+                    Some(value) -> value;
+                    None -> ({ return false; });
+                };
+                if (word_is(modifier, "ctrl")) { want_mods = want_mods | KeyModifier::CTRL; }
+                else if (word_is(modifier, "shift")) { want_mods = want_mods | KeyModifier::SHIFT; }
+                else if (word_is(modifier, "alt")) { want_mods = want_mods | KeyModifier::ALT; }
                 else { return false; }
                 i++;
                 continue;
             }
         }
         if (want_mods != mods) { return false; }
-        case named_key(&spec[start], n) of {
+        str key = case spec.slice(start, start + n) of {
+            Some(value) -> value;
+            None -> ({ return false; });
+        };
+        case named_key(key) of {
             Some(want) -> ({ if (want != code) { return false; } });
             None -> ({ return false; });
         };
         return true;
     }
-    return false;
 }
 
 // --- key claims -------------------------------------------------------------------------------
@@ -740,13 +724,12 @@ i32 claim_count = 0;
 /**
  * Registers a process keyboard shortcut and returns its event correlation token.
  * @param owner Process ID that owns the shortcut.
- * @param spec NUL-terminated combination such as "Ctrl+S" or "Alt+F4".
+ * @param spec Combination such as "Ctrl+S" or "Alt+F4".
  * @return Ok(one-based shortcut token), or Err when the specification is too long
  *         or the fixed claim table is full.
  */
-export Result<i32, KeyClaimError> claim_key(i32 owner, char *spec) {
-    str key_spec = str.from_c(spec);
-    if (key_spec.length > 15) { return Err(KeyClaimError::KeySpecTooLong(key_spec.length)); }
+export Result<i32, KeyClaimError> claim_key(i32 owner, str spec) {
+    if (spec.length > 15) { return Err(KeyClaimError::KeySpecTooLong(spec.length)); }
     i32 i = 0;
     while (i < claim_count) {
         if (claims[i].owner == 0) { break; }
@@ -759,7 +742,7 @@ export Result<i32, KeyClaimError> claim_key(i32 owner, char *spec) {
     KeyClaim *claim = &claims[i];
     claim->owner = owner;
     claim->spec.clear();
-    claim->spec.append(key_spec);
+    claim->spec.append(spec);
     return Ok(i + 1);
 }
 
@@ -790,7 +773,7 @@ export bool dispatch_key(i32 owner, i32 code, i32 mods) {
     while (i < claim_count) {
         KeyClaim *claim = &claims[i];
         if (claim->owner == owner) {
-            if (key_spec_matches(claim->spec.as_ptr(), code, mods)) {
+            if (key_spec_matches(claim->spec.as_str(), code, mods)) {
                 AppInstance instance = case instances[slot] of {
                     Some(value) -> value;
                     None -> ({ return false; });
@@ -799,7 +782,7 @@ export bool dispatch_key(i32 owner, i32 code, i32 mods) {
                     Some(value) -> value;
                     None -> ({ return false; });
                 };
-                push_app_event(owner, window, ShellEventKind::KEY, code | (mods << 16), i + 1, (char*)0);
+                push_app_event(owner, window, ShellEventKind::KEY, code | (mods << 16), i + 1, "");
                 return true;
             }
         }
@@ -818,7 +801,8 @@ export bool dispatch_key(i32 owner, i32 code, i32 mods) {
 export void install() {
     scan_disk();
     dom_render.set_launcher(launch_menu);
-    compositor.set_desktop_menu(menu_items(), on_menu);
+    menu_items();
+    compositor.set_desktop_menu(menu_buf.as_ptr(), on_menu);
     dom.set_key_filter(dispatch_key);
     case dom_widgets.create_timer(50, reap_exited) of {
         Ok(_) -> _;
