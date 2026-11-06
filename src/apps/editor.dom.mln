@@ -97,29 +97,24 @@ void (borrow Editor e) open(Text<64> path) {
  * @param id DOM node ID supplied by the key event.
  */
 void (borrow Editor e) save(NodeId id) {
-    Result<i32, UiError> name_copy = text_copy<32>(e.name, &e.save_name);
-    case name_copy of {
+    case text_copy<32>(e.name, &e.save_name) of {
         Ok(_) -> _;
         Err(error) -> ({ ui.set_error(e.status, "save failed", error.describe()); return; });
     };
     str path = e.save_name.as_str();
     if (path.is_empty()) { ui.set_text(e.status, "enter a file name first"); return; }
-    Result<i32, UiError> text_result = text_copy<4096>(e.area, &e.save_text);
-    i32 len = case text_result of {
+    i32 len = case text_copy<4096>(e.area, &e.save_text) of {
         Ok(value) -> value;
         Err(error) -> ({ ui.set_error(e.status, "save failed", error.describe()); return; });
     };
-    // Bind the Result: a discarded aggregate return has no out-pointer.
-    Result<_, FsError> removed = fs.remove(path);
-    case removed of { Ok(_) -> _; Err(_) -> _; };
+    fs.remove(path);
     i32 fd = case fs.create(path) of {
         Ok(v) -> v;
         Err(error) -> ({ ui.set_error(e.status, "save failed", error.describe()); return; });
     };
     i32 written = 0;
     if (len > 0) {
-        Result<i32, FsError> write_result = fs.write(fd, e.save_text.as_str());
-        written = case write_result of {
+        written = case fs.write(fd, e.save_text.as_str()) of {
             Ok(v) -> v;
             Err(error) -> ({
                 fs.close(fd);

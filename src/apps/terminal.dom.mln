@@ -101,8 +101,7 @@ void (borrow Terminal t) cmd_ls(str dir) {
     i32 start = 0;
     while (1) {
         // None breaks enumeration; Err remains a distinct filesystem result.
-        Result<Option<DirEntry>, FsError> res = fs.next_entry(dir, start);
-        DirEntry entry = case res of {
+        DirEntry entry = case fs.next_entry(dir, start) of {
             Ok(v) -> case v of { Some(found) -> found; None -> ({ break; }); };
             Err(e) -> ({ t.say_error("ls", e.describe()); return; });
         };
@@ -110,16 +109,14 @@ void (borrow Terminal t) cmd_ls(str dir) {
         t.line_buf.clear();
         t.line_buf.append("  ");
         t.line_buf.append(entry.name.as_str());
-        Result<bool, FsError> directory = fs.is_dir(idx);
-        bool is_directory = case directory of {
+        bool is_directory = case fs.is_dir(idx) of {
             Ok(value) -> value;
             Err(e) -> ({ t.say_error("ls", e.describe()); return; });
         };
         if (is_directory) {
             t.line_buf.append("/\n");
         } else {
-            Result<i32, FsError> size_result = fs.entry_size(idx);
-            i32 size = case size_result of {
+            i32 size = case fs.entry_size(idx) of {
                 Ok(value) -> value;
                 Err(e) -> ({ t.say_error("ls", e.describe()); return; });
             };
@@ -169,8 +166,7 @@ void (borrow Terminal t) cmd_run(str path) {
         t.say_line("a process is still running here");
         return;
     }
-    Result<i32, SpawnError> started = terminal.spawn_bound(path, t.out);
-    i32 pid = case started of {
+    i32 pid = case terminal.spawn_bound(path, t.out) of {
         Ok(value) -> value;
         Err(e) -> ({ t.say_error("run", e.describe()); return; });
     };
@@ -232,8 +228,7 @@ void (borrow Terminal t) run_line(str line) {
  * @param id DOM node ID supplied by the key/button event.
  */
 void (borrow Terminal t) submit(NodeId id) {
-    Result<i32, UiError> copied = text_copy<96>(t.input, &t.line_buf);
-    case copied of {
+    case text_copy<96>(t.input, &t.line_buf) of {
         Ok(_) -> _;
         Err(_) -> ({ t.say_line("cannot read command input"); return; });
     };
@@ -248,17 +243,15 @@ void (borrow Terminal t) submit(NodeId id) {
 /** Checks the attached child process and reports/reaps it after exit. */
 void (borrow Terminal t) poll() {
     i32 pid = case t.pid of { Some(value) -> value; None -> ({ return; }); };
-    Result<bool, ProcessControlError> status = process.has_exited(pid);
-    bool exited = case status of {
+    bool exited = case process.has_exited(pid) of {
         Ok(value) -> value;
         Err(ProcessControlError::InvalidPid(_)) -> true;
         Err(ProcessControlError::NotExited(_)) -> false;
     };
     if (!exited) { return; }
-    Result<ProcessExitStatus, ProcessControlError> reaped = process.reap(pid);
     ProcessExitStatus exit_status;
     bool got_status = false;
-    case reaped of {
+    case process.reap(pid) of {
         Ok(value) -> ({ exit_status = value; got_status = true; });
         Err(_) -> _;
     };

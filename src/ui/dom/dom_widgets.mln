@@ -19,9 +19,7 @@ import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import { KeyEventType, KeyModifier, KeyCode } from "@contracts/input/keyboard.contract.mln";
 
 fn(i32 owner, NodeId id, i32 arg) -> void close_handler_or_zero(NodeId id) {
-    Result<Option<fn(i32 owner, NodeId id, i32 arg) -> void>, UiError> result =
-        dom.on_close_of(id);
-    return case result of {
+    return case dom.on_close_of(id) of {
         Ok(Some(handler)) -> handler;
         Ok(None) -> 0;
         Err(_) -> 0;
@@ -698,8 +696,7 @@ export Result<i32, UiError> list_count(NodeId id) {
 export Result<str, UiError> list_item(NodeId id, i32 index) {
     borrow NodeRow n = dom.require_row(id)?;
     if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
-    Result<i32, UiError> count_result = list_count(id);
-    i32 count = count_result?;
+    i32 count = list_count(id)?;
     if (index < 0 || index >= count) { return Err(UiError::InvalidIndex(index)); }
     i32 start = line_start(n, index);
     i32 llen = line_len_at(n, start);

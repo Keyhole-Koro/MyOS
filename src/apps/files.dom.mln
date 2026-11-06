@@ -97,24 +97,21 @@ void (borrow Files f) refresh() {
     }
     while (1) {
         // None ends enumeration; Err reports a disk failure.
-        Result<Option<DirEntry>, FsError> res = fs.next_entry(f.dir.as_str(), start);
-        DirEntry entry = case res of {
+        DirEntry entry = case fs.next_entry(f.dir.as_str(), start) of {
             Ok(v) -> case v of { Some(found) -> found; None -> ({ break; }); };
             Err(e) -> ({ ui.set_error(f.status, "cannot list", e.describe()); return; });
         };
         i32 idx = entry.index;
         if (count > 0) { f.items.append("\n"); }
         f.items.append(entry.name.as_str());
-        Result<bool, FsError> directory = fs.is_dir(idx);
-        bool is_directory = case directory of {
+        bool is_directory = case fs.is_dir(idx) of {
             Ok(value) -> value;
             Err(e) -> ({ ui.set_error(f.status, "cannot list", e.describe()); return; });
         };
         if (is_directory) {
             f.items.append("/");
         } else {
-            Result<i32, FsError> size_result = fs.entry_size(idx);
-            i32 size = case size_result of {
+            i32 size = case fs.entry_size(idx) of {
                 Ok(value) -> value;
                 Err(e) -> ({ ui.set_error(f.status, "cannot list", e.describe()); return; });
             };
@@ -150,8 +147,7 @@ Result<bool, UiError> (borrow Files f) selected_is_dir() {
     };
     Text<48> item = Text<48> {};
     item.clear();
-    Result<i32, UiError> copied = list_item<48>(f.list, row, &item);
-    copied?;
+    list_item<48>(f.list, row, &item)?;
     if (item.len() == 2 && item.data[0] == '.' && item.data[1] == '.') { return Ok(true); }
     if (!item.is_empty() && item.data[item.len() - 1] == '/') { return Ok(true); }
     return Ok(false);
@@ -182,18 +178,14 @@ void (borrow Files f) enter(str name) {
  * @return True when f.selected now holds a name, false if no row is selected.
  */
 bool (borrow Files f) load_selected() {
-    Result<Option<i32>, UiError> selected = ui.list_selected(f.list);
-    i32 row = case selected of {
-        Ok(v) -> case v of {
-            Some(n) -> n;
-            None -> ({ return false; });
-        };
+    i32 row = case ui.list_selected(f.list) of {
+        Ok(Some(n)) -> n;
+        Ok(None) -> ({ return false; });
         Err(_) -> ({ return false; });
     };
     Text<48> item = Text<48> {};
     item.clear();
-    Result<i32, UiError> copied = list_item<48>(f.list, row, &item);
-    case copied of {
+    case list_item<48>(f.list, row, &item) of {
         Ok(_) -> _;
         Err(_) -> ({ return false; });
     };
@@ -226,8 +218,7 @@ void (borrow Files f) select(NodeId id) {
 void (borrow Files f) open(NodeId id) {
     if (!f.load_selected()) { ui.set_text(f.status, "select a file first"); return; }
     Text<16> name = f.selected;
-    Result<bool, UiError> is_dir = f.selected_is_dir();
-    bool directory = case is_dir of {
+    bool directory = case f.selected_is_dir() of {
         Ok(value) -> value;
         Err(_) -> ({ ui.set_text(f.status, "could not read selected item"); return; });
     };
@@ -261,8 +252,7 @@ void (borrow Files f) confirm_delete(NodeId id) {
     f.close_dialog();
     if (!f.load_selected()) { return; }
     Text<16> name = f.selected;
-    Result<_, FsError> removed = fs.remove(f.path_of(name.as_str()));
-    case removed of {
+    case fs.remove(f.path_of(name.as_str())) of {
         Ok(_) -> ({ f.refresh(); ui.set_text(f.status, "deleted"); });
         Err(e) -> ({ ui.set_error(f.status, "delete failed", e.describe()); });
     };

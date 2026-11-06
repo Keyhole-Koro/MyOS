@@ -57,8 +57,7 @@ NodeId (borrow Notes n) view() {
  * @param id DOM node ID of the input that changed.
  */
 void (borrow Notes n) changed(NodeId id) {
-    Result<i32, UiError> copied = text_copy<128>(id, &n.typed);
-    case copied of {
+    case text_copy<128>(id, &n.typed) of {
         Ok(_) -> _;
         Err(_) -> ({ return; });
     };
