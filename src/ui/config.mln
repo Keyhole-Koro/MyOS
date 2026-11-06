@@ -26,11 +26,3 @@ export const i32 CLIP_DEPTH         = 16; // Maximum clipping (scissor) stack de
 // --- DOM Tree & Subsystem Limits ---
 /** Maximum number of concurrent DOM timers. */
 export const i32 TIMER_MAX          = 16;   // Maximum concurrent registered DOM timers
-/** Storage size in bytes of one fixed-size DOM node record. */
-export const i32 NODE_SIZE          = 96;   // Fixed byte size per DOM node record
-/** Maximum number of DOM node records in the node table. */
-export const i32 NODE_TABLE_CAP     = 256;  // Maximum DOM nodes in table (g_node_table)
-
-// --- Application Editor Capacity ---
-/** Maximum text-buffer capacity used by editor and text-input controls. */
-export const i32 EDITOR_CAP         = 4096; // Text editor / TextInput buffer capacity

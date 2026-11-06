@@ -4,7 +4,7 @@ import elements from "@app/elements.mln";
 import ui from "@app/ui.mln";
 import { app } from "@app/annotations.mln";
 import { Result } from "@std/core/result.mln";
-import { UiError } from "@contracts/ui/widget.contract.mln";
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 
 // Click counter demo app, and the smallest example of the app framework.
 //
@@ -32,14 +32,14 @@ import { UiError } from "@contracts/ui/widget.contract.mln";
 struct Counter {
     i32 clicks;
     i32 step;
-    i32 label;
+    NodeId label;
 };
 
 @app
 /** Builds the counter window and initializes its per-instance increment step.
  * @return DOM node ID of the newly created window.
  */
-i32 (borrow Counter c) view() {
+NodeId (borrow Counter c) view() {
     c.step = 1;
     return <Window title="Counter" x={96} y={72} w={400} h={272}>
         <Panel x={20} y={20} w={360} h={140} radius={10}>
@@ -65,7 +65,7 @@ void (borrow Counter c) refresh() {
  * Adds the configured step and refreshes the count label.
  * @param id DOM node ID supplied by the click event.
  */
-void (borrow Counter c) click(i32 id) {
+void (borrow Counter c) click(NodeId id) {
     c.clicks = c.clicks + c.step;
     c.refresh();
 }
@@ -74,7 +74,7 @@ void (borrow Counter c) click(i32 id) {
  * Resets the count to zero and refreshes the display.
  * @param id DOM node ID supplied by the reset-button event.
  */
-void (borrow Counter c) reset(i32 id) {
+void (borrow Counter c) reset(NodeId id) {
     c.clicks = 0;
     c.refresh();
 }
@@ -85,7 +85,7 @@ void (borrow Counter c) reset(i32 id) {
  * Selects an increment step of one or two from the checkbox state.
  * @param id Checkbox DOM node ID whose checked state has just changed.
  */
-void (borrow Counter c) step_changed(i32 id) {
+void (borrow Counter c) step_changed(NodeId id) {
     c.step = 1;
     if (ui.is_checked(id).unwrap_or(false)) { c.step = 2; }
 }

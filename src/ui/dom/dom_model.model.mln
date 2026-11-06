@@ -1,12 +1,13 @@
 package dom_model;
 
 import { Blob } from "@std/memory/blob.mln";
+import { NodeId } from "@contracts/ui/widget.contract.mln";
 
 // The DOM's nodes. One tree holds the OS object model and the UI; the
-// children relation is the tree, and sibling order is paint order. Ids are
-// handed to apps as plain words: a stale one reaches no row.
+// children relation is the tree, and sibling order is paint order. The model
+// keeps ids as words; dom.mln turns them into NodeId. A stale one reaches no row.
 entity Node max 512 {
-    i32 id;
+    NodeId id;
     u16 kind;
     u16 role;        // ROLE_* ; 0 = none
     u16 x;           // bounds in display pixels (UI nodes only, else 0)
@@ -22,7 +23,7 @@ entity Node max 512 {
     u16 cursor;      // TextInput: caret position (0..len)
     u16 radius;      // Panel corner radius, display pixels
     u16 scroll;      // TextArea/List: first visible line/row
-    u16 sel;         // List: selected row + 1 (0 = none); Menu: hovered row + 1
+    Option<i32> sel; // List: selected row; Menu: hovered row
     u16 sx;          // Window: bounds saved by maximize_window
     u16 sy;
     u16 sw;
@@ -30,17 +31,16 @@ entity Node max 512 {
     Blob name;
     Blob text;       // display text / accessible name / edit buffer
     Blob test_id;    // stable automation identity
-    fn(i32 owner, i32 id, i32 arg) -> void on_click;
+    fn(i32 owner, NodeId id, i32 arg) -> void on_click;
     i32 background_color; // NODE_BOX fill colour (0 is valid black)
     i32 border_color;     // NODE_BOX border colour
-    i32 color;            // foreground/text colour ; 0 = theme default
-    fn(i32 owner, i32 id, i32 arg) -> i32 on_key; // key filter for DOWN events
-    fn(i32 owner, i32 id, i32 arg) -> void on_change;
-    fn(i32 owner, i32 id, i32 arg) -> void on_tick;
+    Option<i32> color;    // foreground/text colour; None = theme default
+    fn(i32 owner, NodeId id, i32 arg) -> void on_change;
+    fn(i32 owner, NodeId id, i32 arg) -> void on_tick;
     i32 interval;         // Timer period in scheduler ticks
     i32 next_due;         // Timer: tick at which it next fires
     i32 owner;            // app process this node belongs to; 0 = system
-    fn(i32 owner, i32 id, i32 arg) -> void on_close;
+    fn(i32 owner, NodeId id, i32 arg) -> void on_close;
 }
 
 Node has many Node as children / parent, ordered;

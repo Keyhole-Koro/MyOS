@@ -33,7 +33,6 @@ export const i32 TITLEBAR_DIVIDER = 0x23000000;
 export const i32 CLOSE_BUTTON = 0xFF5F57;
 export const i32 CLOSE_BUTTON_RING = 0x2D000000;
 export const i32 CLOSE_BUTTON_INACTIVE = 0xC8CBD1;
-export const i32 CLOSE_BUTTON_HOVER = 0xE0443E;
 export const i32 MINIMIZE_BUTTON = 0xFEBC2E;
 export const i32 MAXIMIZE_BUTTON = 0x28C840;
 export const i32 CLOSE_GLYPH = 0x4A0000;

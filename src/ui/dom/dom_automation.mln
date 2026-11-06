@@ -11,7 +11,7 @@ import debug from "@kernel/debug/debug.mln";
 import str from "@std/text/str.mln";
 import { Result } from "@std/core/result.mln";
 import { Text } from "@std/text/text.mln";
-import { UiError } from "@contracts/ui/widget.contract.mln";
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import { NodeRole, NodeState, Children } from "dom.mln";
 
 // Human-readable tree dump (the kernel debug shell's `dump` command) and the
@@ -40,43 +40,33 @@ void print_indent(i32 depth) {
  * Structural nodes with role 0, no bounds, and zero state print nothing.
  * @param id DOM node ID.
  */
-void dump_props(i32 id) {
-    Result<NodeRole, UiError> role_result = dom.role_of(id);
-    NodeRole role = case role_result of { Ok(value) -> value; Err(_) -> ({ return; }); };
-    Result<NodeState, UiError> state_result = dom.state_of(id);
-    NodeState state = case state_result of { Ok(value) -> value; Err(_) -> ({ return; }); };
-    Option<i32> x_result = dom.node_x(id);
-    Option<i32> y_result = dom.node_y(id);
-    Option<i32> width_result = dom.node_w(id);
-    Option<i32> height_result = dom.node_h(id);
-    i32 x = case x_result of { Some(value) -> value; None -> ({ return; }); };
-    i32 y = case y_result of { Some(value) -> value; None -> ({ return; }); };
-    i32 w = case width_result of { Some(value) -> value; None -> ({ return; }); };
-    i32 h = case height_result of { Some(value) -> value; None -> ({ return; }); };
-    if (role == 0) {
-        if (w == 0) {
-            if (h == 0) {
+void dump_props(NodeId id) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    i32 state = n.state;
+    if (n.role == 0) {
+        if (n.w == 0) {
+            if (n.h == 0) {
                 if (!state) { return; }
             }
         }
     }
     debug.print_str(" [role=");
-    debug.print_i32(role);
+    debug.print_i32(n.role);
     debug.print_str(" x=");
-    debug.print_i32(x);
+    debug.print_i32(n.x);
     debug.print_str(" y=");
-    debug.print_i32(y);
+    debug.print_i32(n.y);
     debug.print_str(" w=");
-    debug.print_i32(w);
+    debug.print_i32(n.w);
     debug.print_str(" h=");
-    debug.print_i32(h);
-    if (dom.is_visible(id)) { debug.print_str(" vis"); }
-    if (dom.is_enabled(id)) { debug.print_str(" en"); }
-    if (dom.is_hovered(id)) { debug.print_str(" ho"); }
-    if (dom.is_pressed(id)) { debug.print_str(" pr"); }
-    if (dom.is_focused(id)) { debug.print_str(" fo"); }
-    if (dom.is_hit_testable(id)) { debug.print_str(" ht"); }
-    if (dom.is_checked(id)) { debug.print_str(" ck"); }
+    debug.print_i32(n.h);
+    if (state & NodeState::VISIBLE) { debug.print_str(" vis"); }
+    if (state & NodeState::ENABLED) { debug.print_str(" en"); }
+    if (state & NodeState::HOVERED) { debug.print_str(" ho"); }
+    if (state & NodeState::PRESSED) { debug.print_str(" pr"); }
+    if (state & NodeState::FOCUSED) { debug.print_str(" fo"); }
+    if (state & NodeState::HIT_TESTABLE) { debug.print_str(" ht"); }
+    if (state & NodeState::CHECKED) { debug.print_str(" ck"); }
     debug.print_str("]");
 }
 
@@ -85,10 +75,10 @@ void dump_props(i32 id) {
  * @param id DOM node ID to dump.
  * @param depth Current indentation depth in the tree.
  */
-void dump_node(i32 id, i32 depth) {
+void dump_node(NodeId id, i32 depth) {
     print_indent(depth);
     debug.print_str("Node(id=");
-    debug.print_i32(id);
+    debug.print_i32((i32)id);
     debug.print_str(") ");
     case dom.kind_of(id) of {
         Some(v) -> ({ debug.print_str("kind="); debug.print_i32(v); debug.print_str(" "); });
@@ -103,7 +93,7 @@ void dump_node(i32 id, i32 depth) {
     dump_props(id);
     debug.println_str("");
 
-    for (i32 child_id in dom.children(id)) {
+    for (NodeId child_id in dom.children(id)) {
         dump_node(child_id, depth + 1);
     }
 }
@@ -121,7 +111,7 @@ export void dump() {
 // This never touches serial. The host reads the dedicated automation MMIO TX
 // FIFO, so a shell prompt or another task's log line cannot corrupt a response.
 
-i32 g_automation_first = 1;
+bool g_automation_first = true;
 
 /**
  * Transmits a raw string to the automation MMIO transport.
@@ -140,6 +130,11 @@ void automation_i32(i32 value) {
         automation_transport.putc(decimal.data[i]);
         i++;
     }
+}
+
+// A node on the automation wire: its word, or zero for none.
+void automation_node_id(Option<NodeId> id) {
+    automation_i32(case id of { Some(value) -> (i32)value; None -> 0; });
 }
 
 /**
@@ -161,45 +156,31 @@ void automation_bool(bool value) {
  * Recursively transmits a DOM node and its descendants as JSON objects.
  * @param id DOM node ID to serialize.
  */
-void automation_node(i32 id) {
-    Option<i32> x_result = dom.node_x(id);
-    Option<i32> y_result = dom.node_y(id);
-    Option<i32> width_result = dom.node_w(id);
-    Option<i32> height_result = dom.node_h(id);
-    i32 x = case x_result of { Some(value) -> value; None -> ({ return; }); };
-    i32 y = case y_result of { Some(value) -> value; None -> ({ return; }); };
-    i32 width = case width_result of { Some(value) -> value; None -> ({ return; }); };
-    i32 height = case height_result of { Some(value) -> value; None -> ({ return; }); };
-    Result<Option<i32>, UiError> parent_result = dom.parent_of(id);
-    i32 parent = case parent_result of {
-        Ok(Some(value)) -> value;
-        Ok(None) -> 0;
-        Err(_) -> ({ return; });
-    };
-    Result<NodeRole, UiError> role_result = dom.role_of(id);
-    NodeRole role = case role_result of { Ok(value) -> value; Err(_) -> ({ return; }); };
+void automation_node(NodeId id) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    i32 state = n.state;
     if (!g_automation_first) { automation_transport.putc(','); }
-    g_automation_first = 0;
+    g_automation_first = false;
 
-    automation_raw("{\"id\":"); automation_i32(id);
-    automation_raw(",\"parent\":"); automation_i32(parent);
-    automation_raw(",\"role\":"); automation_json_string(dom_elements.role_name(role));
-    automation_raw(",\"name\":"); automation_json_string(dom.name_of(id));
-    automation_raw(",\"text\":"); automation_json_string(dom.text_of(id));
-    automation_raw(",\"testId\":"); automation_json_string(dom.test_id_of(id));
-    automation_raw(",\"value\":"); automation_json_string(dom.automation_value_of(id));
-    automation_raw(",\"bounds\":{\"x\":"); automation_i32(x);
-    automation_raw(",\"y\":"); automation_i32(y);
-    automation_raw(",\"width\":"); automation_i32(width);
-    automation_raw(",\"height\":"); automation_i32(height);
-    automation_raw("},\"visible\":"); automation_bool(dom.is_visible(id));
-    automation_raw(",\"enabled\":"); automation_bool(dom.is_enabled(id));
-    automation_raw(",\"focused\":"); automation_bool(dom.is_focused(id));
-    automation_raw(",\"checked\":"); automation_bool(dom.is_checked(id));
-    automation_raw(",\"hitTestable\":"); automation_bool(dom.is_hit_testable(id));
+    automation_raw("{\"id\":"); automation_i32((i32)id);
+    automation_raw(",\"parent\":"); automation_node_id(dom.parent_id(id));
+    automation_raw(",\"role\":"); automation_json_string(dom_elements.role_name(n.role));
+    automation_raw(",\"name\":"); automation_json_string(n.name.as_str());
+    automation_raw(",\"text\":"); automation_json_string(n.text.as_str());
+    automation_raw(",\"testId\":"); automation_json_string(n.test_id.as_str());
+    automation_raw(",\"value\":"); automation_json_string(dom.automation_value_of(n));
+    automation_raw(",\"bounds\":{\"x\":"); automation_i32(n.x);
+    automation_raw(",\"y\":"); automation_i32(n.y);
+    automation_raw(",\"width\":"); automation_i32(n.w);
+    automation_raw(",\"height\":"); automation_i32(n.h);
+    automation_raw("},\"visible\":"); automation_bool((state & NodeState::VISIBLE) != 0);
+    automation_raw(",\"enabled\":"); automation_bool((state & NodeState::ENABLED) != 0);
+    automation_raw(",\"focused\":"); automation_bool((state & NodeState::FOCUSED) != 0);
+    automation_raw(",\"checked\":"); automation_bool((state & NodeState::CHECKED) != 0);
+    automation_raw(",\"hitTestable\":"); automation_bool((state & NodeState::HIT_TESTABLE) != 0);
     automation_transport.putc('}');
 
-    for (i32 child in dom.children(id)) {
+    for (NodeId child in dom.children(id)) {
         automation_node(child);
     }
 }
@@ -208,7 +189,7 @@ void automation_node(i32 id) {
  * Serializes and transmits the complete DOM tree snapshot as JSON.
  */
 export void write_automation_snapshot() {
-    g_automation_first = 1;
+    g_automation_first = true;
     automation_raw("{\"revision\":"); automation_i32(dom.revision());
     automation_raw(",\"starting\":"); automation_i32(dom.apps_starting());
     automation_raw(",\"nodes\":[");
@@ -223,6 +204,6 @@ export void write_automation_snapshot() {
  */
 export void write_automation_hit_test(i32 x, i32 y) {
     automation_raw("{\"id\":");
-    automation_i32(dom_hit_test.find_at(x, y).unwrap_or(0));
+    automation_node_id(dom_hit_test.find_at(x, y));
     automation_raw("}");
 }

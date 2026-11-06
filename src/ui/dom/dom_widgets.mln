@@ -15,22 +15,11 @@ import { Result } from "@std/core/result.mln";
 import { Text } from "@std/text/text.mln";
 import ascii from "@std/text/ascii.mln";
 import str from "@std/text/str.mln";
-import { UiError } from "@contracts/ui/widget.contract.mln";
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import { KeyEventType, KeyModifier, KeyCode } from "@contracts/input/keyboard.contract.mln";
 
-i32 widgets_window_id_or_zero(i32 id) {
-    Result<Option<i32>, UiError> result = dom.window_of(id);
-    return case result of {
-        Ok(Some(win)) -> win;
-        Ok(None) -> 0;
-        Err(_) -> 0;
-    };
-}
-
-fn(i32 owner, i32 id, i32 arg) -> void close_handler_or_zero(i32 id) {
-    Result<Option<fn(i32 owner, i32 id, i32 arg) -> void>, UiError> result =
-        dom.on_close_of(id);
-    return case result of {
+fn(i32 owner, NodeId id, i32 arg) -> void close_handler_or_zero(NodeId id) {
+    return case dom.on_close_of(id) of {
         Ok(Some(handler)) -> handler;
         Ok(None) -> 0;
         Err(_) -> 0;
@@ -51,39 +40,45 @@ export enum EditResult {
  * @return Taskbar height in pixels.
  */
 export i32 taskbar_height() {
-    if (!dom.node_exists(dom.taskbar_id())) { return 0; }
-    borrow NodeRow n = dom.row_of(dom.taskbar_id());
-    return n.h;
+    return case dom.row_in(dom.taskbar_id()) of { Some(n) -> n.h; None -> 0; };
 }
 
 /**
  * Returns the DOM Node ID of the active window.
  * @return Active window Node ID.
  */
-export Option<i32> active_window() {
-    if (dom.active_window_id() == 0) { return None; }
-    return Some(dom.active_window_id());
+export Option<NodeId> active_window() {
+    return dom.active_window_id();
 }
 
 /**
- * Returns the DOM Node ID of the currently focused control.
- * @return Focused Node ID, or 0 if none.
+ * Takes keyboard focus away from the focused node, if there is one.
  */
-export Option<i32> focused_node() {
-    if (dom.focus_id() == 0) { return None; }
-    return Some(dom.focus_id());
+export void clear_focus() {
+    case dom.focus_id() of {
+        Some(id) -> dom.set_state_flag(id, NodeState::FOCUSED, 0);
+        None -> _;
+    };
+    dom.clear_focus_id();
+}
+
+// Whether the focused node, if any, is inside a window.
+bool focus_is_in(NodeId win) {
+    return case dom.focus_id() of {
+        Some(id) -> dom.holds(dom.enclosing_window(id), win);
+        None -> false;
+    };
 }
 
 /**
- * Sets keyboard focus to a node, updating FOCUSED state flags.
- * @param id DOM Node ID to focus, or 0 to clear focus.
+ * Sets keyboard focus to a node, updating FOCUSED state flags. A dead ID
+ * clears focus.
+ * @param id DOM Node ID to focus.
  */
-export void set_focus(i32 id) {
-    if (id == dom.focus_id()) { return; }
-    if (dom.focus_id() != 0) { dom.set_state_flag(dom.focus_id(), NodeState::FOCUSED, 0); }
-    dom.set_focus_id(0);
+export void set_focus(NodeId id) {
+    if (dom.holds(dom.focus_id(), id)) { return; }
+    clear_focus();
     if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
     dom.set_focus_id(id);
     dom.set_state_flag(id, NodeState::FOCUSED, 1);
 }
@@ -92,20 +87,22 @@ export void set_focus(i32 id) {
  * Activates a window, bringing it to front and focusing it.
  * @param win Window DOM Node ID.
  */
-export void focus_window(i32 win) {
-    if (!dom.node_exists(win)) { return; }
-    borrow NodeRow n = dom.row_of(win);
+export void focus_window(NodeId win) {
+    borrow NodeRow n = case dom.find_row(win) of { Some(row) -> row; None -> ({ return; }); };
     if (n.kind != NodeKind::WINDOW) { return; }
     if (n.state & NodeState::MINIMIZED) {
         dom.set_state_flag(win, NodeState::MINIMIZED, 0);
         dom.set_state_flag(win, NodeState::VISIBLE, 1);
     }
-    if (dom.active_window_id() != win) {
-        if (dom.active_window_id() != 0) { dom.set_state_flag(dom.active_window_id(), NodeState::FOCUSED, 0); }
+    if (!dom.holds(dom.active_window_id(), win)) {
+        case dom.active_window_id() of {
+            Some(active) -> dom.set_state_flag(active, NodeState::FOCUSED, 0);
+            None -> _;
+        };
         dom.set_active_window_id(win);
         dom.set_state_flag(win, NodeState::FOCUSED, 1);
-        if (widgets_window_id_or_zero(dom.focus_id()) != win) { set_focus(0); }
-        dom.damage_node(dom.taskbar_id()); // the active entry's highlight moved
+        if (!focus_is_in(win)) { clear_focus(); }
+        dom.damage_taskbar(); // the active entry's highlight moved
     }
     dom.bring_to_front(win);
 }
@@ -119,17 +116,18 @@ i32 byte_of(str s, i32 index) {
  * Activates the topmost unminimized window on the desktop.
  */
 export void activate_topmost() {
-    i32 top = 0;
-    for (i32 child_id in dom.children(dom.desktop_id())) {
-        if (!dom.node_exists(child_id)) { break; }
+    Option<NodeId> top = None;
+    for (NodeId child_id in dom.children(dom.desktop_id())) {
         borrow NodeRow c = dom.row_of(child_id);
         if (c.kind == NodeKind::WINDOW) {
-            if (!(c.state & NodeState::MINIMIZED)) { top = child_id; }
+            if (!(c.state & NodeState::MINIMIZED)) { top = Some(child_id); }
         }
     }
-    if (top != 0) { focus_window(top); }
-    else { dom.set_active_window_id(0); }
-    dom.damage_node(dom.taskbar_id());
+    case top of {
+        Some(win) -> focus_window(win);
+        None -> dom.clear_active_window_id();
+    };
+    dom.damage_taskbar();
 }
 
 // The user closed a window. A window with an on_close handler is handed to
@@ -139,8 +137,8 @@ export void activate_topmost() {
  * Closes a window by queuing its close callback or removing it immediately.
  * @param win DOM node ID of the window to close.
  */
-export void close_window(i32 win) {
-    fn(i32 owner, i32 id, i32 arg) -> void handler = close_handler_or_zero(win);
+export void close_window(NodeId win) {
+    fn(i32 owner, NodeId id, i32 arg) -> void handler = close_handler_or_zero(win);
     if (handler != 0) {
         dom.push_event(handler, dom.owner_of(win).unwrap_or(0), win, 0);
         return;
@@ -155,18 +153,17 @@ export void close_window(i32 win) {
  * @param w Target width in pixels.
  * @param h Target height in pixels.
  */
-export void resize_window(i32 win, i32 w, i32 h) {
-    if (!dom.node_exists(win)) { return; }
-    borrow NodeRow n = dom.row_of(win);
+export void resize_window(NodeId win, i32 w, i32 h) {
+    borrow NodeRow n = case dom.find_row(win) of { Some(row) -> row; None -> ({ return; }); };
     i32 s = dom.ui_scale();
     i32 min_w = 200 * s;
     i32 min_h = 120 * s;
     if (w < min_w) { w = min_w; }
     if (h < min_h) { h = min_h; }
-    dom.damage_node(win);
+    dom.damage_row(n);
     n.w = (u16)w;
     n.h = (u16)h;
-    dom.damage_node(win);
+    dom.damage_row(n);
     dom.touch();
 }
 
@@ -174,28 +171,18 @@ export void resize_window(i32 win, i32 w, i32 h) {
  * Minimizes a window to the taskbar, hiding its visible contents.
  * @param win Window DOM Node ID.
  */
-export void minimize_window(i32 win) {
+export void minimize_window(NodeId win) {
     if (!dom.node_exists(win)) { return; }
-    borrow NodeRow n = dom.row_of(win);
     dom.set_state_flag(win, NodeState::MINIMIZED, 1);
     dom.set_state_flag(win, NodeState::VISIBLE, 0);
-    if (widgets_window_id_or_zero(dom.focus_id()) == win) { set_focus(0); }
-    if (dom.active_window_id() == win) {
+    if (focus_is_in(win)) { clear_focus(); }
+    if (dom.holds(dom.active_window_id(), win)) {
         dom.set_state_flag(win, NodeState::FOCUSED, 0);
-        dom.set_active_window_id(0);
+        dom.clear_active_window_id();
         activate_topmost();
     }
-    dom.damage_node(dom.taskbar_id());
+    dom.damage_taskbar();
     dom.touch();
-}
-
-/**
- * Checks whether a window is currently minimized.
- * @param win Window DOM Node ID.
- * @return True if minimized, false otherwise.
- */
-export bool is_minimized(i32 win) {
-    return dom.get_state_flag(win, NodeState::MINIMIZED);
 }
 
 /**
@@ -203,7 +190,7 @@ export bool is_minimized(i32 win) {
  * @param win Window DOM Node ID.
  * @return True if maximized, false otherwise.
  */
-export bool is_maximized(i32 win) {
+export bool is_maximized(NodeId win) {
     return dom.get_state_flag(win, NodeState::MAXIMIZED);
 }
 
@@ -211,9 +198,8 @@ export bool is_maximized(i32 win) {
  * Toggles a window between maximized full-desktop state and previous restored bounds.
  * @param win Window DOM Node ID.
  */
-export void maximize_window(i32 win) {
-    if (!dom.node_exists(win)) { return; }
-    borrow NodeRow n = dom.row_of(win);
+export void maximize_window(NodeId win) {
+    borrow NodeRow n = case dom.find_row(win) of { Some(row) -> row; None -> ({ return; }); };
     if (n.state & NodeState::MAXIMIZED) {
         i32 rx = n.sx;
         i32 ry = n.sy;
@@ -320,9 +306,8 @@ export EditResult input_handle(borrow NodeRow n, i32 type, i32 code) {
 }
 
 // Route one keyboard event (type = keyboard.EVT_*, code = key code or
-// character) to the focused node. A node's on_key handler, if set, sees DOWN
-// events first and can claim them by returning non-zero; otherwise text
-// inputs get their default editing behaviour.
+// character) to the focused node; text inputs get their default editing
+// behaviour.
 // --- multi-line text (TextArea) ---
 // The buffer holds the whole document with '\n' separators; `cursor` is a
 // byte index, `scroll` the first visible line. Editing shares the insert/
@@ -396,9 +381,8 @@ export i32 line_len_at(borrow NodeRow n, i32 start) {
  * @param id DOM Node ID.
  * @return Ok(line count), or Err when the node is missing or is not a TextArea.
  */
-export Result<i32, UiError> text_area_line_count(i32 id) {
-    if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow NodeRow n = dom.row_of(id);
+export Result<i32, UiError> text_area_line_count(NodeId id) {
+    borrow NodeRow n = dom.require_row(id)?;
     if (n.kind != NodeKind::TEXT_AREA) { return Err(UiError::WrongNodeKind(id)); }
     return Ok(line_of(n, n.len) + 1);
 }
@@ -540,9 +524,8 @@ export EditResult text_area_handle(borrow NodeRow n, i32 type, i32 code, i32 mod
  * @param id DOM Node ID of TextArea.
  * @param s Null-terminated string to append.
  */
-export void append_text(i32 id, str s) {
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+export void append_text(NodeId id, str s) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     if (n.kind != NodeKind::TEXT_AREA) { return; }
     Blob buf = n.text;
     i32 cap = n.cap;
@@ -577,7 +560,7 @@ export void append_text(i32 id, str s) {
     n.len = (u16)len;
     n.cursor = (u16)len;
     text_area_reveal_cursor(n);
-    dom.damage_node(id);
+    dom.damage_row(n);
     dom.touch();
 }
 
@@ -586,7 +569,7 @@ export void append_text(i32 id, str s) {
  * @param id DOM Node ID of TextArea.
  * @param bytes Source bytes.
  */
-export void append_bytes(i32 id, str bytes) {
+export void append_bytes(NodeId id, str bytes) {
     Text<64> tmp = Text<64> {};
     tmp.clear();
     i32 i = 0;
@@ -609,17 +592,16 @@ export void append_bytes(i32 id, str bytes) {
  * Empties all text content and resets cursor and scroll position in a TextArea.
  * @param id DOM Node ID of TextArea.
  */
-export void clear_text_area(i32 id) {
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+export void clear_text_area(NodeId id) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     if (!n.text.is_live()) { return; }
     Blob buf = n.text;
     buf.put(0, (char)0);
     n.len = 0;
     n.cursor = 0;
     n.scroll = 0;
-    n.sel = 0;
-    dom.damage_node(id);
+    n.sel = None;
+    dom.damage_row(n);
     dom.touch();
 }
 
@@ -628,9 +610,8 @@ export void clear_text_area(i32 id) {
  * @param id DOM Node ID.
  * @param lines Line delta (negative = scroll up, positive = scroll down).
  */
-export void scroll_by(i32 id, i32 lines) {
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+export void scroll_by(NodeId id, i32 lines) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     if (n.kind != NodeKind::TEXT_AREA) { if (n.kind != NodeKind::LIST) { return; } }
     i32 total = line_of(n, n.len) + 1;
     i32 rows = visible_lines(n);
@@ -641,7 +622,7 @@ export void scroll_by(i32 id, i32 lines) {
     if (scroll > max_scroll) { scroll = max_scroll; }
     if (scroll != n.scroll) {
         n.scroll = (u16)scroll;
-        dom.damage_node(id);
+        dom.damage_row(n);
     }
 }
 
@@ -650,14 +631,14 @@ export void scroll_by(i32 id, i32 lines) {
  * @param id DOM Node ID.
  * @param steps Scroll step count (positive = wheel forward/up).
  */
-export void dispatch_wheel(i32 id, i32 steps) {
+export void dispatch_wheel(NodeId id, i32 steps) {
     if (steps == 0) { return; }
     scroll_by(id, -steps * 3);
 }
 
 // --- List ---
 // Items are newline-separated in the node's buffer; `sel` is the selected
-// row + 1. A click selects a row (on_change); clicking the selected row again
+// row. A click selects a row (on_change); clicking the selected row again
 // or pressing Enter activates it (on_click).
 
 /**
@@ -665,9 +646,8 @@ export void dispatch_wheel(i32 id, i32 steps) {
  * @param id DOM Node ID of List.
  * @param items Newline-separated list of items.
  */
-export void list_set_items(i32 id, str items) {
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+export void list_set_items(NodeId id, str items) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     if (n.kind != NodeKind::LIST) { return; }
     Blob buf = n.text;
     i32 cap = n.cap;
@@ -677,9 +657,9 @@ export void list_set_items(i32 id, str items) {
     }
     buf.put(i, (char)0);
     n.len = (u16)i;
-    n.sel = 0;
+    n.sel = None;
     n.scroll = 0;
-    dom.damage_node(id);
+    dom.damage_row(n);
     dom.touch();
 }
 
@@ -689,12 +669,10 @@ export void list_set_items(i32 id, str items) {
  * @param id DOM Node ID of List.
  * @return Result containing an optional 0-based row index.
  */
-export Result<Option<i32>, UiError> list_selected(i32 id) {
-    if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow NodeRow n = dom.row_of(id);
+export Result<Option<i32>, UiError> list_selected(NodeId id) {
+    borrow NodeRow n = dom.require_row(id)?;
     if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
-    if (n.sel == 0) { return Ok(None); }
-    return Ok(Some(n.sel - 1));
+    return Ok(n.sel);
 }
 
 /**
@@ -702,9 +680,8 @@ export Result<Option<i32>, UiError> list_selected(i32 id) {
  * @param id DOM Node ID of List.
  * @return Ok(row count), or Err when the node is missing or is not a List.
  */
-export Result<i32, UiError> list_count(i32 id) {
-    if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow NodeRow n = dom.row_of(id);
+export Result<i32, UiError> list_count(NodeId id) {
+    borrow NodeRow n = dom.require_row(id)?;
     if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
     if (n.len == 0) { return Ok(0); }
     return Ok(line_of(n, n.len) + 1);
@@ -716,12 +693,10 @@ export Result<i32, UiError> list_count(i32 id) {
  * @param index 0-based item index.
  * @return A view of the row, valid until the list next changes.
  */
-export Result<str, UiError> list_item(i32 id, i32 index) {
-    if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow NodeRow n = dom.row_of(id);
+export Result<str, UiError> list_item(NodeId id, i32 index) {
+    borrow NodeRow n = dom.require_row(id)?;
     if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
-    Result<i32, UiError> count_result = list_count(id);
-    i32 count = count_result?;
+    i32 count = list_count(id)?;
     if (index < 0 || index >= count) { return Err(UiError::InvalidIndex(index)); }
     i32 start = line_start(n, index);
     i32 llen = line_len_at(n, start);
@@ -737,15 +712,13 @@ export Result<str, UiError> list_item(i32 id, i32 index) {
  * @param id DOM Node ID of List.
  * @param index 0-based item index to select.
  */
-export void list_select(i32 id, i32 index) {
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+export void list_select(NodeId id, i32 index) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     i32 count = line_of(n, n.len) + 1;
     if (n.len == 0) { count = 0; }
-    if (index < 0) { n.sel = 0; }
-    else if (index >= count) { n.sel = 0; }
+    if (index < 0 || index >= count) { n.sel = None; }
     else {
-        n.sel = (u16)(index + 1);
+        n.sel = Some(index);
         // keep it in view
         i32 rows = visible_lines(n);
         i32 scroll = n.scroll;
@@ -753,7 +726,7 @@ export void list_select(i32 id, i32 index) {
         if (index >= scroll + rows) { scroll = index - rows + 1; }
         n.scroll = (u16)scroll;
     }
-    dom.damage_node(id);
+    dom.damage_row(n);
     dom.touch();
 }
 
@@ -764,9 +737,8 @@ export void list_select(i32 id, i32 index) {
  * @param py Target Y coordinate.
  * @return Option containing 0-based row index, or None.
  */
-export Option<i32> list_row_at(i32 id, i32 px, i32 py) {
-    if (!dom.node_exists(id)) { return None; }
-    borrow NodeRow n = dom.row_of(id);
+export Option<i32> list_row_at(NodeId id, i32 px, i32 py) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return None; }); };
     i32 s = dom.ui_scale();
     i32 pad = 8 * s;
     i32 lh = ui_metrics.text_height(0, s);
@@ -787,13 +759,12 @@ export Option<i32> list_row_at(i32 id, i32 px, i32 py) {
  * @param px Click X coordinate.
  * @param py Click Y coordinate.
  */
-export void list_click(i32 id, i32 px, i32 py) {
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+export void list_click(NodeId id, i32 px, i32 py) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     i32 row = case list_row_at(id, px, py) of { Some(v) -> v; None -> ({ return; }); };
-    i32 was = n.sel - 1;
+    bool again = case n.sel of { Some(was) -> was == row; None -> false; };
     list_select(id, row);
-    if (row == was) {
+    if (again) {
         dom.emit(n, UiEventKind::ACTIVATE, n.on_click, 0);
     } else {
         dom.fire_change(n);
@@ -809,25 +780,26 @@ export void list_click(i32 id, i32 px, i32 py) {
  */
 export EditResult list_handle(borrow NodeRow n, i32 type, i32 code) {
     if (type != KeyEventType::DOWN) { return EditResult::Unhandled; }
-    i32 id = n.id;
-    i32 sel = n.sel - 1;
+    NodeId id = n.id;
     i32 count = line_of(n, n.len) + 1;
     if (n.len == 0) { count = 0; }
     if (count == 0) { return EditResult::Unhandled; }
     if (code == KeyCode::UP) {
-        if (sel > 0) { list_select(id, sel - 1); } else { list_select(id, 0); }
+        i32 above = case n.sel of { Some(row) -> row - 1; None -> 0; };
+        list_select(id, above > 0 ? above : 0);
         dom.fire_change(n);
         return EditResult::Moved;
     }
     if (code == KeyCode::DOWN) {
-        if (sel + 1 < count) { list_select(id, sel + 1); }
+        i32 below = case n.sel of { Some(row) -> row + 1; None -> 0; };
+        if (below < count) { list_select(id, below); }
         dom.fire_change(n);
         return EditResult::Moved;
     }
     if (code == KeyCode::HOME) { list_select(id, 0); dom.fire_change(n); return EditResult::Moved; }
     if (code == KeyCode::END) { list_select(id, count - 1); dom.fire_change(n); return EditResult::Moved; }
     if (code == KeyCode::ENTER) {
-        if (sel >= 0) {
+        if (n.sel.is_some()) {
             dom.emit(n, UiEventKind::ACTIVATE, n.on_click, 0);
         }
         return EditResult::Moved;
@@ -844,18 +816,21 @@ export EditResult list_handle(borrow NodeRow n, i32 type, i32 code) {
  * Closes and removes the currently open popup menu from the desktop.
  */
 export void close_menu() {
-    if (dom.menu_id() == 0) { return; }
-    i32 id = dom.menu_id();
-    dom.clear_menu_state();
-    dom.remove_node(id);
-    dom.touch();
+    case dom.menu_id() of {
+        Some(id) -> ({
+            dom.clear_menu_state();
+            dom.remove_node(id);
+            dom.touch();
+        });
+        None -> _;
+    };
 }
 
 /**
- * Returns the DOM Node ID of the active popup menu, or 0 if none is open.
+ * Returns the DOM Node ID of the active popup menu, if one is open.
  * @return Menu DOM Node ID.
  */
-export i32 menu_id() {
+export Option<NodeId> menu_id() {
     return dom.menu_id();
 }
 
@@ -863,7 +838,7 @@ export i32 menu_id() {
  * Returns the target Node ID associated with the open popup menu.
  * @return Target DOM Node ID.
  */
-export i32 menu_target() {
+export Option<NodeId> menu_target() {
     return dom.menu_target();
 }
 
@@ -873,11 +848,11 @@ export i32 menu_target() {
  * @param y Display Y position.
  * @param items Newline-separated list of menu options.
  * @param handler Callback function pointer invoked on selection: fn(index).
- * @param target Associated target Node ID.
+ * @param target Associated target Node ID, if the menu acts on one.
  * @return Menu DOM Node ID.
  */
-export Result<i32, UiError> open_menu(i32 x, i32 y, str items,
-                                      fn(i32 index) -> void handler, i32 target) {
+export Result<NodeId, UiError> open_menu(i32 x, i32 y, str items,
+                                         fn(i32 index) -> void handler, Option<NodeId> target) {
     close_menu();
     i32 s = dom.ui_scale();
     i32 count = 1;
@@ -921,7 +896,7 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, str items,
     if (y < 0) { y = 0; }
 
     NewNode node = NewNode { id: dom.create_node(NodeKind::MENU, "menu")? };
-    i32 id = node.id;
+    NodeId id = node.id;
     dom.set_role(id, NodeRole::MENU);
     borrow NodeRow n = dom.row_of(id);
     i32 cap = i + 2;
@@ -939,7 +914,6 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, str items,
     n.y = (u16)y;
     n.w = (u16)w;
     n.h = (u16)h;
-    n.sel = 0;
     n.on_change = 0;
     dom.set_state_flag(id, NodeState::VISIBLE, 1);
     dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
@@ -952,22 +926,25 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, str items,
     return Ok(node.keep());
 }
 
+// Whether two optional rows name the same row, or both none.
+bool same_row(Option<i32> a, Option<i32> b) {
+    return case a of {
+        Some(x) -> case b of { Some(y) -> x == y; None -> false; };
+        None -> b.is_none();
+    };
+}
+
 /**
  * Updates highlighted row in active popup menu based on mouse hover position.
  * @param px Cursor display X coordinate.
  * @param py Cursor display Y coordinate.
  */
 export void menu_hover(i32 px, i32 py) {
-    i32 id = dom.menu_id();
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
-    i32 next = case list_row_at(id, px, py) of {
-        Some(r) -> r + 1;
-        None -> 0;
-    };
-    if (next != n.sel) {
-        n.sel = (u16)next;
-        dom.damage_node(id);
+    borrow NodeRow n = case dom.row_in(dom.menu_id()) of { Some(row) -> row; None -> ({ return; }); };
+    Option<i32> next = list_row_at(n.id, px, py);
+    if (!same_row(next, n.sel)) {
+        n.sel = next;
+        dom.damage_row(n);
     }
 }
 
@@ -977,8 +954,7 @@ export void menu_hover(i32 px, i32 py) {
  * @param py Cursor display Y coordinate.
  */
 export void menu_click(i32 px, i32 py) {
-    i32 id = dom.menu_id();
-    if (id == 0) { return; }
+    NodeId id = case dom.menu_id() of { Some(value) -> value; None -> ({ return; }); };
     Option<i32> row = list_row_at(id, px, py);
     fn(i32 index) -> void handler = dom.menu_handler();
     close_menu();
@@ -1008,23 +984,22 @@ export bool is_focusable(borrow NodeRow n) {
 }
 
 // Depth-first walk collecting focusable ids into g_focus_ring.
-i32 g_focus_ring[64];
+NodeId g_focus_ring[64];
 i32 g_focus_ring_count = 0;
 
 /**
  * Recursively collects all focusable node IDs in a subtree into the focus ring.
  * @param id Root DOM Node ID of subtree.
  */
-export void collect_focusable(i32 id) {
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+export void collect_focusable(NodeId id) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     if (is_focusable(n)) {
         if (g_focus_ring_count < ui_config.FOCUS_MAX) {
             g_focus_ring[g_focus_ring_count] = id;
             g_focus_ring_count++;
         }
     }
-    for (i32 child in dom.children(id)) {
+    for (NodeId child in dom.children(id)) {
         collect_focusable(child);
     }
 }
@@ -1034,8 +1009,7 @@ export void collect_focusable(i32 id) {
  * @param backwards Non-zero to move focus backward (Shift-Tab), 0 forward (Tab).
  */
 export void focus_next(i32 backwards) {
-    i32 win = dom.active_window_id();
-    if (win == 0) { return; }
+    NodeId win = case dom.active_window_id() of { Some(id) -> id; None -> ({ return; }); };
     g_focus_ring_count = 0;
     collect_focusable(win);
     if (g_focus_ring_count == 0) { return; }
@@ -1043,7 +1017,7 @@ export void focus_next(i32 backwards) {
     Option<i32> cur = None;
     i32 i = 0;
     while (i < g_focus_ring_count) {
-        if (g_focus_ring[i] == dom.focus_id()) {
+        if (dom.holds(dom.focus_id(), g_focus_ring[i])) {
             cur = Some(i);
             break;
         }
@@ -1082,7 +1056,7 @@ export void focus_next(i32 backwards) {
 export void dispatch_key_event(i32 type, i32 code, i32 mods) {
     if (type == KeyEventType::DOWN) {
         if (code == KeyCode::ESCAPE) {
-            if (dom.menu_id() != 0) { close_menu(); return; }
+            if (dom.menu_id().is_some()) { close_menu(); return; }
         }
         if (code == KeyCode::TAB) {
             focus_next(mods & KeyModifier::SHIFT);
@@ -1090,35 +1064,24 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
         }
         // App shortcuts (@key) for the active window's app go first.
         fn(i32 owner, i32 code, i32 mods) -> bool filter = dom.key_filter();
-        Result<i32, UiError> owner = dom.owner_of(dom.active_window_id());
-        case owner of {
-            Ok(value) -> ({ if (filter(value, code, mods)) { return; } });
-            Err(_) -> _;
+        case dom.row_in(dom.active_window_id()) of {
+            Some(win) -> ({ if (filter(win.owner, code, mods)) { return; } });
+            None -> _;
         };
     }
-    if (!dom.node_exists(dom.focus_id())) { return; }
-    borrow NodeRow n = dom.row_of(dom.focus_id());
-    i32 id = dom.focus_id();
-    if (type == KeyEventType::DOWN) {
-        fn(i32 owner, i32 id, i32 arg) -> i32 handler = n.on_key;
-        if (handler != 0) {
-            // Runs inline, unlike the queued handlers: it decides whether
-            // the key goes on to the widget, which cannot wait.
-            i32 claimed = handler(n.owner, id, code | (mods << 16));
-            if (claimed) { return; }
-        }
-    }
+    borrow NodeRow n = case dom.row_in(dom.focus_id()) of { Some(row) -> row; None -> ({ return; }); };
+    NodeId id = n.id;
     i32 kind = n.kind;
     if (kind == NodeKind::TEXT_INPUT) {
         EditResult r = input_handle(n, type, code);
         case r of {
             EditResult::Changed -> ({
-                dom.damage_node(id);
+                dom.damage_row(n);
                 dom.touch();
                 dom.fire_change(n);
             });
             EditResult::Moved -> ({
-                dom.damage_node(id);
+                dom.damage_row(n);
                 dom.touch();
             });
             EditResult::Unhandled -> _;
@@ -1129,12 +1092,12 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
         EditResult r = text_area_handle(n, type, code, mods);
         case r of {
             EditResult::Changed -> ({
-                dom.damage_node(id);
+                dom.damage_row(n);
                 dom.touch();
                 dom.fire_change(n);
             });
             EditResult::Moved -> ({
-                dom.damage_node(id);
+                dom.damage_row(n);
                 dom.touch();
             });
             EditResult::Unhandled -> _;
@@ -1161,9 +1124,8 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
  * @param id DOM Node ID of TextInput.
  * @param s Replacement string.
  */
-export void set_input_text(i32 id, str s) {
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+export void set_input_text(NodeId id, str s) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     if (n.kind != NodeKind::TEXT_INPUT) { return; }
     Blob buf = n.text;
     i32 cap = n.cap;
@@ -1174,7 +1136,7 @@ export void set_input_text(i32 id, str s) {
     buf.put(i, (char)0);
     n.len = (u16)i;
     n.cursor = (u16)i;
-    dom.damage_node(id);
+    dom.damage_row(n);
     dom.touch();
 }
 
@@ -1189,14 +1151,16 @@ export void tick() {
     i32 now = scheduler.ticks();
     i32 i = 0;
     while (i < dom.timer_count()) {
-        i32 id = dom.timer_id_at(i);
-        if (dom.node_exists(id)) {
-            borrow NodeRow t = dom.row_of(id);
-            if (now >= t.next_due) {
-                t.next_due = now + t.interval;
-                dom.emit(t, UiEventKind::TIMER, t.on_tick, 0);
-            }
-        }
+        NodeId id = dom.timer_id_at(i);
+        case dom.find_row(id) of {
+            Some(t) -> ({
+                if (now >= t.next_due) {
+                    t.next_due = now + t.interval;
+                    dom.emit(t, UiEventKind::TIMER, t.on_tick, 0);
+                }
+            });
+            None -> _;
+        };
         i++;
     }
 }
@@ -1207,8 +1171,8 @@ export void tick() {
  * @param handler Server-side tick callback, or 0 to deliver TIMER events to the owning app.
  * @return Timer DOM Node ID.
  */
-export Result<i32, UiError> create_timer(
-    i32 interval, fn(i32 owner, i32 id, i32 arg) -> void handler) {
+export Result<NodeId, UiError> create_timer(
+    i32 interval, fn(i32 owner, NodeId id, i32 arg) -> void handler) {
     NewNode node = NewNode { id: dom.create_node(NodeKind::TIMER, "timer")? };
     borrow NodeRow t = dom.row_of(node.id);
     t.interval = interval;

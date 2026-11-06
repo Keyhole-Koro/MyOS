@@ -7,7 +7,7 @@ import fs from "@std/hosted/fs.mln";
 import { FsChunk } from "@std/hosted/fs.mln";
 import { Result } from "@std/core/result.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
-import { UiError } from "@contracts/ui/widget.contract.mln";
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import { text_copy } from "@app/ui_text.mln";
 import str from "@std/text/str.mln";
 import { Text } from "@std/text/text.mln";
@@ -31,9 +31,9 @@ i32 CAP = 4096;
  * @property save_text Scratch buffer holding text copied from the editor before saving.
  */
 struct Editor {
-    i32 area;     // TextArea
-    i32 name;     // filename TextInput
-    i32 status;   // Label
+    NodeId area;     // TextArea
+    NodeId name;     // filename TextInput
+    NodeId status;   // Label
     Text<32> save_name;
     Text<4096> save_text;
 };
@@ -42,8 +42,8 @@ struct Editor {
 /** Builds the editor window and opens a scratch document for a plain launch.
  * @return DOM node ID of the editor window.
  */
-i32 (borrow Editor e) view() {
-    i32 win = <Window title="Editor" x={300} y={120} w={520} h={420}>
+NodeId (borrow Editor e) view() {
+    NodeId win = <Window title="Editor" x={300} y={120} w={520} h={420}>
         <Row x={12} y={12} w={496} h={34} gap={8}>
             <TextInput ref={e.name} placeholder="file name" w={300} h={34} capacity={16} testId="editor-name" />
             <PrimaryButton text="Save" w={90} h={34} onClick={e.save} />
@@ -96,30 +96,25 @@ void (borrow Editor e) open(Text<64> path) {
 /** Saves the editor contents under the filename currently in the name field.
  * @param id DOM node ID supplied by the key event.
  */
-void (borrow Editor e) save(i32 id) {
-    Result<i32, UiError> name_copy = text_copy<32>(e.name, &e.save_name);
-    case name_copy of {
+void (borrow Editor e) save(NodeId id) {
+    case text_copy<32>(e.name, &e.save_name) of {
         Ok(_) -> _;
         Err(error) -> ({ ui.set_error(e.status, "save failed", error.describe()); return; });
     };
     str path = e.save_name.as_str();
     if (path.is_empty()) { ui.set_text(e.status, "enter a file name first"); return; }
-    Result<i32, UiError> text_result = text_copy<4096>(e.area, &e.save_text);
-    i32 len = case text_result of {
+    i32 len = case text_copy<4096>(e.area, &e.save_text) of {
         Ok(value) -> value;
         Err(error) -> ({ ui.set_error(e.status, "save failed", error.describe()); return; });
     };
-    // Bind the Result: a discarded aggregate return has no out-pointer.
-    Result<_, FsError> removed = fs.remove(path);
-    case removed of { Ok(_) -> _; Err(_) -> _; };
+    fs.remove(path);
     i32 fd = case fs.create(path) of {
         Ok(v) -> v;
         Err(error) -> ({ ui.set_error(e.status, "save failed", error.describe()); return; });
     };
     i32 written = 0;
     if (len > 0) {
-        Result<i32, FsError> write_result = fs.write(fd, e.save_text.as_str());
-        written = case write_result of {
+        written = case fs.write(fd, e.save_text.as_str()) of {
             Ok(v) -> v;
             Err(error) -> ({
                 fs.close(fd);

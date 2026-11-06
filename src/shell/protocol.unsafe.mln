@@ -12,6 +12,7 @@ import { AppError, KeyClaimError, AppOp } from "@contracts/myapp/lifecycle.contr
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { Request, RequestStatus } from "@contracts/myapp/message.contract.mln";
+import { NodeId } from "@contracts/ui/widget.contract.mln";
 
 /**
  * Dispatches an application host request to the shell subsystem.
@@ -25,7 +26,7 @@ import { Request, RequestStatus } from "@contracts/myapp/message.contract.mln";
 export RequestStatus handle(Request *m) {
     if (m->op == AppOp::OPEN) {
         if (m->result_out == 0) { return RequestStatus::MISSING_RESULT; }
-        Result<Option<i32>, AppError> *out = (Result<Option<i32>, AppError>*)m->result_out;
+        Result<Option<NodeId>, AppError> *out = (Result<Option<NodeId>, AppError>*)m->result_out;
         *out = app.open(str.from_c(m->s0));
         return RequestStatus::OK;
     }
@@ -35,7 +36,7 @@ export RequestStatus handle(Request *m) {
         *out = app.claim_key(m->owner, str.from_c(m->s0));
         return RequestStatus::OK;
     }
-    if (m->op == AppOp::MAIN_WINDOW) { app.window_ready(m->owner, m->a0); return RequestStatus::OK; }
+    if (m->op == AppOp::MAIN_WINDOW) { app.window_ready(m->owner, NodeId(m->a0)); return RequestStatus::OK; }
     if (m->op == AppOp::EXIT)        { app.instance_exited(m->owner); return RequestStatus::OK; }
     return RequestStatus::INVALID_OPERATION;
 }

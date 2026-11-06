@@ -14,6 +14,7 @@ import { ChannelId } from "@kernel/kernel/ipc.mln";
 import { EventKind, TransportSignal } from "@contracts/myapp/message.contract.mln";
 import ui_event from "@os/ui/events.mln";
 import { UiEventKind } from "@os/ui/events.mln";
+import { NodeId } from "@contracts/ui/widget.contract.mln";
 import { ShellEventKind } from "@os/shell/events.mln";
 import { Option } from "@std/core/option.mln";
 import str from "@std/text/str.mln";
@@ -42,12 +43,12 @@ EventBinding event_bindings[16];
  * @param kind Event type (UiEventKind enum).
  * @param arg Event-specific numeric argument (e.g. checkbox state, timer ticks).
  */
-void forward_ui_event(i32 owner, i32 id, i32 kind, i32 arg) {
+void forward_ui_event(i32 owner, NodeId id, i32 kind, i32 arg) {
     if (kind == UiEventKind::CLICK ||
         kind == UiEventKind::CHANGE ||
         kind == UiEventKind::ACTIVATE ||
         kind == UiEventKind::TIMER) {
-        push(owner, id, kind, arg, 0, "");
+        push(owner, (i32)id, kind, arg, 0, "");
     }
 }
 

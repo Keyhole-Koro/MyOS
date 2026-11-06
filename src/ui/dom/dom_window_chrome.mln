@@ -6,101 +6,69 @@ import { Blob } from "@std/memory/blob.mln";
 import ui_config from "@os/ui/config.mln";
 import ui_metrics from "@os/ui/ui_metrics.mln";
 import { Option } from "@std/core/option.mln";
+import { NodeId } from "@contracts/ui/widget.contract.mln";
 
 // Pure display-space geometry for window controls. Window state and mutation
 // remain in dom/dom_widgets; this module only answers coordinate queries.
 
-/** Computes the center X coordinate of the close button, or None for an invalid window. */
-export Option<i32> close_button_cx(i32 win) {
-    return button_cx(win, 1);
-}
-
 /** Computes the center X coordinate of titlebar button 1, 2, or 3. */
-export Option<i32> button_cx(i32 win, i32 which) {
-    Option<i32> x_result = dom.node_x(win);
-    i32 x = case x_result of {
-        Some(value) -> value;
-        None -> ({ return None; });
-    };
-    return Some(x + (16 + 20 * (which - 1)) * dom.ui_scale());
+export i32 button_cx(borrow NodeRow win, i32 which) {
+    return win.x + (16 + 20 * (which - 1)) * dom.ui_scale();
 }
 
 /** Computes the center Y coordinate of titlebar buttons. */
-export Option<i32> button_cy(i32 win) {
-    i32 scale = dom.ui_scale();
-    Option<i32> y_result = dom.node_y(win);
-    i32 y = case y_result of {
-        Some(value) -> value;
-        None -> ({ return None; });
-    };
-    return Some(y + ui_metrics.titlebar_height() * scale / 2);
+export i32 button_cy(borrow NodeRow win) {
+    return win.y + ui_metrics.titlebar_height() * dom.ui_scale() / 2;
 }
 
 /** Returns the titlebar button radius in display pixels. */
 export i32 button_radius() { return 7 * dom.ui_scale(); }
 
-/** Returns the titlebar control button at a display point, or None when no button is hit. */
-export Option<i32> button_hit(i32 win, i32 px, i32 py) {
-    if (!dom.node_exists(win)) { return None; }
-    Option<i32> cy_result = button_cy(win);
-    i32 cy = case cy_result of {
-        Some(value) -> value;
-        None -> ({ return None; });
-    };
-    i32 dy = py - cy;
+// The titlebar button of a window at a display point.
+Option<i32> row_button_hit(borrow NodeRow win, i32 px, i32 py) {
+    i32 dy = py - button_cy(win);
     i32 radius = button_radius() + 3 * dom.ui_scale();
     i32 which = 1;
     while (which <= 3) {
-        Option<i32> cx_result = button_cx(win, which);
-        i32 cx = case cx_result of {
-            Some(value) -> value;
-            None -> ({ return None; });
-        };
-        i32 dx = px - cx;
+        i32 dx = px - button_cx(win, which);
         if (dx * dx + dy * dy <= radius * radius) { return Some(which); }
         which++;
     }
     return None;
 }
 
+/** Returns the titlebar control button at a display point, or None when no button is hit. */
+export Option<i32> button_hit(NodeId win, i32 px, i32 py) {
+    return case dom.find_row(win) of {
+        Some(n) -> row_button_hit(n, px, py);
+        None -> None;
+    };
+}
+
 /** Checks whether a display point hits the close button. */
-export bool close_button_hit(i32 win, i32 px, i32 py) {
+export bool close_button_hit(NodeId win, i32 px, i32 py) {
     return case button_hit(win, px, py) of { Some(which) -> which == 1; None -> false; };
 }
 
 /** Checks whether a display point hits the bottom-right resize grip. */
-export bool resize_grip_hit(i32 win, i32 px, i32 py) {
-    if (!dom.node_exists(win)) { return false; }
-    Option<i32> x_result = dom.node_x(win);
-    Option<i32> y_result = dom.node_y(win);
-    Option<i32> width_result = dom.node_w(win);
-    Option<i32> height_result = dom.node_h(win);
-    i32 x = case x_result of { Some(value) -> value; None -> ({ return false; }); };
-    i32 y = case y_result of { Some(value) -> value; None -> ({ return false; }); };
-    i32 width = case width_result of { Some(value) -> value; None -> ({ return false; }); };
-    i32 height = case height_result of { Some(value) -> value; None -> ({ return false; }); };
+export bool resize_grip_hit(NodeId win, i32 px, i32 py) {
+    borrow NodeRow n = case dom.find_row(win) of { Some(row) -> row; None -> ({ return false; }); };
     i32 grip = ui_config.GRIP_SIZE * dom.ui_scale();
-    if (px < x + width - grip) { return false; }
-    if (py < y + height - grip) { return false; }
-    if (px >= x + width) { return false; }
-    if (py >= y + height) { return false; }
+    if (px < n.x + n.w - grip) { return false; }
+    if (py < n.y + n.h - grip) { return false; }
+    if (px >= n.x + n.w) { return false; }
+    if (py >= n.y + n.h) { return false; }
     return true;
 }
 
 /** Checks whether a display point hits the draggable titlebar area. */
-export bool titlebar_hit(i32 win, i32 px, i32 py) {
-    if (!dom.node_exists(win)) { return false; }
-    case button_hit(win, px, py) of { Some(_) -> ({ return false; }); None -> _; };
-    Option<i32> x_result = dom.node_x(win);
-    Option<i32> y_result = dom.node_y(win);
-    Option<i32> width_result = dom.node_w(win);
-    i32 x = case x_result of { Some(value) -> value; None -> ({ return false; }); };
-    i32 y = case y_result of { Some(value) -> value; None -> ({ return false; }); };
-    i32 width = case width_result of { Some(value) -> value; None -> ({ return false; }); };
+export bool titlebar_hit(NodeId win, i32 px, i32 py) {
+    borrow NodeRow n = case dom.find_row(win) of { Some(row) -> row; None -> ({ return false; }); };
+    case row_button_hit(n, px, py) of { Some(_) -> ({ return false; }); None -> _; };
     i32 titlebar_height = ui_metrics.titlebar_height() * dom.ui_scale();
-    if (px < x) { return false; }
-    if (px >= x + width) { return false; }
-    if (py < y) { return false; }
-    if (py >= y + titlebar_height) { return false; }
+    if (px < n.x) { return false; }
+    if (px >= n.x + n.w) { return false; }
+    if (py < n.y) { return false; }
+    if (py >= n.y + titlebar_height) { return false; }
     return true;
 }

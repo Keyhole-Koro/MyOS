@@ -3,78 +3,66 @@ package dom_hit_test;
 import dom from "dom.mln";
 import { NodeRow } from "dom_model.mln";
 import { Blob } from "@std/memory/blob.mln";
-import { Children } from "dom.mln";
+import { NodeState, Children } from "dom.mln";
 import { Option } from "@std/core/option.mln";
+import { NodeId } from "@contracts/ui/widget.contract.mln";
 
 // Read-only pointer-to-node lookup. The DOM owns the tree and its state;
 // this module owns the traversal policy used by input dispatch and automation.
 
-/** Checks whether a point is inside a node's bounding rectangle. */
-export bool node_contains(i32 node_id, i32 px, i32 py) {
-    Option<i32> x_result = dom.node_x(node_id);
-    Option<i32> y_result = dom.node_y(node_id);
-    Option<i32> width_result = dom.node_w(node_id);
-    Option<i32> height_result = dom.node_h(node_id);
-    i32 x = case x_result of { Some(value) -> value; None -> ({ return false; }); };
-    i32 y = case y_result of { Some(value) -> value; None -> ({ return false; }); };
-    i32 width = case width_result of { Some(value) -> value; None -> ({ return false; }); };
-    i32 height = case height_result of { Some(value) -> value; None -> ({ return false; }); };
-    if (width == 0) { return false; }
-    if (height == 0) { return false; }
-    if (px < x) { return false; }
-    if (py < y) { return false; }
-    if (px >= x + width) { return false; }
-    if (py >= y + height) { return false; }
-    return true;
+// Whether a point is inside a row's rectangle; an empty one holds nothing.
+bool row_contains(borrow NodeRow n, i32 px, i32 py) {
+    if (n.w == 0 || n.h == 0) { return false; }
+    return px >= n.x && py >= n.y && px < n.x + n.w && py < n.y + n.h;
 }
 
-/** Finds the topmost visible, hit-testable node within a subtree. */
-export Option<i32> hit_test(i32 node_id, i32 px, i32 py) {
-    if (!dom.node_exists(node_id)) { return None; }
-    if (!dom.is_visible(node_id)) { return None; }
+// The topmost visible, hit-testable node within a row's subtree. Children are
+// walked as rows, so a subtree costs one lookup per node.
+Option<NodeId> hit_row(borrow NodeRow n, i32 px, i32 py) {
+    if (!(n.state & NodeState::VISIBLE)) { return None; }
 
-    bool inside = node_contains(node_id, px, py);
-    i32 found = 0;
+    bool inside = row_contains(n, px, py);
+    Option<NodeId> found = None;
     if (inside) {
-        if (dom.is_hit_testable(node_id)) { found = node_id; }
+        if (n.state & NodeState::HIT_TESTABLE) { found = Some(n.id); }
     }
 
     // Children of a clipping container cannot be hit outside its bounds.
     if (!inside) {
-        if (dom.clips_children_id(node_id)) { return None; }
+        if (dom.clips_children(n)) { return None; }
     }
 
-    for (i32 child_id in dom.children(node_id)) {
-        Option<i32> child_hit = hit_test(child_id, px, py);
-        case child_hit of { Some(id) -> ({ found = id; }); None -> _; };
+    for (NodeId child_id in dom.children(n.id)) {
+        Option<NodeId> hit = hit_row(dom.row_of(child_id), px, py);
+        if (hit.is_some()) { found = hit; }
     }
-    if (found == 0) { return None; }
-    return Some(found);
+    return found;
+}
+
+// The topmost visible, hit-testable node within an optional node's subtree.
+Option<NodeId> hit_test(Option<NodeId> node, i32 px, i32 py) {
+    return case dom.row_in(node) of {
+        Some(n) -> hit_row(n, px, py);
+        None -> None;
+    };
 }
 
 /** Finds the topmost interactive UI node at a display position. */
-export Option<i32> find_at(i32 x, i32 y) {
-    i32 menu_id = dom.menu_id();
-    if (menu_id != 0) {
-        Option<i32> menu_hit = hit_test(menu_id, x, y);
-        case menu_hit of { Some(id) -> ({ return Some(id); }); None -> _; };
-    }
+export Option<NodeId> find_at(i32 x, i32 y) {
+    Option<NodeId> menu = dom.menu_id();
+    Option<NodeId> menu_hit = hit_test(menu, x, y);
+    if (menu_hit.is_some()) { return menu_hit; }
 
-    i32 taskbar_id = dom.taskbar_id();
-    if (taskbar_id != 0) {
-        Option<i32> taskbar_hit = hit_test(taskbar_id, x, y);
-        case taskbar_hit of { Some(id) -> ({ return Some(id); }); None -> _; };
-    }
+    Option<NodeId> taskbar = dom.taskbar_id();
+    Option<NodeId> taskbar_hit = hit_test(taskbar, x, y);
+    if (taskbar_hit.is_some()) { return taskbar_hit; }
 
-    i32 found = 0;
-    for (i32 child_id in dom.children(dom.desktop_id())) {
-        if (child_id != taskbar_id) {
-            if (child_id != menu_id) {
-                Option<i32> hit = hit_test(child_id, x, y);
-                case hit of { Some(id) -> ({ found = id; }); None -> _; };
-            }
+    Option<NodeId> found = None;
+    for (NodeId child_id in dom.children(dom.desktop_id())) {
+        if (!dom.holds(taskbar, child_id) && !dom.holds(menu, child_id)) {
+            Option<NodeId> hit = hit_row(dom.row_of(child_id), x, y);
+            if (hit.is_some()) { found = hit; }
         }
     }
-    if (found == 0) { return None; }
-    return Some(found);
+    return found;
 }

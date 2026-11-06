@@ -21,6 +21,7 @@ import { AppError, KeyClaimError } from "@contracts/myapp/lifecycle.contract.mln
 import console from "@os/proc/console.mln";
 import mbin from "@std/format/mbin.mln";
 import { Result } from "@std/core/result.mln";
+import { NodeId } from "@contracts/ui/widget.contract.mln";
 import { result_take_ok } from "@std/core/result_take.mln";
 import { Option } from "@std/core/option.mln";
 import { Iterator } from "@std/core/iter.mln";
@@ -107,8 +108,8 @@ export void set_process_gone_sink(fn(i32 pid) -> void sink) { process_gone_sink 
  * @param token Correlation token or event-specific secondary value.
  * @param text Text payload, such as an opened path, or "".
  */
-void push_app_event(i32 owner, i32 id, i32 kind, i32 arg, i32 token, str text) {
-    event_sink(owner, id, kind, arg, token, text);
+void push_app_event(i32 owner, NodeId id, i32 kind, i32 arg, i32 token, str text) {
+    event_sink(owner, (i32)id, kind, arg, token, text);
 }
 
 // Names, types and paths read out of images on disk are copied into the
@@ -270,14 +271,13 @@ Result<Instance, AppError> mount(i32 a) {
  * @param owner Process ID of the application instance.
  * @param win DOM node ID of the window created by that process.
  */
-export void window_ready(i32 owner, i32 win) {
+export void window_ready(i32 owner, NodeId win) {
     Instance instance = case instances.instance_by_pid(owner) of {
         Some(value) -> value;
         None -> ({ return; });
     };
     borrow InstanceRow row = instance.row();
     if (!has_window(row)) { dom.note_app_starting(-1); }
-    if (win == 0) { return; }
     dom.set_owner(win, owner);
     dom.set_on_close(win, window_closed);
     case dom.append_child(dom.desktop_id(), win) of {
@@ -302,7 +302,7 @@ export void window_ready(i32 owner, i32 win) {
  * @param win DOM node ID of the closed window.
  * @param arg Event argument supplied by the DOM callback (unused).
  */
-void window_closed(i32 owner, i32 win, i32 arg) {
+void window_closed(i32 owner, NodeId win, i32 arg) {
     case instances.instance_by_pid(owner) of {
         Some(_) -> ({ push_app_event(owner, win, ShellEventKind::CLOSE, 0, 0, ""); });
         None -> ({
@@ -340,7 +340,7 @@ export void instance_exited(i32 owner) {
  * @param id Timer node ID (unused).
  * @param arg Timer callback argument (unused).
  */
-void reap_exited(i32 owner, i32 id, i32 arg) {
+void reap_exited(i32 owner, NodeId id, i32 arg) {
     for (Instance instance in instances.instance_all()) {
         i32 pid = instance.pid();
         Result<bool, ProcessControlError> status = console.has_exited(pid);
@@ -380,7 +380,7 @@ void reap_exited(i32 owner, i32 id, i32 arg) {
  * @return Ok(Some(window)) when a main window exists, Ok(None) while it starts,
  *         or Err when the index is invalid or launching fails.
  */
-export Result<Option<i32>, AppError> launch(i32 index) {
+export Result<Option<NodeId>, AppError> launch(i32 index) {
     if (index < 0 || index >= registry_count) { return Err(AppError::InvalidIndex(index)); }
     if (registry[index].single) {
         case instance_of_app(index) of {
@@ -406,7 +406,7 @@ export Result<Option<i32>, AppError> launch(i32 index) {
  * @return Ok(Some(window)) when available, Ok(None) while starting, or Err when
  *         the name is not installed or launching fails.
  */
-export Result<Option<i32>, AppError> launch_named(str name) {
+export Result<Option<NodeId>, AppError> launch_named(str name) {
     i32 i = 0;
     while (i < registry_count) {
         if (label_of(i) == name) { return launch(i); }
@@ -439,7 +439,7 @@ Result<Instance, AppError> instance_for_open(i32 a) {
  * @return Ok(Some(window)) when delivered immediately, Ok(None) while the app
  *         starts, or Err when the path, handler, or launch request is invalid.
  */
-export Result<Option<i32>, AppError> open(str path) {
+export Result<Option<NodeId>, AppError> open(str path) {
     if (path.length > 63) { return Err(AppError::PathTooLong(path.length)); }
     i32 a = 0;
     while (a < registry_count) {
@@ -498,7 +498,8 @@ export void launch_menu() {
     if (rows < 1) { rows = 1; }
     i32 y = graphics.display_height() - dom_widgets.taskbar_height() - (rows * 34 + 20) * s;
     str items = menu_items();
-    case dom_widgets.open_menu(8 * s, y, items, on_menu, 0) of {
+    Option<NodeId> no_target = None;
+    case dom_widgets.open_menu(8 * s, y, items, on_menu, no_target) of {
         Ok(_) -> _;
         Err(_) -> _;
     };
@@ -671,7 +672,7 @@ export bool dispatch_key(i32 owner, i32 code, i32 mods) {
         if (claim->owner == owner) {
             if (key_spec_matches(claim->spec.as_str(), code, mods)) {
                 borrow InstanceRow row = instance.row();
-                i32 window = case row.win of {
+                NodeId window = case row.win of {
                     Some(value) -> value;
                     None -> ({ return false; });
                 };

@@ -10,12 +10,14 @@ package ui_protocol;
 import str from "@std/text/str.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
-import { UiError } from "@contracts/ui/widget.contract.mln";
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import dom from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
 import irq from "@kernel/arch/irq.mln";
 import protocol_elements from "protocol_elements.mln";
-import { NodeKind } from "dom/dom.mln";
+import { NodeRow } from "dom/dom_model.mln";
+import { Blob } from "@std/memory/blob.mln";
+import { NodeKind, NodeState } from "dom/dom.mln";
 import { Request, RequestStatus } from "@contracts/myapp/message.contract.mln";
 import { UiOp } from "@contracts/myapp/ui.contract.mln";
 
@@ -25,6 +27,27 @@ bool writes_typed_result(i32 op) {
     if (op == UiOp::LIST_SELECTED || op == UiOp::LIST_ITEM) { return true; }
     if (op == UiOp::WINDOW_OF || op == UiOp::WINDOW_X || op == UiOp::WINDOW_Y) { return true; }
     return op >= UiOp::CREATE_WINDOW && op <= UiOp::APPEND_CHILD;
+}
+
+// The operations return their results; this is where one leaves for the
+// result the gateway staged, since the request crosses as words.
+RequestStatus answer<T>(Request *m, T value) {
+    T *out = (T*)m->result_out;
+    *out = value;
+    return RequestStatus::OK;
+}
+
+// Copies a view into a staged NUL-terminated buffer; a longer view is cut.
+// The buffer is the wire's: the view is what the operations return.
+Result<i32, UiError> staged(Result<str, UiError> view, char *out, i32 cap) {
+    str text = view?;
+    if (cap <= 0) { return Err(UiError::InvalidCapacity(cap)); }
+    i32 n = text.length;
+    if (n > cap - 1) { n = cap - 1; }
+    i32 i = 0;
+    while (i < n) { out[i] = text.data[i]; i++; }
+    out[n] = (char)0;
+    return Ok(n);
 }
 
 /**
@@ -51,73 +74,40 @@ export RequestStatus handle(Request *m) {
  */
 RequestStatus run_request(Request *m) {
     i32 op = m->op;
-    i32 id = m->a0;
+    NodeId id = NodeId(m->a0);   // what a0 means to the operations that take a node
     if (writes_typed_result(op) && m->result_out == 0) {
         return RequestStatus::MISSING_RESULT;
     }
     if (op == UiOp::SET_TEXT)       { set_text(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::TEXT_COPY) {
-        Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
-        *out = text_copy(id, (char*)m->a1, m->a2);
-        return RequestStatus::OK;
+        return answer<Result<i32, UiError>>(m, staged(text_of(id), (char*)m->a1, m->a2));
     }
-    if (op == UiOp::IS_CHECKED) {
-        Result<bool, UiError> *out = (Result<bool, UiError>*)m->result_out;
-        *out = is_checked(id);
-        return RequestStatus::OK;
-    }
+    if (op == UiOp::IS_CHECKED)     { return answer<Result<bool, UiError>>(m, is_checked(id)); }
     if (op == UiOp::SET_CHECKED)    { set_checked(id, m->a1); return RequestStatus::OK; }
     if (op == UiOp::INPUT_SET)      { input_set(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::AREA_APPEND)    { area_append(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::AREA_CLEAR)     { area_clear(id); return RequestStatus::OK; }
-    if (op == UiOp::AREA_LINES) {
-        Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
-        *out = area_lines(id);
-        return RequestStatus::OK;
-    }
+    if (op == UiOp::AREA_LINES)     { return answer<Result<i32, UiError>>(m, area_lines(id)); }
     if (op == UiOp::LIST_SET_ITEMS) { list_set_items(id, m->s0); return RequestStatus::OK; }
-    if (op == UiOp::LIST_COUNT) {
-        Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
-        *out = list_count(id);
-        return RequestStatus::OK;
-    }
+    if (op == UiOp::LIST_COUNT)     { return answer<Result<i32, UiError>>(m, list_count(id)); }
     if (op == UiOp::LIST_SELECTED) {
-        Result<Option<i32>, UiError> *out = (Result<Option<i32>, UiError>*)m->result_out;
-        *out = dom_widgets.list_selected(id);
-        return RequestStatus::OK;
+        return answer<Result<Option<i32>, UiError>>(m, dom_widgets.list_selected(id));
     }
     if (op == UiOp::LIST_ITEM) {
-        Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
-        *out = list_item_into(id, m->a1, (char*)m->a2, m->a3);
-        return RequestStatus::OK;
+        return answer<Result<i32, UiError>>(
+            m, staged(dom_widgets.list_item(id, m->a1), (char*)m->a2, m->a3));
     }
     if (op == UiOp::FOCUS)          { focus(id); return RequestStatus::OK; }
     if (op == UiOp::FOCUS_WINDOW)   { focus_window(id); return RequestStatus::OK; }
     if (op == UiOp::CLOSE)          { close(id); return RequestStatus::OK; }
-    if (op == UiOp::WINDOW_OF) {
-        Result<Option<i32>, UiError> *out = (Result<Option<i32>, UiError>*)m->result_out;
-        *out = window_of(id);
-        return RequestStatus::OK;
-    }
-    if (op == UiOp::WINDOW_X) {
-        Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
-        *out = window_x(id);
-        return RequestStatus::OK;
-    }
-    if (op == UiOp::WINDOW_Y) {
-        Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
-        *out = window_y(id);
-        return RequestStatus::OK;
-    }
+    if (op == UiOp::WINDOW_OF)      { return answer<Result<Option<NodeId>, UiError>>(m, window_of(id)); }
+    if (op == UiOp::WINDOW_X)       { return answer<Result<i32, UiError>>(m, window_x(id)); }
+    if (op == UiOp::WINDOW_Y)       { return answer<Result<i32, UiError>>(m, window_y(id)); }
     if (op == UiOp::SHOW)           { show(id); return RequestStatus::OK; }
     if (op == UiOp::TEST_ID)        { test_id(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::SEND_KEY)       { send_key(m->a0, m->a1, m->a2); return RequestStatus::OK; }
-    if (op >= UiOp::CREATE_WINDOW) {
-        if (op <= UiOp::APPEND_CHILD) {
-            Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
-            *out = protocol_elements.create(m);
-            return RequestStatus::OK;
-        }
+    if (op >= UiOp::CREATE_WINDOW && op <= UiOp::APPEND_CHILD) {
+        return answer<Result<NodeId, UiError>>(m, protocol_elements.create(m));
     }
     return RequestStatus::INVALID_OPERATION;
 }
@@ -130,41 +120,17 @@ RequestStatus run_request(Request *m) {
  * @param id UI node ID.
  * @param s Text string to set.
  */
-void set_text(i32 id, char *s) { dom.set_text(id, str.from_c(s)); }
+void set_text(NodeId id, char *s) { dom.set_text(id, str.from_c(s)); }
 
 /**
- * Copies a node's text content into the caller's buffer.
+ * Reads a node's text.
  *
  * @param id UI node ID.
- * @param out Destination buffer.
- * @param cap Maximum capacity of buffer in bytes (including null terminator).
- * @return Ok(number of bytes copied), or Err for an invalid node or capacity.
+ * @return Ok(a view of the text), or Err for an invalid node.
  */
-Result<i32, UiError> text_copy(i32 id, char *out, i32 cap) {
-    if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    if (cap <= 0) { return Err(UiError::InvalidCapacity(cap)); }
-    return Ok(copy_view(dom.text_of(id), out, cap));
-}
-
-// Copies a view into a NUL-terminated buffer; a longer view is cut.
-i32 copy_view(str view, char *out, i32 cap) {
-    i32 n = view.length;
-    if (n > cap - 1) { n = cap - 1; }
-    i32 i = 0;
-    while (i < n) { out[i] = view.data[i]; i++; }
-    out[n] = (char)0;
-    return n;
-}
-
-// A list row into the caller's staged buffer.
-Result<i32, UiError> list_item_into(i32 id, i32 index, char *out, i32 cap) {
-    if (cap <= 0) { return Err(UiError::InvalidCapacity(cap)); }
-    out[0] = (char)0;
-    Result<str, UiError> row = dom_widgets.list_item(id, index);
-    return case row of {
-        Ok(view) -> Ok(copy_view(view, out, cap));
-        Err(error) -> Err(error);
-    };
+Result<str, UiError> text_of(NodeId id) {
+    borrow NodeRow n = dom.require_row(id)?;
+    return Ok(n.text.as_str());
 }
 
 // --- widgets --------------------------------------------------------------------------------
@@ -175,14 +141,10 @@ Result<i32, UiError> list_item_into(i32 id, i32 index, char *out, i32 cap) {
  * @param id UI node ID.
  * @return Ok(true/false) for a Checkbox, or Err for an invalid ID or wrong node kind.
  */
-Result<bool, UiError> is_checked(i32 id) {
-    Option<NodeKind> kind = dom.kind_of(id);
-    NodeKind value = case kind of {
-        Some(v) -> v;
-        None -> ({ return Err(UiError::NodeNotFound(id)); });
-    };
-    if (value != NodeKind::CHECKBOX) { return Err(UiError::WrongNodeKind(id)); }
-    return Ok(dom.is_checked(id));
+Result<bool, UiError> is_checked(NodeId id) {
+    borrow NodeRow n = dom.require_row(id)?;
+    if (n.kind != NodeKind::CHECKBOX) { return Err(UiError::WrongNodeKind(id)); }
+    return Ok((n.state & NodeState::CHECKED) != 0);
 }
 
 /**
@@ -191,7 +153,7 @@ Result<bool, UiError> is_checked(i32 id) {
  * @param id UI node ID.
  * @param on 1 to check, 0 to uncheck.
  */
-void set_checked(i32 id, i32 on) { dom.set_checked(id, on); }
+void set_checked(NodeId id, i32 on) { dom.set_checked(id, on); }
 
 /**
  * Sets the value of a single-line text input widget.
@@ -199,7 +161,7 @@ void set_checked(i32 id, i32 on) { dom.set_checked(id, on); }
  * @param id UI node ID.
  * @param s Input text.
  */
-void input_set(i32 id, char *s) { dom_widgets.set_input_text(id, str.from_c(s)); }
+void input_set(NodeId id, char *s) { dom_widgets.set_input_text(id, str.from_c(s)); }
 
 /**
  * Appends text to a multi-line text area with IRQ protection.
@@ -210,7 +172,7 @@ void input_set(i32 id, char *s) { dom_widgets.set_input_text(id, str.from_c(s));
  * @param id UI node ID.
  * @param s Text to append.
  */
-void area_append(i32 id, char *s) {
+void area_append(NodeId id, char *s) {
     i32 was = irq.save_disable();
     defer irq.restore(was);
     dom_widgets.append_text(id, str.from_c(s));
@@ -221,7 +183,7 @@ void area_append(i32 id, char *s) {
  *
  * @param id UI node ID.
  */
-void area_clear(i32 id) { dom_widgets.clear_text_area(id); }
+void area_clear(NodeId id) { dom_widgets.clear_text_area(id); }
 
 /**
  * Returns the line count of a multi-line text area.
@@ -229,7 +191,7 @@ void area_clear(i32 id) { dom_widgets.clear_text_area(id); }
  * @param id UI node ID.
  * @return Ok(line count), or Err for an invalid ID or wrong node kind.
  */
-Result<i32, UiError> area_lines(i32 id) { return dom_widgets.text_area_line_count(id); }
+Result<i32, UiError> area_lines(NodeId id) { return dom_widgets.text_area_line_count(id); }
 
 /**
  * Replaces the item list of a list widget with newline-separated strings.
@@ -237,7 +199,7 @@ Result<i32, UiError> area_lines(i32 id) { return dom_widgets.text_area_line_coun
  * @param id UI node ID.
  * @param items Newline-separated item string.
  */
-void list_set_items(i32 id, char *items) { dom_widgets.list_set_items(id, str.from_c(items)); }
+void list_set_items(NodeId id, char *items) { dom_widgets.list_set_items(id, str.from_c(items)); }
 
 /**
  * Returns the number of items in a list widget.
@@ -245,7 +207,7 @@ void list_set_items(i32 id, char *items) { dom_widgets.list_set_items(id, str.fr
  * @param id UI node ID.
  * @return Ok(item count), or Err for an invalid ID or wrong node kind.
  */
-Result<i32, UiError> list_count(i32 id) { return dom_widgets.list_count(id); }
+Result<i32, UiError> list_count(NodeId id) { return dom_widgets.list_count(id); }
 
 // --- focus and windows ------------------------------------------------------------------------
 
@@ -254,14 +216,14 @@ Result<i32, UiError> list_count(i32 id) { return dom_widgets.list_count(id); }
  *
  * @param id UI node ID.
  */
-void focus(i32 id) { dom_widgets.set_focus(id); }
+void focus(NodeId id) { dom_widgets.set_focus(id); }
 
 /**
  * Sets focus to an entire window and activates it.
  *
  * @param win Window node ID.
  */
-void focus_window(i32 win) { dom_widgets.focus_window(win); }
+void focus_window(NodeId win) { dom_widgets.focus_window(win); }
 
 /**
  * Closes an application-opened window or dialog.
@@ -270,7 +232,7 @@ void focus_window(i32 win) { dom_widgets.focus_window(win); }
  *
  * @param win Window node ID.
  */
-void close(i32 win) {
+void close(NodeId win) {
     dom.remove_node(win);
     dom_widgets.activate_topmost();
 }
@@ -279,10 +241,17 @@ void close(i32 win) {
  * Resolves the enclosing window node ID for a given descendant control node.
  *
  * @param id UI node ID.
- * @return Enclosing window node ID, or 0 if none found.
+ * @return Ok(Some(window)), Ok(None) outside any window, or Err for an invalid ID.
  */
-Result<Option<i32>, UiError> window_of(i32 id) {
+Result<Option<NodeId>, UiError> window_of(NodeId id) {
     return dom.window_of(id);
+}
+
+// The row of a node that must be a window.
+Result<borrow NodeRow, UiError> window_row(NodeId win) {
+    borrow NodeRow n = dom.require_row(win)?;
+    if (n.kind != NodeKind::WINDOW) { return Err(UiError::WrongNodeKind(win)); }
+    return Ok(n);
 }
 
 /**
@@ -291,21 +260,9 @@ Result<Option<i32>, UiError> window_of(i32 id) {
  * @param win Window node ID.
  * @return X coordinate adjusted for UI scaling.
  */
-Result<i32, UiError> window_x(i32 win) {
-    if (!dom.node_exists(win)) { return Err(UiError::NodeNotFound(win)); }
-    Result<Option<i32>, UiError> enclosing = dom.window_of(win);
-    bool is_window = case enclosing of {
-        Ok(Some(value)) -> value == win;
-        Ok(None) -> false;
-        Err(_) -> false;
-    };
-    if (!is_window) { return Err(UiError::WrongNodeKind(win)); }
-    Option<i32> x_result = dom.node_x(win);
-    i32 x = case x_result of {
-        Some(value) -> value;
-        None -> ({ return Err(UiError::NodeNotFound(win)); });
-    };
-    return Ok(x / dom.ui_scale());
+Result<i32, UiError> window_x(NodeId win) {
+    borrow NodeRow n = window_row(win)?;
+    return Ok(n.x / dom.ui_scale());
 }
 
 /**
@@ -314,21 +271,9 @@ Result<i32, UiError> window_x(i32 win) {
  * @param win Window node ID.
  * @return Y coordinate adjusted for UI scaling.
  */
-Result<i32, UiError> window_y(i32 win) {
-    if (!dom.node_exists(win)) { return Err(UiError::NodeNotFound(win)); }
-    Result<Option<i32>, UiError> enclosing = dom.window_of(win);
-    bool is_window = case enclosing of {
-        Ok(Some(value)) -> value == win;
-        Ok(None) -> false;
-        Err(_) -> false;
-    };
-    if (!is_window) { return Err(UiError::WrongNodeKind(win)); }
-    Option<i32> y_result = dom.node_y(win);
-    i32 y = case y_result of {
-        Some(value) -> value;
-        None -> ({ return Err(UiError::NodeNotFound(win)); });
-    };
-    return Ok(y / dom.ui_scale());
+Result<i32, UiError> window_y(NodeId win) {
+    borrow NodeRow n = window_row(win)?;
+    return Ok(n.y / dom.ui_scale());
 }
 
 /**
@@ -336,7 +281,7 @@ Result<i32, UiError> window_y(i32 win) {
  *
  * @param win Window node ID.
  */
-void show(i32 win) {
+void show(NodeId win) {
     case dom.append_child(dom.desktop_id(), win) of { Ok(_) -> _; Err(_) -> ({ return; }); };
     dom_widgets.focus_window(win);
 }
@@ -347,7 +292,7 @@ void show(i32 win) {
  * @param id UI node ID.
  * @param name Test identifier name.
  */
-void test_id(i32 id, char *name) { dom.set_test_id(id, str.from_c(name)); }
+void test_id(NodeId id, char *name) { dom.set_test_id(id, str.from_c(name)); }
 
 // --- keys ---------------------------------------------------------------------------------------
 

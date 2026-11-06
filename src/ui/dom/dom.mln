@@ -12,7 +12,7 @@ import { UiEventKind } from "@os/ui/events.mln";
 import { Option } from "@std/core/option.mln";
 import { Iterator } from "@std/core/iter.mln";
 import { Result } from "@std/core/result.mln";
-import { UiError } from "@contracts/ui/widget.contract.mln";
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import { Drop } from "@std/core/drop.mln";
 
 // Kernel object tree + UI DOM. See docs/DOM_SPEC.md and MYOS-014.
@@ -91,7 +91,7 @@ export enum NodeStyle {
     READONLY = 8, // TextArea: displays text, no editing (console output)
 }
 
-// Handlers all share one ABI, `void handler(i32 owner, i32 id, i32 arg)`:
+// Handlers all share one ABI, `void handler(i32 owner, NodeId id, i32 arg)`:
 // `owner` is the app instance the node belongs to (see `owner` below), `id`
 // the node, `arg` event data (a key handler gets code | mods << 16).
 // The on_* fields hold server-side functions only -- the taskbar, menus,
@@ -112,33 +112,34 @@ export enum NodeStyle {
 // would otherwise union into nearly the whole screen. When the list is
 // full, new areas merge into the first entry.
 export const i32 DAMAGE_MAX = 8;
-i32 g_damage_x0[8];
-i32 g_damage_y0[8];
-i32 g_damage_x1[8];
-i32 g_damage_y1[8];
+struct DamageRect {
+    i32 x0;
+    i32 y0;
+    i32 x1;
+    i32 y1;
+};
+DamageRect g_damage[8];
 i32 g_damage_count = 0;
 
 // The rect render_scene is currently repainting, so node_in_damage can test
 // against just that one; g_painting_all short-circuits it for full paints.
-i32 g_paint_x0 = 0;
-i32 g_paint_y0 = 0;
-i32 g_paint_x1 = 0;
-i32 g_paint_y1 = 0;
-i32 g_painting_all = 1;
+DamageRect g_paint;
+bool g_painting_all = true;
 
 i32 g_revision = 0;     // increments on externally observable DOM mutation
-i32 g_root_node_id = 0;
-i32 g_desktop_node_id = 0; // set in init(); UI attaches under this
-i32 g_taskbar_id = 0;      // the desktop's taskbar node, drawn above windows
+NodeId g_root_node_id;
+NodeId g_desktop_node_id;  // set while the desktop is built; UI attaches under this
 
-i32 g_active_window = 0;   // window with STATE_FOCUSED (front-most, gets keys)
-i32 g_focus_id = 0;        // node with keyboard focus (a TextInput), or 0
+// init() sets these: an Option global starts as zero bytes, which read as Some(0).
+Option<NodeId> g_taskbar_id;    // the desktop's taskbar node, drawn above windows
+Option<NodeId> g_active_window; // window with STATE_FOCUSED (front-most, gets keys)
+Option<NodeId> g_focus_id;      // node with keyboard focus (a TextInput)
 void no_launcher() { }
 fn() -> void g_launcher = no_launcher; // taskbar launcher button
-i32 g_menu_id = 0;         // the open popup menu, or 0
+Option<NodeId> g_menu_id;       // the open popup menu
 void no_menu_action(i32 index) { }
 fn(i32 index) -> void g_menu_handler = no_menu_action;
-i32 g_menu_target = 0;     // the window a window-menu acts on (0 for the desktop menu)
+Option<NodeId> g_menu_target;   // the window a window-menu acts on (None for the desktop menu)
 
 // The app instance whose code is running right now (a handler drained from
 // the event queue, or a view() being mounted); create_node stamps it into
@@ -167,12 +168,15 @@ export i32 apps_starting() { return g_apps_starting; }
 bool no_key_filter(i32 owner, i32 code, i32 mods) { return false; }
 fn(i32 owner, i32 code, i32 mods) -> bool g_key_filter = no_key_filter;
 
-// Pending handler calls, stored in parallel arrays so callback types survive.
+// Pending handler calls.
 export const i32 EVENT_MAX = 64;
-fn(i32 owner, i32 id, i32 arg) -> void g_event_handlers[64];
-i32 g_event_owners[64];
-i32 g_event_ids[64];
-i32 g_event_args[64];
+struct PendingEvent {
+    fn(i32 owner, NodeId id, i32 arg) -> void handler;
+    i32 owner;
+    NodeId id;
+    i32 arg;
+};
+PendingEvent g_events[64];
 i32 g_event_head = 0;
 i32 g_event_tail = 0;
 
@@ -180,15 +184,18 @@ i32 g_event_tail = 0;
 // one app cannot take the whole table from the others; create_node()
 // fails past that, and past the table's size.
 export const i32 NODES_PER_OWNER = 96;
-i32 g_owner_nodes_owner[32];   // per-owner node counts, 0 = free slot
-i32 g_owner_nodes_count[32];
+struct OwnerNodes {
+    i32 owner;   // 0 = free slot
+    i32 count;
+};
+OwnerNodes g_owner_nodes[32];
 
 Option<i32> owner_slot(i32 owner, i32 make) {
     Option<i32> free = None;
     i32 i = 0;
     while (i < 32) {
-        if (g_owner_nodes_owner[i] == owner) { return Some(i); }
-        if (g_owner_nodes_owner[i] == 0) {
+        if (g_owner_nodes[i].owner == owner) { return Some(i); }
+        if (g_owner_nodes[i].owner == 0) {
             case free of {
                 None -> ({ free = Some(i); });
                 Some(_) -> _;
@@ -201,25 +208,13 @@ Option<i32> owner_slot(i32 owner, i32 make) {
         Some(v) -> v;
         None -> ({ return None; });
     };
-    g_owner_nodes_owner[slot] = owner;
-    g_owner_nodes_count[slot] = 0;
+    g_owner_nodes[slot] = OwnerNodes { owner: owner, count: 0 };
     return Some(slot);
 }
 
-/**
- * Returns the number of DOM nodes currently owned by a process.
- * @param owner Process ID whose nodes are counted.
- * @return Current owned-node count, or 0 if the owner has no tracked nodes.
- */
-export i32 nodes_of(i32 owner) {
-    return case owner_slot(owner, 0) of {
-        Some(s) -> g_owner_nodes_count[s];
-        None -> 0;
-    };
-}
 // Registered timers (ids), scanned by tick().
 export const i32 TIMER_MAX = 16;
-i32 g_timer_ids[16];
+NodeId g_timer_ids[16];
 i32 g_timer_count = 0;
 
 // Scratch rectangle for helpers that hand back a rect (no multiple returns).
@@ -269,36 +264,92 @@ export i32 scale_ui(i32 value) {
  * @param id DOM Node ID.
  * @return True if node exists, false otherwise.
  */
-export bool node_exists(i32 id) {
-    return dom_model.node_live_id(id);
+export bool node_exists(NodeId id) {
+    return dom_model.node_live_id((i32)id);
 }
 
 /**
- * The row of a node. A dead ID traps, so callers test node_exists() first.
+ * The row of a node that may be gone: the lookup for an ID from outside.
+ * @param id DOM Node ID.
+ * @return Some(row) for a live node, None for a dead ID.
+ */
+export Option<borrow NodeRow> find_row(NodeId id) {
+    i32 word = (i32)id;
+    if (!dom_model.node_live_id(word)) { return None; }
+    return Some(dom_model.node_row_id(word));
+}
+
+/**
+ * The row of a node, for a function that reports a dead ID as an error.
+ * @param id DOM Node ID.
+ * @return Ok(row), or Err(UiError::NodeNotFound) for a dead ID.
+ */
+export Result<borrow NodeRow, UiError> require_row(NodeId id) {
+    return case find_row(id) of {
+        Some(row) -> Ok(row);
+        None -> Err(UiError::NodeNotFound(id));
+    };
+}
+
+/**
+ * The row of a node known to be live, such as a child being walked or a
+ * parent just read from a live node. A dead ID traps; use find_row() otherwise.
  * @param id DOM Node ID.
  * @return The node's row.
  */
-export borrow NodeRow row_of(i32 id) {
-    return dom_model.node_row_id(id);
+export borrow NodeRow row_of(NodeId id) {
+    return dom_model.node_row_id((i32)id);
+}
+
+/**
+ * The row of an optional node.
+ * @param slot DOM Node ID, if there is one.
+ * @return Some(row) for a live node, None otherwise.
+ */
+export Option<borrow NodeRow> row_in(Option<NodeId> slot) {
+    return case slot of {
+        Some(id) -> find_row(id);
+        None -> None;
+    };
+}
+
+/**
+ * Whether an optional node is a given node.
+ * @param slot DOM Node ID, if there is one.
+ * @param id DOM Node ID to compare with.
+ */
+export bool holds(Option<NodeId> slot, NodeId id) {
+    return case slot of { Some(held) -> held == id; None -> false; };
+}
+
+/**
+ * Whether two optional nodes are the same node, or both none.
+ */
+export bool same_node(Option<NodeId> a, Option<NodeId> b) {
+    return case a of {
+        Some(id) -> holds(b, id);
+        None -> b.is_none();
+    };
 }
 
 /**
  * The ID of a node's parent.
  * @param id DOM Node ID.
- * @return The parent's ID, or 0 for a root, detached or dead node.
+ * @return The parent's ID, or None for a root, detached or dead node.
  */
-export i32 parent_id(i32 id) {
-    if (!node_exists(id)) { return 0; }
-    return dom_model.node_parent_id(id);
+export Option<NodeId> parent_id(NodeId id) {
+    if (!node_exists(id)) { return None; }
+    i32 parent = dom_model.node_parent_id((i32)id);
+    if (parent == 0) { return None; }
+    return Some(NodeId(parent));
 }
 
 // Lays out a node's parent again after the node changed size.
-void relayout_parent(i32 id) {
-    i32 parent = parent_id(id);
-    if (parent != 0) {
-        borrow NodeRow row = row_of(parent);
-        relayout_container(row);
-    }
+void relayout_parent(NodeId id) {
+    case parent_id(id) of {
+        Some(parent) -> relayout_container(row_of(parent));
+        None -> _;
+    };
 }
 
 // Replaces a string column's buffer. The old one is released; an empty
@@ -321,21 +372,21 @@ Blob replaced_text(Blob old, str text) {
  *     return Ok(node.keep());
  */
 export struct NewNode {
-    i32 id;
+    NodeId id;
+    bool kept;
 };
 
 export impl Drop for NewNode {
     void (borrow Self self) drop() {
-        if (self.id != 0) { remove_node(self.id); }
-        self.id = 0;
+        if (!self.kept) { remove_node(self.id); }
+        self.kept = true;
     }
 }
 
 /** Gives up the guard and returns the node ID. */
-export i32 (borrow NewNode self) keep() {
-    i32 id = self.id;
-    self.id = 0;
-    return id;
+export NodeId (borrow NewNode self) keep() {
+    self.kept = true;
+    return self.id;
 }
 
 /**
@@ -344,7 +395,7 @@ export i32 (borrow NewNode self) keep() {
  * @param name Null-terminated node name string.
  * @return Newly allocated Node ID.
  */
-export Result<i32, UiError> create_node(i32 kind, str name) {
+export Result<NodeId, UiError> create_node(i32 kind, str name) {
     i32 oslot = 0;
     bool has_owner_slot = false;
     if (g_current_owner != 0) {
@@ -352,7 +403,7 @@ export Result<i32, UiError> create_node(i32 kind, str name) {
             Some(v) -> ({ has_owner_slot = true; v; });
             None -> ({ return Err(UiError::OwnerTableFull(g_current_owner)); });
         };
-        if (g_owner_nodes_count[oslot] >= NODES_PER_OWNER) {
+        if (g_owner_nodes[oslot].count >= NODES_PER_OWNER) {
             return Err(UiError::OwnerNodeLimit(g_current_owner));
         }
     }
@@ -360,13 +411,16 @@ export Result<i32, UiError> create_node(i32 kind, str name) {
         Some(value) -> value;
         None -> ({ return Err(UiError::NodeIdLimit); });
     };
-    i32 id = made.raw();
-    if (has_owner_slot) { g_owner_nodes_count[oslot] = g_owner_nodes_count[oslot] + 1; }
+    NodeId id = NodeId(made.raw());
+    if (has_owner_slot) { g_owner_nodes[oslot].count = g_owner_nodes[oslot].count + 1; }
     borrow NodeRow n = made.row();
     n.id = id;
     n.kind = (u16)kind;
     n.name = replaced_text(n.name, name);
     n.owner = g_current_owner;
+    // A fresh row is zero bytes, and zero bytes read as Some(0).
+    n.sel = None;
+    n.color = None;
     touch();
     return Ok(id);
 }
@@ -378,9 +432,8 @@ export Result<i32, UiError> create_node(i32 kind, str name) {
  * @param id DOM node ID.
  * @return Ok(owner), including owner 0 for system-owned nodes, or Err for an invalid ID.
  */
-export Result<i32, UiError> owner_of(i32 id) {
-    if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow NodeRow n = row_of(id);
+export Result<i32, UiError> owner_of(NodeId id) {
+    borrow NodeRow n = require_row(id)?;
     return Ok(n.owner);
 }
 
@@ -389,11 +442,10 @@ export Result<i32, UiError> owner_of(i32 id) {
  * @param id Root DOM node ID of the subtree.
  * @param owner Process ID to assign, or 0 for system ownership.
  */
-export void set_owner(i32 id, i32 owner) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
+export void set_owner(NodeId id, i32 owner) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     n.owner = owner;
-    for (i32 child in children(id)) {
+    for (NodeId child in children(id)) {
         set_owner(child, owner);
     }
 }
@@ -429,7 +481,7 @@ export void set_current_owner(i32 owner) { g_current_owner = owner; }
 export void remove_owned(i32 owner) {
     if (owner == 0) { return; }
     for (Node each in dom_model.node_all()) {
-        if (each.is_live() && each.row().owner == owner) { remove_node(each.raw()); }
+        if (each.is_live() && each.row().owner == owner) { remove_node(NodeId(each.raw())); }
     }
 }
 
@@ -443,25 +495,14 @@ export void remove_owned(i32 owner) {
  * @param id DOM node ID associated with the event.
  * @param arg Event-specific integer argument.
  */
-export void push_event(fn(i32 owner, i32 id, i32 arg) -> void handler,
-                       i32 owner, i32 id, i32 arg) {
+export void push_event(fn(i32 owner, NodeId id, i32 arg) -> void handler,
+                       i32 owner, NodeId id, i32 arg) {
     if (handler == 0) { return; }
     i32 next = g_event_tail + 1;
     if (next >= EVENT_MAX) { next = 0; }
     if (next == g_event_head) { return; }
-    g_event_handlers[g_event_tail] = handler;
-    g_event_owners[g_event_tail] = owner;
-    g_event_ids[g_event_tail] = id;
-    g_event_args[g_event_tail] = arg;
+    g_events[g_event_tail] = PendingEvent { handler: handler, owner: owner, id: id, arg: arg };
     g_event_tail = next;
-}
-
-/**
- * Checks whether the DOM event queue contains a handler call.
- * @return 1 when an event is pending, otherwise 0.
- */
-export bool has_events() {
-    return g_event_head != g_event_tail;
 }
 
 /**
@@ -473,7 +514,7 @@ export bool has_events() {
  * @return 1 when an app event or callback was delivered/queued, otherwise 0.
  */
 export bool emit(borrow NodeRow n, i32 kind,
-                 fn(i32 owner, i32 id, i32 arg) -> void handler, i32 arg) {
+                 fn(i32 owner, NodeId id, i32 arg) -> void handler, i32 arg) {
     if (n.owner != 0) {
         ui_event.emit(n.owner, n.id, kind, arg);
         return true;
@@ -489,16 +530,14 @@ export bool emit(borrow NodeRow n, i32 kind,
  */
 export void drain_events() {
     while (g_event_head != g_event_tail) {
-        fn(i32 owner, i32 id, i32 arg) -> void handler = g_event_handlers[g_event_head];
-        i32 owner = g_event_owners[g_event_head];
-        i32 id = g_event_ids[g_event_head];
-        i32 arg = g_event_args[g_event_head];
+        PendingEvent event = g_events[g_event_head];
         g_event_head = g_event_head + 1;
         if (g_event_head >= EVENT_MAX) { g_event_head = 0; }
         i32 outer = g_current_owner;
-        g_current_owner = owner;
+        g_current_owner = event.owner;
         defer set_current_owner(outer);
-        handler(owner, id, arg);
+        fn(i32 owner, NodeId id, i32 arg) -> void handler = event.handler;
+        handler(event.owner, event.id, event.arg);
     }
 }
 
@@ -510,9 +549,9 @@ export void drain_events() {
 // Kernel tasks preempt on the timer, so the test-and-set is done with
 // interrupts off.
 
-i32 g_lock = 0;      // held
+bool g_lock = false; // held
 i32 g_want = 0;      // tasks waiting for it
-i32 g_handoff = 0;   // unlock() passed the lock straight to a waiter
+bool g_handoff = false; // unlock() passed the lock straight to a waiter
 
 /**
  * Acquires the DOM lock, sleeping until ownership is handed to this task when contended.
@@ -524,7 +563,7 @@ export void lock() {
         i32 was = irq.save_disable();
         defer irq.restore(was);
         if (!g_lock) {
-            g_lock = 1;
+            g_lock = true;
             return;
         }
         g_want = g_want + 1;
@@ -533,10 +572,10 @@ export void lock() {
         {
             i32 was = irq.save_disable();
             defer irq.restore(was);
-            if (g_handoff != 0) {
-                g_handoff = 0;
+            if (g_handoff) {
+                g_handoff = false;
                 g_want = g_want - 1;
-                return;   // g_lock stays 1: it is ours now
+                return;   // g_lock stays set: it is ours now
             }
         }
         scheduler.sleep(1);
@@ -548,9 +587,9 @@ export void unlock() {
     i32 was = irq.save_disable();
     defer irq.restore(was);
     if (g_want != 0) {
-        g_handoff = 1;   // the next waiter to look owns it
+        g_handoff = true;   // the next waiter to look owns it
     } else {
-        g_lock = 0;
+        g_lock = false;
     }
 }
 
@@ -561,23 +600,9 @@ export void unlock() {
  * @param id DOM Node ID.
  * @return Some(kind) or None.
  */
-export Option<NodeKind> kind_of(i32 id) {
-    if (!node_exists(id)) { return None; }
-    borrow NodeRow n = row_of(id);
+export Option<NodeKind> kind_of(NodeId id) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return None; }); };
     return Some(n.kind);
-}
-
-/**
- * Returns the parent node ID of a node.
- * @param id DOM Node ID.
- * @return Ok(Some(parent)), Ok(None) for root or detached nodes, or Err for an invalid ID.
- */
-export Result<Option<i32>, UiError> parent_of(i32 id) {
-    if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow NodeRow n = row_of(id);
-    i32 parent = parent_id(id);
-    if (parent == 0) { return Ok(None); }
-    return Ok(Some(parent));
 }
 
 /**
@@ -585,46 +610,27 @@ export Result<Option<i32>, UiError> parent_of(i32 id) {
  * @param id DOM node ID.
  * @return Some(X coordinate), or None when the node ID is invalid.
  */
-export Option<i32> node_x(i32 id) { if (!node_exists(id)) { return None; } borrow NodeRow n = row_of(id); return Some(n.x); }
+export Option<i32> node_x(NodeId id) {
+    return case find_row(id) of { Some(n) -> Some(n.x); None -> None; };
+}
+
 /**
  * Returns the absolute Y coordinate of a node in screen pixels.
  * @param id DOM node ID.
  * @return Some(Y coordinate), or None when the node ID is invalid.
  */
-export Option<i32> node_y(i32 id) { if (!node_exists(id)) { return None; } borrow NodeRow n = row_of(id); return Some(n.y); }
-/**
- * Returns the width of a node in screen pixels.
- * @param id DOM node ID.
- * @return Some(width), or None when the node ID is invalid.
- */
-export Option<i32> node_w(i32 id) { if (!node_exists(id)) { return None; } borrow NodeRow n = row_of(id); return Some(n.w); }
-/**
- * Returns the height of a node in screen pixels.
- * @param id DOM node ID.
- * @return Some(height), or None when the node ID is invalid.
- */
-export Option<i32> node_h(i32 id) { if (!node_exists(id)) { return None; } borrow NodeRow n = row_of(id); return Some(n.h); }
+export Option<i32> node_y(NodeId id) {
+    return case find_row(id) of { Some(n) -> Some(n.y); None -> None; };
+}
 
 /**
  * Returns the text content of a node, or null.
  * @param id DOM Node ID.
  * @return Pointer to text string.
  */
-export str text_of(i32 id) {
-    if (!node_exists(id)) { return ""; }
-    borrow NodeRow n = row_of(id);
+export str text_of(NodeId id) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return ""; }); };
     return n.text.as_str();
-}
-
-/**
- * Returns the accessibility / automation role of a node.
- * @param id DOM Node ID.
- * @return Ok(NodeRole value), or Err for an invalid ID.
- */
-export Result<NodeRole, UiError> role_of(i32 id) {
-    if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow NodeRow n = row_of(id);
-    return Ok(n.role);
 }
 
 /**
@@ -632,37 +638,23 @@ export Result<NodeRole, UiError> role_of(i32 id) {
  * @param id DOM Node ID.
  * @return Pointer to name string.
  */
-export str name_of(i32 id) {
-    if (!node_exists(id)) { return ""; }
-    borrow NodeRow n = row_of(id);
+export str name_of(NodeId id) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return ""; }); };
     return n.name.as_str();
-}
-
-/**
- * Returns the automation test ID of a node.
- * @param id DOM Node ID.
- * @return Pointer to test_id string.
- */
-export str test_id_of(i32 id) {
-    if (!node_exists(id)) { return ""; }
-    borrow NodeRow n = row_of(id);
-    return n.test_id.as_str();
 }
 
 /**
  * Returns the root node ID of the DOM tree.
  * @return Root Node ID.
  */
-export i32 root_node_id() { return g_root_node_id; }
+export NodeId root_node_id() { return g_root_node_id; }
 
 /**
  * Returns the automation-visible value of a node (text content for textbox/textarea).
- * @param id DOM Node ID.
+ * @param n DOM Node row.
  * @return String value of the node, or empty string.
  */
-export str automation_value_of(i32 id) {
-    if (!node_exists(id)) { return ""; }
-    borrow NodeRow n = row_of(id);
+export str automation_value_of(borrow NodeRow n) {
     i32 role = n.role;
     if (role == NodeRole::TEXTBOX) { return n.text.as_str(); }
     if (role == NodeRole::TEXTAREA) { return n.text.as_str(); }
@@ -671,39 +663,21 @@ export str automation_value_of(i32 id) {
 
 // --- damage -------------------------------------------------------------------------
 
-/**
- * Checks whether two rectangles overlap or touch.
- * @param ax0 First rectangle left.
- * @param ay0 First rectangle top.
- * @param ax1 First rectangle right.
- * @param ay1 First rectangle bottom.
- * @param bx0 Second rectangle left.
- * @param by0 Second rectangle top.
- * @param bx1 Second rectangle right.
- * @param by1 Second rectangle bottom.
- * @return 1 if rectangles touch or overlap, 0 otherwise.
- */
-export bool rects_touch(i32 ax0, i32 ay0, i32 ax1, i32 ay1, i32 bx0, i32 by0, i32 bx1, i32 by1) {
-    if (ax1 < bx0) { return false; }
-    if (bx1 < ax0) { return false; }
-    if (ay1 < by0) { return false; }
-    if (by1 < ay0) { return false; }
+// Whether two rectangles overlap or touch.
+bool rects_touch(DamageRect a, DamageRect b) {
+    if (a.x1 < b.x0) { return false; }
+    if (b.x1 < a.x0) { return false; }
+    if (a.y1 < b.y0) { return false; }
+    if (b.y1 < a.y0) { return false; }
     return true;
 }
 
-/**
- * Expands a damage rectangle entry to include another bounding box.
- * @param i Index of damage entry in table.
- * @param x0 Bounding box left.
- * @param y0 Bounding box top.
- * @param x1 Bounding box right.
- * @param y1 Bounding box bottom.
- */
-export void damage_union_into(i32 i, i32 x0, i32 y0, i32 x1, i32 y1) {
-    if (x0 < g_damage_x0[i]) { g_damage_x0[i] = x0; }
-    if (y0 < g_damage_y0[i]) { g_damage_y0[i] = y0; }
-    if (x1 > g_damage_x1[i]) { g_damage_x1[i] = x1; }
-    if (y1 > g_damage_y1[i]) { g_damage_y1[i] = y1; }
+// Grows a damage entry to include another rectangle.
+void damage_union_into(borrow DamageRect entry, DamageRect rect) {
+    if (rect.x0 < entry.x0) { entry.x0 = rect.x0; }
+    if (rect.y0 < entry.y0) { entry.y0 = rect.y0; }
+    if (rect.x1 > entry.x1) { entry.x1 = rect.x1; }
+    if (rect.y1 > entry.y1) { entry.y1 = rect.y1; }
 }
 
 /**
@@ -717,35 +691,29 @@ export void damage_union_into(i32 i, i32 x0, i32 y0, i32 x1, i32 y1) {
 export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
     i32 display_width = ui_metrics.display_width();
     i32 display_height = ui_metrics.display_height();
-    i32 x0 = x;
-    i32 y0 = y;
-    i32 x1 = x + w;
-    i32 y1 = y + h;
+    DamageRect rect = DamageRect { x0: x, y0: y, x1: x + w, y1: y + h };
 
-    if (x0 < 0) { x0 = 0; }
-    if (y0 < 0) { y0 = 0; }
-    if (x1 > display_width) { x1 = display_width; }
-    if (y1 > display_height) { y1 = display_height; }
-    if (x1 <= x0) { return; }
-    if (y1 <= y0) { return; }
+    if (rect.x0 < 0) { rect.x0 = 0; }
+    if (rect.y0 < 0) { rect.y0 = 0; }
+    if (rect.x1 > display_width) { rect.x1 = display_width; }
+    if (rect.y1 > display_height) { rect.y1 = display_height; }
+    if (rect.x1 <= rect.x0) { return; }
+    if (rect.y1 <= rect.y0) { return; }
 
     i32 i = 0;
     while (i < g_damage_count) {
-        if (rects_touch(x0, y0, x1, y1, g_damage_x0[i], g_damage_y0[i], g_damage_x1[i], g_damage_y1[i])) {
-            damage_union_into(i, x0, y0, x1, y1);
+        if (rects_touch(rect, g_damage[i])) {
+            damage_union_into(&g_damage[i], rect);
             return;
         }
         i++;
     }
     if (g_damage_count < DAMAGE_MAX) {
-        g_damage_x0[g_damage_count] = x0;
-        g_damage_y0[g_damage_count] = y0;
-        g_damage_x1[g_damage_count] = x1;
-        g_damage_y1[g_damage_count] = y1;
+        g_damage[g_damage_count] = rect;
         g_damage_count = g_damage_count + 1;
         return;
     }
-    damage_union_into(0, x0, y0, x1, y1);
+    damage_union_into(&g_damage[0], rect);
 }
 
 /**
@@ -774,14 +742,21 @@ export void node_extent(borrow NodeRow n) {
 }
 
 /**
+ * Marks a row's full extent as needing repaint.
+ * @param n DOM Node row.
+ */
+export void damage_row(borrow NodeRow n) {
+    node_extent(n);
+    damage_rect(g_ext_x, g_ext_y, g_ext_w, g_ext_h);
+}
+
+/**
  * Marks a node's full extent as needing repaint.
  * @param id DOM Node ID.
  */
-export void damage_node(i32 id) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
-    node_extent(n);
-    damage_rect(g_ext_x, g_ext_y, g_ext_w, g_ext_h);
+export void damage_node(NodeId id) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    damage_row(n);
 }
 
 /**
@@ -843,12 +818,11 @@ export i32 text_height_of(borrow NodeRow n) {
  * @param dx Horizontal offset.
  * @param dy Vertical offset.
  */
-export void offset_subtree(i32 id, i32 dx, i32 dy) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
+export void offset_subtree(NodeId id, i32 dx, i32 dy) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     n.x = (u16)(n.x + dx);
     n.y = (u16)(n.y + dy);
-    for (i32 child_id in children(id)) {
+    for (NodeId child_id in children(id)) {
         offset_subtree(child_id, dx, dy);
     }
 }
@@ -859,17 +833,16 @@ export void offset_subtree(i32 id, i32 dx, i32 dy) {
  * @param x Target X coordinate.
  * @param y Target Y coordinate.
  */
-export void place_child(i32 child_id, i32 x, i32 y) {
-    if (!node_exists(child_id)) { return; }
-    borrow NodeRow child = row_of(child_id);
+export void place_child(NodeId child_id, i32 x, i32 y) {
+    borrow NodeRow child = case find_row(child_id) of { Some(row) -> row; None -> ({ return; }); };
     i32 dx = x - child.x;
     i32 dy = y - child.y;
     if (dx == 0) {
         if (dy == 0) { return; }
     }
-    damage_node(child_id);
+    damage_row(child);
     offset_subtree(child_id, dx, dy);
-    damage_node(child_id);
+    damage_row(child);
 }
 
 /**
@@ -887,8 +860,7 @@ export void relayout_column(borrow NodeRow column) {
     i32 cursor_y = column.y + column.padding;
     i32 gap = column.gap;
 
-    for (i32 child_id in children(column.id)) {
-        if (!node_exists(child_id)) { break; }
+    for (NodeId child_id in children(column.id)) {
         borrow NodeRow child = row_of(child_id);
         i32 child_h = child.h;
         place_child(child_id, child_x, cursor_y);
@@ -906,8 +878,7 @@ export void relayout_row(borrow NodeRow row) {
     i32 child_y = row.y + row.padding;
     i32 gap = row.gap;
 
-    for (i32 child_id in children(row.id)) {
-        if (!node_exists(child_id)) { break; }
+    for (NodeId child_id in children(row.id)) {
         borrow NodeRow child = row_of(child_id);
         i32 child_w = child.w;
         place_child(child_id, cursor_x, child_y);
@@ -936,17 +907,16 @@ export void relayout_container(borrow NodeRow n) {
  * @param w Width in pixels.
  * @param h Height in pixels.
  */
-export void set_bounds(i32 id, i32 x, i32 y, i32 w, i32 h) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
+export void set_bounds(NodeId id, i32 x, i32 y, i32 w, i32 h) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     // Damage the old area as well as the new one, so vacating a region repaints
     // the background that was underneath.
-    damage_node(id);
+    damage_row(n);
     n.x = (u16)x;
     n.y = (u16)y;
     n.w = (u16)w;
     n.h = (u16)h;
-    damage_node(id);
+    damage_row(n);
     relayout_container(n);
     relayout_parent(id);
     touch();
@@ -958,12 +928,11 @@ export void set_bounds(i32 id, i32 x, i32 y, i32 w, i32 h) {
  * @param dx Horizontal delta.
  * @param dy Vertical delta.
  */
-export void move_node(i32 id, i32 dx, i32 dy) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
-    damage_node(id);
+export void move_node(NodeId id, i32 dx, i32 dy) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    damage_row(n);
     offset_subtree(id, dx, dy);
-    damage_node(id);
+    damage_row(n);
     touch();
 }
 
@@ -972,10 +941,9 @@ export void move_node(i32 id, i32 dx, i32 dy) {
  * @param id DOM Node ID.
  * @param text Null-terminated text string.
  */
-export void set_text(i32 id, str text) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
-    damage_node(id);   // old string's extent
+export void set_text(NodeId id, str text) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    damage_row(n);   // old string's extent
     n.text = replaced_text(n.text, text);
     // Text keeps physical bounds equal to its measured size so damage,
     // clipping, layout, and hit testing all agree. Windows and buttons also
@@ -986,7 +954,7 @@ export void set_text(i32 id, str text) {
         n.h = (u16)text_height_of(n);
         relayout_parent(id);
     }
-    damage_node(id);   // new string may be longer
+    damage_row(n);   // new string may be longer
     touch();
 }
 
@@ -995,9 +963,8 @@ export void set_text(i32 id, str text) {
  * @param id DOM Node ID.
  * @param role NodeRole value.
  */
-export void set_role(i32 id, i32 role) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
+export void set_role(NodeId id, i32 role) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     n.role = (u16)role;
     touch();
 }
@@ -1007,9 +974,8 @@ export void set_role(i32 id, i32 role) {
  * @param id DOM Node ID.
  * @param test_id Test identifier string.
  */
-export void set_test_id(i32 id, str test_id) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
+export void set_test_id(NodeId id, str test_id) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     n.test_id = replaced_text(n.test_id, test_id);
     touch();
 }
@@ -1020,24 +986,22 @@ export void set_test_id(i32 id, str test_id) {
  * @param background Background color (RGB).
  * @param border Border color (RGB).
  */
-export void set_colors(i32 id, i32 background, i32 border) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
-    damage_node(id);
+export void set_colors(NodeId id, i32 background, i32 border) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    damage_row(n);
     n.background_color = background;
     n.border_color = border;
 }
 
 /**
- * Sets foreground/text color of a node (0 restores theme default).
+ * Sets foreground/text color of a node, in place of the theme default.
  * @param id DOM Node ID.
  * @param color Text color (RGB).
  */
-export void set_color(i32 id, i32 color) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
-    n.color = color;
-    damage_node(id);
+export void set_color(NodeId id, i32 color) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    n.color = Some(color);
+    damage_row(n);
 }
 
 /**
@@ -1045,15 +1009,14 @@ export void set_color(i32 id, i32 color) {
  * @param id DOM Node ID.
  * @param style Style bitmask.
  */
-export void set_style(i32 id, i32 style) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
+export void set_style(NodeId id, i32 style) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     n.style = (u16)style;
     if (n.kind == NodeKind::TEXT) {
         n.w = (u16)text_width_of(n);
         n.h = (u16)text_height_of(n);
     }
-    damage_node(id);
+    damage_row(n);
 }
 
 /**
@@ -1062,9 +1025,8 @@ export void set_style(i32 id, i32 style) {
  * @param padding Inset padding in pixels.
  * @param gap Gap between children in pixels.
  */
-export void set_column_layout(i32 id, i32 padding, i32 gap) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
+export void set_column_layout(NodeId id, i32 padding, i32 gap) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     n.padding = (u16)padding;
     n.gap = (u16)gap;
     relayout_container(n);
@@ -1109,9 +1071,8 @@ export bool state_is_visible(borrow NodeRow n, i32 flag) {
  * @param flag NodeState bitmask.
  * @param on Non-zero to set flag, 0 to clear.
  */
-export void set_state_flag(i32 id, i32 flag, i32 on) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
+export void set_state_flag(NodeId id, i32 flag, i32 on) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     i32 state = n.state;
     i32 next = state & (~flag);
     if (on != 0) { next = state | flag; }
@@ -1121,7 +1082,7 @@ export void set_state_flag(i32 id, i32 flag, i32 on) {
     if (next != state) {
         n.state = (u16)next;
         if (state_is_visible(n, flag)) {
-            damage_node(id);
+            damage_row(n);
         }
         touch();
     }
@@ -1133,9 +1094,8 @@ export void set_state_flag(i32 id, i32 flag, i32 on) {
  * @param flag NodeState bitmask.
  * @return True if flag is set, false otherwise.
  */
-export bool get_state_flag(i32 id, i32 flag) {
-    if (!node_exists(id)) { return false; }
-    borrow NodeRow n = row_of(id);
+export bool get_state_flag(NodeId id, i32 flag) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return false; }); };
     i32 state = n.state;
     if (state & flag) { return true; }
     return false;
@@ -1146,104 +1106,43 @@ export bool get_state_flag(i32 id, i32 flag) {
  * @param id DOM Node ID.
  * @param on Non-zero to set, 0 to clear.
  */
-export void set_hovered(i32 id, i32 on) { set_state_flag(id, NodeState::HOVERED, on); }
+export void set_hovered(NodeId id, i32 on) { set_state_flag(id, NodeState::HOVERED, on); }
 
 /**
  * Sets or clears the PRESSED state flag on a node.
  * @param id DOM Node ID.
  * @param on Non-zero to set, 0 to clear.
  */
-export void set_pressed(i32 id, i32 on) { set_state_flag(id, NodeState::PRESSED, on); }
-
-/**
- * Sets or clears the VISIBLE state flag on a node.
- * @param id DOM Node ID.
- * @param on Non-zero to set, 0 to clear.
- */
-export void set_visible(i32 id, i32 on) { set_state_flag(id, NodeState::VISIBLE, on); }
+export void set_pressed(NodeId id, i32 on) { set_state_flag(id, NodeState::PRESSED, on); }
 
 /**
  * Sets or clears the HIT_TESTABLE state flag on a node.
  * @param id DOM Node ID.
  * @param on Non-zero to set, 0 to clear.
  */
-export void set_hit_testable(i32 id, i32 on) { set_state_flag(id, NodeState::HIT_TESTABLE, on); }
+export void set_hit_testable(NodeId id, i32 on) { set_state_flag(id, NodeState::HIT_TESTABLE, on); }
 
 /**
  * Sets or clears the CHECKED state flag on a checkbox node.
  * @param id DOM Node ID.
  * @param on Non-zero to set, 0 to clear.
  */
-export void set_checked(i32 id, i32 on) { set_state_flag(id, NodeState::CHECKED, on); }
+export void set_checked(NodeId id, i32 on) { set_state_flag(id, NodeState::CHECKED, on); }
 
 /**
  * Checks if a node has the CHECKED state flag set.
  * @param id DOM Node ID.
  * @return True if checked, false otherwise.
  */
-export bool is_checked(i32 id) { return get_state_flag(id, NodeState::CHECKED); }
-
-/**
- * Checks if a node has the VISIBLE state flag set.
- * @param id DOM Node ID.
- * @return True if visible, false otherwise.
- */
-export bool is_visible(i32 id) { return get_state_flag(id, NodeState::VISIBLE); }
-
-/**
- * Checks if a node has the ENABLED state flag set.
- * @param id DOM Node ID.
- * @return True if enabled, false otherwise.
- */
-export bool is_enabled(i32 id) { return get_state_flag(id, NodeState::ENABLED); }
-
-/**
- * Checks if a node has the FOCUSED state flag set.
- * @param id DOM Node ID.
- * @return True if focused, false otherwise.
- */
-export bool is_focused(i32 id) { return get_state_flag(id, NodeState::FOCUSED); }
-
-/**
- * Checks if a node has the HIT_TESTABLE state flag set.
- * @param id DOM Node ID.
- * @return True if hit-testable, false otherwise.
- */
-export bool is_hit_testable(i32 id) { return get_state_flag(id, NodeState::HIT_TESTABLE); }
-
-/**
- * Checks if a node has the HOVERED state flag set.
- * @param id DOM Node ID.
- * @return True if hovered, false otherwise.
- */
-export bool is_hovered(i32 id) { return get_state_flag(id, NodeState::HOVERED); }
-
-/**
- * Checks if a node has the PRESSED state flag set.
- * @param id DOM Node ID.
- * @return True if pressed, false otherwise.
- */
-export bool is_pressed(i32 id) { return get_state_flag(id, NodeState::PRESSED); }
-
-/**
- * Returns raw state bitmask of a node.
- * @param id DOM Node ID.
- * @return Ok(state flags), or Err for an invalid ID.
- */
-export Result<NodeState, UiError> state_of(i32 id) {
-    if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow NodeRow n = row_of(id);
-    return Ok(n.state);
-}
+export bool is_checked(NodeId id) { return get_state_flag(id, NodeState::CHECKED); }
 
 /**
  * Stores a click handler function pointer on a node and marks it hit-testable.
  * @param id DOM Node ID.
  * @param handler Function pointer to click callback.
  */
-export void set_on_click(i32 id, fn(i32 owner, i32 id, i32 arg) -> void handler) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
+export void set_on_click(NodeId id, fn(i32 owner, NodeId id, i32 arg) -> void handler) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     n.on_click = handler;
     set_hit_testable(id, handler != 0);
 }
@@ -1253,22 +1152,10 @@ export void set_on_click(i32 id, fn(i32 owner, i32 id, i32 arg) -> void handler)
  * @param id DOM Node ID.
  * @return Ok(Some(handler)) when registered, Ok(None) when absent, or Err for an invalid ID.
  */
-export Result<Option<fn(i32 owner, i32 id, i32 arg) -> void>, UiError> get_on_click(i32 id) {
-    if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow NodeRow n = row_of(id);
+export Result<Option<fn(i32 owner, NodeId id, i32 arg) -> void>, UiError> get_on_click(NodeId id) {
+    borrow NodeRow n = require_row(id)?;
     if (n.on_click == 0) { return Ok(None); }
     return Ok(Some(n.on_click));
-}
-
-/**
- * Stores a keyboard event handler function pointer on a node.
- * @param id DOM Node ID.
- * @param handler Function pointer to key event handler.
- */
-export void set_on_key(i32 id, fn(i32 owner, i32 id, i32 arg) -> i32 handler) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
-    n.on_key = handler;
 }
 
 /**
@@ -1276,9 +1163,8 @@ export void set_on_key(i32 id, fn(i32 owner, i32 id, i32 arg) -> i32 handler) {
  * @param id DOM Node ID.
  * @param handler Function pointer to change event handler.
  */
-export void set_on_change(i32 id, fn(i32 owner, i32 id, i32 arg) -> void handler) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
+export void set_on_change(NodeId id, fn(i32 owner, NodeId id, i32 arg) -> void handler) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     n.on_change = handler;
 }
 
@@ -1287,9 +1173,8 @@ export void set_on_change(i32 id, fn(i32 owner, i32 id, i32 arg) -> void handler
  * @param id DOM Node ID.
  * @param handler Function pointer to close event handler.
  */
-export void set_on_close(i32 id, fn(i32 owner, i32 id, i32 arg) -> void handler) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
+export void set_on_close(NodeId id, fn(i32 owner, NodeId id, i32 arg) -> void handler) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     n.on_close = handler;
 }
 
@@ -1298,9 +1183,8 @@ export void set_on_close(i32 id, fn(i32 owner, i32 id, i32 arg) -> void handler)
  * @param id DOM Node ID.
  * @return Ok(Some(handler)) when registered, Ok(None) when absent, or Err for an invalid ID.
  */
-export Result<Option<fn(i32 owner, i32 id, i32 arg) -> void>, UiError> on_close_of(i32 id) {
-    if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow NodeRow n = row_of(id);
+export Result<Option<fn(i32 owner, NodeId id, i32 arg) -> void>, UiError> on_close_of(NodeId id) {
+    borrow NodeRow n = require_row(id)?;
     if (n.on_close == 0) { return Ok(None); }
     return Ok(Some(n.on_close));
 }
@@ -1320,9 +1204,8 @@ export void fire_change(borrow NodeRow n) {
  * @param id DOM node ID that was clicked.
  * @return 1 when an app event or handler was queued, otherwise 0.
  */
-export bool dispatch_click(i32 id) {
-    if (!node_exists(id)) { return false; }
-    borrow NodeRow n = row_of(id);
+export bool dispatch_click(NodeId id) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return false; }); };
     if (n.kind == NodeKind::CHECKBOX) {
         i32 now = n.state & NodeState::CHECKED;
         set_state_flag(id, NodeState::CHECKED, !now);
@@ -1352,11 +1235,10 @@ export void content_origin(borrow NodeRow parent) {
  * @param child_id DOM Node ID of child to append.
  * @return Ok(_) on success, or Err(UiError::NodeNotFound) if either node ID is invalid.
  */
-export Result<_, UiError> append_child(i32 parent_id, i32 child_id) {
-    if (!node_exists(parent_id)) { return Err(UiError::NodeNotFound(parent_id)); }
+export Result<_, UiError> append_child(NodeId parent_id, NodeId child_id) {
+    borrow NodeRow parent = require_row(parent_id)?;
     if (!node_exists(child_id)) { return Err(UiError::NodeNotFound(child_id)); }
-    borrow NodeRow parent = row_of(parent_id);
-    dom_model.node_from_raw(parent_id).children_add(dom_model.node_from_raw(child_id));
+    dom_model.node_from_raw((i32)parent_id).children_add(dom_model.node_from_raw((i32)child_id));
 
     // Authored coordinates are relative to the parent's content origin;
     // stored coordinates are absolute, so shift the whole subtree once.
@@ -1376,18 +1258,17 @@ export Result<_, UiError> append_child(i32 parent_id, i32 child_id) {
  * @param n Pointer to DOM Node.
  */
 export void unlink(borrow NodeRow n) {
-    dom_model.node_from_raw(n.id).children_detach();
+    dom_model.node_from_raw((i32)n.id).children_detach();
 }
 
 /**
  * Moves a node to be the last child of its parent, painting it on top of siblings.
  * @param id DOM Node ID.
  */
-export void bring_to_front(i32 id) {
-    i32 parent = parent_id(id);
-    if (parent == 0) { return; }
+export void bring_to_front(NodeId id) {
+    NodeId parent = case parent_id(id) of { Some(value) -> value; None -> ({ return; }); };
     // Coordinates are already absolute, so only the order changes.
-    dom_model.node_from_raw(parent).children_add(dom_model.node_from_raw(id));
+    dom_model.node_from_raw((i32)parent).children_add(dom_model.node_from_raw((i32)id));
     damage_node(id);
     touch();
 }
@@ -1396,12 +1277,11 @@ export void bring_to_front(i32 id) {
  * Recursively frees a node's subtree from memory and drops timers/focus.
  * @param id DOM Node ID.
  */
-export void free_subtree(i32 id) {
-    if (!node_exists(id)) { return; }
-    for (i32 child_id in children(id)) { free_subtree(child_id); }
-    borrow NodeRow n = row_of(id);
-    if (g_focus_id == id) { g_focus_id = 0; }
-    if (g_active_window == id) { g_active_window = 0; }
+export void free_subtree(NodeId id) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    for (NodeId child_id in children(id)) { free_subtree(child_id); }
+    if (holds(g_focus_id, id)) { g_focus_id = None; }
+    if (holds(g_active_window, id)) { g_active_window = None; }
     // Drop it from the timer list.
     i32 i = 0;
     while (i < g_timer_count) {
@@ -1415,27 +1295,26 @@ export void free_subtree(i32 id) {
     n.name.free();
     n.text.free();
     n.test_id.free();
-    if (g_menu_id == id) { g_menu_id = 0; }
+    if (holds(g_menu_id, id)) { g_menu_id = None; }
     if (n.owner != 0) {
         case owner_slot(n.owner, 0) of {
             Some(oslot) -> ({
-                g_owner_nodes_count[oslot] = g_owner_nodes_count[oslot] - 1;
-                if (g_owner_nodes_count[oslot] <= 0) { g_owner_nodes_owner[oslot] = 0; }
+                g_owner_nodes[oslot].count = g_owner_nodes[oslot].count - 1;
+                if (g_owner_nodes[oslot].count <= 0) { g_owner_nodes[oslot].owner = 0; }
             });
             None -> _;
         };
     }
-    dom_model.node_from_raw(id).delete();
+    dom_model.node_from_raw((i32)id).delete();
 }
 
 /**
  * Removes a node and its entire subtree from DOM, damaging old area and freeing memory.
  * @param id DOM Node ID.
  */
-export void remove_node(i32 id) {
-    if (!node_exists(id)) { return; }
-    borrow NodeRow n = row_of(id);
-    damage_node(id);
+export void remove_node(NodeId id) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    damage_row(n);
     unlink(n);
     free_subtree(id);
     touch();
@@ -1445,63 +1324,41 @@ export void remove_node(i32 id) {
  * Returns the node ID of the root desktop node.
  * @return Desktop DOM Node ID.
  */
-export i32 desktop_id() {
+export NodeId desktop_id() {
     return g_desktop_node_id;
 }
 
 /**
  * Returns the node ID of the system taskbar node.
- * @return Taskbar DOM Node ID, or 0 if not created.
+ * @return Taskbar DOM Node ID, or None if not created.
  */
-export i32 taskbar_id() {
+export Option<NodeId> taskbar_id() {
     return g_taskbar_id;
 }
 
-/**
- * Returns the node ID of the first child of a node.
- * @param id DOM Node ID.
- * @return Ok(Some(child)), Ok(None) if there are no children, or Err for an invalid ID.
- */
-export Result<Option<i32>, UiError> first_child(i32 id) {
-    if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow NodeRow n = row_of(id);
-    return case dom_model.node_from_raw(id).children_first() of {
-        Some(child) -> Ok(Some(child.raw()));
-        None -> Ok(None);
-    };
+/** Marks the taskbar, if there is one, as needing repaint. */
+export void damage_taskbar() {
+    case g_taskbar_id of { Some(id) -> damage_node(id); None -> _; };
 }
 
 /**
- * Returns the node ID of the next sibling of a node.
- * @param id DOM Node ID.
- * @return Ok(Some(sibling)), Ok(None) if this is the last sibling, or Err for an invalid ID.
- */
-export Result<Option<i32>, UiError> next_sibling(i32 id) {
-    if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow NodeRow n = row_of(id);
-    return case dom_model.node_from_raw(id).children_next() of {
-        Some(sibling) -> Ok(Some(sibling.raw()));
-        None -> Ok(None);
-    };
-}
-
-/**
- * The children of a node, first to last: `for (i32 child in dom.children(id))`.
+ * The children of a node, first to last: `for (NodeId child in dom.children(id))`.
  * Each child's next sibling is read when the child is handed out, before the
  * loop body runs, so the body may move or unlink that child but not the one
  * after it.
- * @property next DOM Node ID of the next child to hand out, or 0 when done.
+ * @property rows The model's walk over the node's children.
  */
 export struct Children {
-    i32 next;
+    node_children_Iter rows;
 };
 
-export impl Iterator<i32> for Children {
-    Option<i32> (borrow Self self) next() {
-        if (self.next == 0) { return None; }
-        i32 id = self.next;
-        self.next = node_exists(id) ? dom_model.node_children_next_id(id) : 0;
-        return Some(id);
+export impl Iterator<NodeId> for Children {
+    Option<NodeId> (borrow Self self) next() {
+        Option<Node> child = self.rows.next();
+        return case child of {
+            Some(node) -> Some(NodeId(node.raw()));
+            None -> None;
+        };
     }
 }
 
@@ -1510,9 +1367,9 @@ export impl Iterator<i32> for Children {
  * @param id DOM Node ID; an unknown ID has no children.
  * @return An Iterator over the child node IDs, first to last.
  */
-export Children children(i32 id) {
-    if (!node_exists(id)) { return Children { next: 0 }; }
-    return Children { next: dom_model.node_children_first_id(id) };
+export Children children(NodeId id) {
+    if (!node_exists(id)) { return Children {}; }
+    return Children { rows: dom_model.node_from_raw((i32)id).children() };
 }
 
 /**
@@ -1520,41 +1377,64 @@ export Children children(i32 id) {
  * @param id DOM Node ID.
  * @return Ok(Some(window)) when inside a window, Ok(None) otherwise, or Err for an invalid ID.
  */
-export Result<Option<i32>, UiError> window_of(i32 id) {
+export Result<Option<NodeId>, UiError> window_of(NodeId id) {
     if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    i32 cur = id;
+    return Ok(enclosing_window(id));
+}
+
+/**
+ * Returns the enclosing WINDOW node ID for a node that may be gone.
+ * @param id DOM Node ID.
+ * @return Some(window) when inside a window, None otherwise or for a dead ID.
+ */
+export Option<NodeId> enclosing_window(NodeId id) {
+    if (!node_exists(id)) { return None; }
+    i32 cur = (i32)id;   // the model's chain, as words: zero ends it
     while (cur != 0) {
-        if (!node_exists(cur)) { return Err(UiError::NodeNotFound(cur)); }
-        borrow NodeRow n = row_of(cur);
-        if (n.kind == NodeKind::WINDOW) { return Ok(Some(cur)); }
-        cur = parent_id(cur);
+        NodeId node = NodeId(cur);
+        if (row_of(node).kind == NodeKind::WINDOW) { return Some(node); }
+        cur = dom_model.node_parent_id(cur);
     }
-    return Ok(None);
+    return None;
 }
 
 
 // --- subsystem state -------------------------------------------------------------------------
 
+/** Starts with no taskbar, active window, focus or menu. */
+export void init() {
+    g_taskbar_id = None;
+    g_active_window = None;
+    g_focus_id = None;
+    clear_menu_state();
+}
+
 /** Selects the root node created during desktop initialization. */
-export void set_root_node_id(i32 id) { g_root_node_id = id; }
+export void set_root_node_id(NodeId id) { g_root_node_id = id; }
 
 /** Selects the desktop container created during desktop initialization. */
-export void set_desktop_id(i32 id) { g_desktop_node_id = id; }
+export void set_desktop_id(NodeId id) { g_desktop_node_id = id; }
 
-/** Selects the system taskbar node, or clears it with zero. */
-export void set_taskbar_id(i32 id) { g_taskbar_id = id; }
+/** Selects the system taskbar node. */
+export void set_taskbar_id(NodeId id) { g_taskbar_id = Some(id); }
 
-/** Returns the active top-level window ID, or zero. */
-export i32 active_window_id() { return g_active_window; }
+/** Returns the active top-level window ID, if there is one. */
+export Option<NodeId> active_window_id() { return g_active_window; }
 
 /** Updates the active top-level window ID. */
-export void set_active_window_id(i32 id) { g_active_window = id; }
+export void set_active_window_id(NodeId id) { g_active_window = Some(id); }
 
-/** Returns the focused control ID, or zero. */
-export i32 focus_id() { return g_focus_id; }
+/** Records that no window is active. */
+export void clear_active_window_id() { g_active_window = None; }
+
+/** Returns the focused control ID, if there is one. */
+export Option<NodeId> focus_id() { return g_focus_id; }
 
 /** Updates the focused control ID. */
-export void set_focus_id(i32 id) { g_focus_id = id; }
+export void set_focus_id(NodeId id) { g_focus_id = Some(id); }
+
+/** Records that no control has focus. */
+export void clear_focus_id() { g_focus_id = None; }
 
 /** Returns the taskbar launcher callback address. */
 export fn() -> void launcher_handler() { return g_launcher; }
@@ -1562,37 +1442,37 @@ export fn() -> void launcher_handler() { return g_launcher; }
 /** Installs the taskbar launcher callback address. */
 export void set_launcher_handler(fn() -> void handler) { g_launcher = handler; }
 
-/** Returns the open popup menu ID, or zero. */
-export i32 menu_id() { return g_menu_id; }
+/** Returns the open popup menu ID, if one is open. */
+export Option<NodeId> menu_id() { return g_menu_id; }
 
 /** Returns the callback attached to the open popup menu. */
 export fn(i32 index) -> void menu_handler() { return g_menu_handler; }
 
 /** Returns the node targeted by the open popup menu. */
-export i32 menu_target() { return g_menu_target; }
+export Option<NodeId> menu_target() { return g_menu_target; }
 
 /** Records all state belonging to a newly opened popup menu. */
-export void set_menu_state(i32 id, fn(i32 index) -> void handler, i32 target) {
-    g_menu_id = id;
+export void set_menu_state(NodeId id, fn(i32 index) -> void handler, Option<NodeId> target) {
+    g_menu_id = Some(id);
     g_menu_handler = handler;
     g_menu_target = target;
 }
 
 /** Clears popup state before its node is removed. */
 export void clear_menu_state() {
-    g_menu_id = 0;
+    g_menu_id = None;
     g_menu_handler = no_menu_action;
-    g_menu_target = 0;
+    g_menu_target = None;
 }
 
 /** Returns the number of registered timer nodes. */
 export i32 timer_count() { return g_timer_count; }
 
 /** Returns a registered timer ID by table index. */
-export i32 timer_id_at(i32 index) { return g_timer_ids[index]; }
+export NodeId timer_id_at(i32 index) { return g_timer_ids[index]; }
 
 /** Adds a timer ID to the bounded timer registry. */
-export Result<_, UiError> register_timer(i32 id) {
+export Result<_, UiError> register_timer(NodeId id) {
     if (g_timer_count >= TIMER_MAX) { return Err(UiError::TimerLimit); }
     g_timer_ids[g_timer_count] = id;
     g_timer_count++;
@@ -1604,32 +1484,29 @@ export i32 damage_count() { return g_damage_count; }
 
 /** Selects one queued damage rectangle as the current paint region. */
 export void select_damage(i32 index) {
-    g_paint_x0 = g_damage_x0[index];
-    g_paint_y0 = g_damage_y0[index];
-    g_paint_x1 = g_damage_x1[index];
-    g_paint_y1 = g_damage_y1[index];
-    g_painting_all = 0;
+    g_paint = g_damage[index];
+    g_painting_all = false;
 }
 
 /** Selects an unrestricted full-scene paint. */
-export void select_full_paint() { g_painting_all = 1; }
+export void select_full_paint() { g_painting_all = true; }
 
 /** Returns true when a node overlaps the selected paint region. */
 export bool node_intersects_paint(borrow NodeRow node) {
     if (g_painting_all) { return true; }
     node_extent(node);
-    if (g_ext_x + g_ext_w <= g_paint_x0) { return false; }
-    if (g_ext_y + g_ext_h <= g_paint_y0) { return false; }
-    if (g_ext_x >= g_paint_x1) { return false; }
-    if (g_ext_y >= g_paint_y1) { return false; }
+    if (g_ext_x + g_ext_w <= g_paint.x0) { return false; }
+    if (g_ext_y + g_ext_h <= g_paint.y0) { return false; }
+    if (g_ext_x >= g_paint.x1) { return false; }
+    if (g_ext_y >= g_paint.y1) { return false; }
     return true;
 }
 
 /** Applies the selected damage rectangle to a renderer clip. */
-export i32 paint_x() { return g_paint_x0; }
-export i32 paint_y() { return g_paint_y0; }
-export i32 paint_width() { return g_paint_x1 - g_paint_x0; }
-export i32 paint_height() { return g_paint_y1 - g_paint_y0; }
+export i32 paint_x() { return g_paint.x0; }
+export i32 paint_y() { return g_paint.y0; }
+export i32 paint_width() { return g_paint.x1 - g_paint.x0; }
+export i32 paint_height() { return g_paint.y1 - g_paint.y0; }
 
 /**
  * Checks whether a node clips its children to its bounding box.
@@ -1643,9 +1520,3 @@ export bool clips_children(borrow NodeRow n) {
     return false;
 }
 
-/** Checks whether the node with the given ID clips its children. */
-export bool clips_children_id(i32 id) {
-    if (!node_exists(id)) { return false; }
-    borrow NodeRow node = row_of(id);
-    return clips_children(node);
-}

@@ -27,6 +27,7 @@ import consoles from "consoles.mln";
 import { Console, ConsoleRow } from "consoles.mln";
 import dom_widgets from "@os/ui/dom/dom_widgets.mln";
 import dom from "@os/ui/dom/dom.mln";
+import { NodeId } from "@contracts/ui/widget.contract.mln";
 
 // Process consoles (MYOS-015): the glue between user-space processes and
 // terminal windows.
@@ -138,7 +139,7 @@ i32 on_write(i32 pid, UserAddress buf, i32 count) {
         }
         return count;
     }
-    dom_widgets.append_bytes(out, user_memory.view(buf, count));
+    dom_widgets.append_bytes(NodeId(out), user_memory.view(buf, count));
     return count;
 }
 
