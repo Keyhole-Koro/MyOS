@@ -415,6 +415,18 @@ export Result<Option<i32>, AppError> launch_named(str name) {
     return Err(AppError::NotFound);
 }
 
+// The instance that takes an OPEN for app `a`: the running one of a
+// single-instance app, otherwise a fresh one.
+Result<Instance, AppError> instance_for_open(i32 a) {
+    if (registry[a].single) {
+        case instance_of_app(a) of {
+            Some(instance) -> ({ return Ok(instance); });
+            None -> _;
+        };
+    }
+    return mount(a);
+}
+
 // Hand `path` to an app with an @open method: the running instance of a
 // single-instance app, otherwise a fresh one, as an OPEN event -- sent at
 // once to a running instance, or as soon as a new one reports its window.
@@ -432,12 +444,7 @@ export Result<Option<i32>, AppError> open(str path) {
     i32 a = 0;
     while (a < registry_count) {
         if (registry[a].opens) {
-            Option<Instance> running = None;
-            if (registry[a].single) { running = instance_of_app(a); }
-            Instance instance = case running of {
-                Some(value) -> value;
-                None -> mount(a)?;
-            };
+            Instance instance = instance_for_open(a)?;
             borrow InstanceRow row = instance.row();
             row.open_path.clear();
             row.open_path.append(path);
