@@ -355,22 +355,23 @@ void draw_node(Node *n) {
     i32 kind = n->kind;
     i32 x = n->x; i32 y = n->y;
     i32 w = n->w; i32 h = n->h;
+    str text = n->text.as_str();
 
     if (kind == NODE_WINDOW) {
         i32 white = graphics.rgb(255, 255, 255);
         graphics.fill_rect(x, y, w, h, white);
-        graphics.draw_rect(x, y, w, h, graphics.rgb(136, 136, 136));
-        graphics.draw_text(x + 20, y + 8, (char*)n->text, graphics.rgb(0,0,0), white);
+        graphics.draw_rect_scaled(x, y, w, h, graphics.rgb(136, 136, 136), 1);
+        graphics.draw_label(x + 20, y + 8, text, graphics.rgb(0,0,0), false, 1);
     } else if (kind == NODE_BUTTON) {
         // state を見て見た目を変える（旧 render_scene の hover 分岐を DOM 駆動に）。
         i32 hovered = n->state & STATE_HOVERED;
         i32 face = graphics.rgb(204, 204, 204);
         if (hovered != 0) { face = graphics.rgb(180, 210, 255); }
         graphics.fill_rect(x, y, w, h, face);
-        graphics.draw_rect(x, y, w, h, graphics.rgb(0,0,0));
-        graphics.draw_text(x + 30, y + 22, (char*)n->text, graphics.rgb(0,0,0), face);
+        graphics.draw_rect_scaled(x, y, w, h, graphics.rgb(0,0,0), 1);
+        graphics.draw_label(x + 30, y + 22, text, graphics.rgb(0,0,0), false, 1);
     } else if (kind == NODE_TEXT) {
-        graphics.draw_text(x, y, (char*)n->text, graphics.rgb(0,0,0), graphics.rgb(255,255,255));
+        graphics.draw_label(x, y, text, graphics.rgb(0,0,0), false, 1);
     }
     // NODE_WINDOW/BUTTON/TEXT 以外（PROCESS/DEVICE 等）は描かない。
 }

@@ -198,16 +198,6 @@ void zero_buf() {
 // `/ 8` and `% 8` this used to do, which the target has no instruction for.
 
 /**
- * Queries the allocation state of a data block in the active bitmap buffer.
- * @param block_num Data block number.
- * @return True if allocated.
- */
-bool bitmap_get(i32 block_num) {
-    char *bits = (char *)g_buf;
-    return bitset.get(bits, block_num);
-}
-
-/**
  * Sets or clears the allocation bit for a data block in the active bitmap buffer.
  * @param block_num Data block number.
  * @param value True to mark allocated, false to mark free.

@@ -2,11 +2,9 @@ package graphics;
 
 import display_config from "display_config.mln";
 import ui_config from "config.mln";
-import font from "font8x8.mln";
 import font_sans from "font_sans.mln";
 import str from "@std/text/str.mln";
 import ascii from "@std/text/ascii.mln";
-import { Text } from "@std/text/text.mln";
 import { Option } from "@std/core/option.mln";
 
 export const i32 VRAM_BASE = 0x30000000;
@@ -97,7 +95,7 @@ export void show_cursor(bool on) {
 // ---------------------------------------------------------------------------
 // Colours. Packed 0xAARRGGBB. rgb() leaves alpha at 0, which every opaque
 // primitive ignores; the blend primitives read it, so build translucent
-// colours with rgba() or with_alpha().
+// colours with rgba().
 // ---------------------------------------------------------------------------
 
 /**
@@ -121,16 +119,6 @@ export i32 rgb(i32 r, i32 g, i32 b) {
  */
 export i32 rgba(i32 r, i32 g, i32 b, i32 a) {
     return (a << 24) | rgb(r, g, b);
-}
-
-/**
- * Replaces the alpha channel of a packed color.
- * @param color Source color.
- * @param a New alpha value (0-255).
- * @return Color with updated alpha channel.
- */
-export i32 with_alpha(i32 color, i32 a) {
-    return (a << 24) | (color & 0xFFFFFF);
 }
 
 /**
@@ -175,26 +163,6 @@ export i32 mix(i32 c0, i32 c1, i32 t) {
     i32 g = (green_of(c0) * (255 - t) + green_of(c1) * t + 127) / 255;
     i32 b = (blue_of(c0) * (255 - t) + blue_of(c1) * t + 127) / 255;
     return rgb(r, g, b);
-}
-
-/**
- * Darkens a color toward black by the given amount.
- * @param color Source color.
- * @param amount Amount to darken (0-255).
- * @return Darkened color.
- */
-export i32 darken(i32 color, i32 amount) {
-    return mix(color, rgb(0, 0, 0), amount);
-}
-
-/**
- * Lightens a color toward white by the given amount.
- * @param color Source color.
- * @param amount Amount to lighten (0-255).
- * @return Lightened color.
- */
-export i32 lighten(i32 color, i32 amount) {
-    return mix(color, rgb(255, 255, 255), amount);
 }
 
 // ---------------------------------------------------------------------------
@@ -493,25 +461,6 @@ export Option<i32> get_pixel(i32 x, i32 y) {
 }
 
 /**
- * Blends a single translucent pixel into the back buffer.
- * @param x Screen X coordinate.
- * @param y Screen Y coordinate.
- * @param color ARGB color containing alpha component.
- */
-export void blend_pixel(i32 x, i32 y, i32 color) {
-    i32 a = alpha_of(color);
-    if (a == 0) { return; }
-    if (a >= 255) { put_pixel(x, y, color); return; }
-    if (x < g_clip.x0) { return; }
-    if (y < g_clip.y0) { return; }
-    if (x >= g_clip.x1) { return; }
-    if (y >= g_clip.y1) { return; }
-    i32 addr = VRAM_BASE + (y * display_config.width() + x) * 4;
-    i32* ptr = (i32*)addr;
-    *ptr = mix(*ptr, color, a);
-}
-
-/**
  * Fills a solid rectangle using hardware DMA2D acceleration.
  * @param x Origin X coordinate.
  * @param y Origin Y coordinate.
@@ -590,25 +539,6 @@ export void fill_gradient_h(i32 x, i32 y, i32 w, i32 h, i32 c0, i32 c1) {
 }
 
 /**
- * Copies a rectangular region of the back buffer to another position using DMA2D.
- * @param sx Source X coordinate.
- * @param sy Source Y coordinate.
- * @param dx Destination X coordinate.
- * @param dy Destination Y coordinate.
- * @param w Region width in pixels.
- * @param h Height in pixels.
- */
-export void copy_rect(i32 sx, i32 sy, i32 dx, i32 dy, i32 w, i32 h) {
-    if (!clip_rect(dx, dy, w, h)) { return; }
-    i32 width = display_config.width();
-    i32 off_x = g_cl_x - dx;
-    i32 off_y = g_cl_y - dy;
-    dma_dest(g_cl_x, g_cl_y, g_cl_w, g_cl_h);
-    dma_src(VRAM_BASE + ((sy + off_y) * width + sx + off_x) * 4, width);
-    dma_run(DMA2D_CMD_COPY);
-}
-
-/**
  * Blends an 8-bit coverage mask onto the display with the given color using DMA2D.
  * @param src Address of row-major 8-bit mask buffer.
  * @param stride Row stride in bytes of the mask buffer.
@@ -626,39 +556,6 @@ export void mask_blit(i32 src, i32 stride, i32 x, i32 y, i32 w, i32 h, i32 color
     dma_src(src + off_y * stride + off_x, stride);
     dma_color(color);
     dma_run(DMA2D_CMD_MASK_A8);
-}
-
-/**
- * Copies an ARGB image from memory to the display with per-pixel alpha blending.
- * @param src Address of row-major 32-bit ARGB pixel buffer.
- * @param stride Row stride in pixels of source buffer.
- * @param x Destination X coordinate.
- * @param y Destination Y coordinate.
- * @param w Width in pixels.
- * @param h Height in pixels.
- */
-export void blit_alpha(i32 src, i32 stride, i32 x, i32 y, i32 w, i32 h) {
-    if (!clip_rect(x, y, w, h)) { return; }
-    i32 off_x = g_cl_x - x;
-    i32 off_y = g_cl_y - y;
-    dma_dest(g_cl_x, g_cl_y, g_cl_w, g_cl_h);
-    dma_src(src + (off_y * stride + off_x) * 4, stride);
-    dma_run(DMA2D_CMD_COPY_BLEND);
-}
-
-/**
- * Draws the outline of a 1-pixel rectangle.
- * @param x Origin X coordinate.
- * @param y Origin Y coordinate.
- * @param w Width in pixels.
- * @param h Height in pixels.
- * @param color 24-bit RGB outline color.
- */
-export void draw_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
-    fill_rect(x, y, w, 1, color);
-    fill_rect(x, y + h - 1, w, 1, color);
-    fill_rect(x, y, 1, h, color);
-    fill_rect(x + w - 1, y, 1, h, color);
 }
 
 /**
@@ -697,28 +594,6 @@ export void draw_rect_scaled(i32 x, i32 y, i32 w, i32 h, i32 color, i32 scale) {
 i32 iabs(i32 v) {
     if (v < 0) { return -v; }
     return v;
-}
-
-/**
- * Computes integer square root (floor).
- * @param n Non-negative integer.
- * @return Integer square root.
- */
-export i32 isqrt(i32 n) {
-    if (n <= 0) { return 0; }
-    i32 res = 0;
-    i32 bit = 1 << 30;
-    while (bit > n) { bit = bit >> 2; }
-    while (bit != 0) {
-        if (n >= res + bit) {
-            n = n - (res + bit);
-            res = (res >> 1) + bit;
-        } else {
-            res = res >> 1;
-        }
-        bit = bit >> 2;
-    }
-    return res;
 }
 
 /**
@@ -833,58 +708,6 @@ export void draw_line(i32 x0, i32 y0, i32 x1, i32 y1, i32 color) {
 }
 
 /**
- * Draws a circle outline using the midpoint circle algorithm.
- * @param cx Center X coordinate.
- * @param cy Center Y coordinate.
- * @param r Circle radius.
- * @param color Circle outline color.
- */
-export void draw_circle(i32 cx, i32 cy, i32 r, i32 color) {
-    i32 x = r;
-    i32 y = 0;
-    i32 err = 1 - r;
-    while (x >= y) {
-        put_pixel(cx + x, cy + y, color);
-        put_pixel(cx + y, cy + x, color);
-        put_pixel(cx - y, cy + x, color);
-        put_pixel(cx - x, cy + y, color);
-        put_pixel(cx - x, cy - y, color);
-        put_pixel(cx - y, cy - x, color);
-        put_pixel(cx + y, cy - x, color);
-        put_pixel(cx + x, cy - y, color);
-        y++;
-        if (err < 0) {
-            err = err + 2 * y + 1;
-        } else {
-            x--;
-            err = err + 2 * (y - x) + 1;
-        }
-    }
-}
-
-/**
- * Fills a solid disc using horizontal scanline fills.
- * @param cx Center X coordinate.
- * @param cy Center Y coordinate.
- * @param r Circle radius.
- * @param color Disc fill color.
- */
-export void fill_circle(i32 cx, i32 cy, i32 r, i32 color) {
-    i32 dy = -r;
-    while (dy <= r) {
-        // Half-width of the chord at this row: sqrt(r*r - dy*dy), computed by
-        // widening from 0 while w*w still fits (no sqrt/multiply-heavy loop).
-        i32 rr = r * r - dy * dy;
-        i32 w = 0;
-        while ((w + 1) * (w + 1) <= rr) {
-            w++;
-        }
-        fill_rect(cx - w, cy + dy, w * 2 + 1, 1, color);
-        dy++;
-    }
-}
-
-/**
  * Fills an anti-aliased disc using hardware rounded rectangle acceleration.
  * @param cx Center X coordinate.
  * @param cy Center Y coordinate.
@@ -912,17 +735,6 @@ export void fill_disc(i32 cx, i32 cy, i32 r, i32 color) {
 export i32 text_height(bool bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     return font_sans.line_height(face);
-}
-
-/**
- * Returns the font ascent in pixels from top of line box to baseline.
- * @param bold True for bold typeface.
- * @param scale Font scaling factor (1 or 2).
- * @return Ascent in pixels.
- */
-export i32 text_ascent(bool bold, i32 scale) {
-    i32 face = font_sans.face_for(bold, scale);
-    return font_sans.ascent(face);
 }
 
 /**
@@ -1056,239 +868,8 @@ export void draw_label_centered(i32 x, i32 y, i32 w, str s, i32 color, bool bold
     draw_label(x + (w - tw) / 2, y, s, color, bold, scale);
 }
 
-/**
- * Draws a string vertically centered within a given bounding height.
- * @param x Box left X coordinate.
- * @param y Box top Y coordinate.
- * @param h Bounding height in pixels.
- * @param s String to draw.
- * @param color Text color.
- * @param bold True for bold.
- * @param scale Scaling factor.
- */
-export void draw_label_vcentered(i32 x, i32 y, i32 h, str s, i32 color, bool bold, i32 scale) {
-    i32 th = text_height(bold, scale);
-    draw_label(x, y + (h - th) / 2, s, color, bold, scale);
-}
-
 // ---------------------------------------------------------------------------
 // Legacy 8x8 bitmap text. Still used by the serial-oriented debugging paths
 // and as a fallback; UI code uses draw_label above.
 // ---------------------------------------------------------------------------
 
-/**
- * Draws a clipped 8x8 character pixel-by-pixel using put_pixel.
- * @param x Left pixel coordinate.
- * @param y Top pixel coordinate.
- * @param ch ASCII character code.
- * @param fg 32-bit ARGB foreground color.
- */
-void draw_char_clipped(i32 x, i32 y, i32 ch, i32 fg) {
-    i32 row = 0;
-    while (row < 8) {
-        i32 bits = font.glyph_row(ch, row);
-        i32 col = 0;
-        while (col < 8) {
-            i32 mask = 128 >> col;
-            if (bits & mask) {
-                put_pixel(x + col, y + row, fg);
-            }
-            col++;
-        }
-        row++;
-    }
-}
-
-/**
- * Draws a single 8x8 bitmap character glyph.
- * @param x Screen X coordinate.
- * @param y Screen Y coordinate.
- * @param ch ASCII character code.
- * @param fg Foreground color.
- * @param bg Background color (set equal to fg for transparent background).
- */
-export void draw_char(i32 x, i32 y, i32 ch, i32 fg, i32 bg) {
-    if (bg != fg) {
-        fill_rect(x, y, 8, 8, bg);
-    }
-    // Bounds-check the whole 8x8 glyph once, then write directly to VRAM
-    // without per-pixel put_pixel calls (avoids 64 function calls + 256
-    // bounds checks per character). Glyphs that are not fully inside the clip
-    // rectangle fall back to the per-pixel path, which clips.
-    bool partial = x < g_clip.x0 || y < g_clip.y0 || x + 8 > g_clip.x1 || y + 8 > g_clip.y1;
-    if (partial) {
-        draw_char_clipped(x, y, ch, fg);
-        return;
-    }
-
-    i32 width = display_config.width();
-    i32 stride = width * 4;
-    i32 row_addr = VRAM_BASE + (y * width + x) * 4;
-    i32 row = 0;
-    while (row < 8) {
-        i32 bits = font.glyph_row(ch, row);
-        i32 addr = row_addr;
-        i32 col = 0;
-        while (col < 8) {
-            i32 mask = 128 >> col;
-            if (bits & mask) {
-                i32* ptr = (i32*)addr;
-                *ptr = fg;
-            }
-            addr = addr + 4;
-            col++;
-        }
-        row_addr = row_addr + stride;
-        row++;
-    }
-}
-
-/**
- * Draws a null-terminated string using the legacy 8x8 bitmap font.
- * @param x Origin X coordinate.
- * @param y Origin Y coordinate.
- * @param s String to draw.
- * @param fg Foreground text color.
- * @param bg Background fill color (equal to fg for transparent).
- */
-export void draw_text(i32 x, i32 y, char* s, i32 fg, i32 bg) {
-    i32 cx = x;
-    i32 cy = y;
-    i32 i = 0;
-    i32 c = ascii.byte(s[i]);
-    while (c != 0) {
-        if (c == 10) {
-            cx = x;
-            cy = cy + font.GLYPH_HEIGHT;
-        } else {
-            draw_char(cx, cy, c, fg, bg);
-            cx = cx + font.GLYPH_WIDTH;
-        }
-        i++;
-        c = ascii.byte(s[i]);
-    }
-}
-
-/**
- * Draws an 8x8 bitmap glyph magnified by integer `scale`.
- * @param x Screen X coordinate.
- * @param y Screen Y coordinate.
- * @param ch ASCII character code.
- * @param fg Foreground color.
- * @param bg Background color.
- * @param scale Integer scaling factor.
- */
-export void draw_char_scaled(i32 x, i32 y, i32 ch, i32 fg, i32 bg, i32 scale) {
-    if (scale < 1) { scale = 1; }
-    if (bg != fg) {
-        fill_rect(x, y, 8 * scale, 8 * scale, bg);
-    }
-    i32 row = 0;
-    while (row < 8) {
-        i32 bits = font.glyph_row(ch, row);
-        i32 col = 0;
-        while (col < 8) {
-            i32 mask = 128 >> col;
-            if (bits & mask) {
-                fill_rect(x + col * scale, y + row * scale, scale, scale, fg);
-            }
-            col++;
-        }
-        row++;
-    }
-}
-
-/**
- * Draws a string with the 8x8 font magnified by integer `scale`.
- * @param x Origin X coordinate.
- * @param y Origin Y coordinate.
- * @param s String to draw.
- * @param fg Foreground color.
- * @param bg Background color.
- * @param scale Scaling factor.
- */
-export void draw_text_scaled(i32 x, i32 y, char* s, i32 fg, i32 bg, i32 scale) {
-    if (scale < 1) { scale = 1; }
-    i32 cx = x;
-    i32 cy = y;
-    i32 i = 0;
-    i32 c = ascii.byte(s[i]);
-    while (c != 0) {
-        if (c == 10) {
-            cx = x;
-            cy = cy + 8 * scale;
-        } else {
-            draw_char_scaled(cx, cy, c, fg, bg, scale);
-            cx = cx + 8 * scale;
-        }
-        i++;
-        c = ascii.byte(s[i]);
-    }
-}
-
-/**
- * Renders a 32-bit signed integer in base-10 decimal using 8x8 bitmap font.
- * @param x Screen X coordinate.
- * @param y Screen Y coordinate.
- * @param value Integer value to display.
- * @param fg Text color.
- * @param bg Background color.
- * @return X coordinate immediately following the rendered number.
- */
-export i32 draw_int(i32 x, i32 y, i32 value, i32 fg, i32 bg) {
-    Text<12> digits = value.to_string();
-
-    i32 cx = x;
-    i32 i = 0;
-    while (i < digits.len()) {
-        i32 c = ascii.byte(digits.data[i]);
-        draw_char(cx, y, c, fg, bg);
-        cx = cx + font.GLYPH_WIDTH;
-        i++;
-    }
-    return cx;
-}
-
-/**
- * Blits a block of raw 32-bit pixels directly from memory to the screen.
- * @param x Destination X coordinate.
- * @param y Destination Y coordinate.
- * @param w Width in pixels.
- * @param h Height in pixels.
- * @param src Reference to row-major pixel array.
- */
-export void blit(i32 x, i32 y, i32 w, i32 h, i32 src) {
-    i32 row = 0;
-    while (row < h) {
-        i32 col = 0;
-        while (col < w) {
-            put_pixel(x + col, y + row, src[row * w + col]);
-            col++;
-        }
-        row++;
-    }
-}
-
-/**
- * Blits a block of 32-bit pixels with transparency color keying.
- * @param x Destination X coordinate.
- * @param y Destination Y coordinate.
- * @param w Width in pixels.
- * @param h Height in pixels.
- * @param src Reference to row-major pixel array.
- * @param key_color Color value treated as transparent.
- */
-export void blit_key(i32 x, i32 y, i32 w, i32 h, i32 src, i32 key_color) {
-    i32 row = 0;
-    while (row < h) {
-        i32 col = 0;
-        while (col < w) {
-            i32 px = src[row * w + col];
-            if (px != key_color) {
-                put_pixel(x + col, y + row, px);
-            }
-            col++;
-        }
-        row++;
-    }
-}
