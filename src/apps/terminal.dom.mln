@@ -31,14 +31,14 @@ i32 opened_count = 0; // desktop placement sequence shared by Terminal windows
  * Per-window state for a terminal instance.
  * @property out DOM node ID of the output text area.
  * @property input DOM node ID of the command input field.
- * @property pid Attached child process ID, or zero when no program is running.
+ * @property pid Attached child process, while a program is running.
  * @property line_buf Scratch buffer for formatted output lines.
  * @property cmd Mutable command-line copy used by command parsing.
  */
 struct Terminal {
     i32 out;      // output TextArea
     i32 input;    // command TextInput
-    i32 pid;      // attached process, 0 = none
+    Option<i32> pid; // attached process
     Text<96> line_buf; // scratch for one formatted line
 };
 
@@ -48,6 +48,7 @@ struct Terminal {
  * @return DOM node ID of the terminal window.
  */
 i32 (borrow Terminal t) view() {
+    t.pid = None; // the instance starts as zero bytes, which read as Some(0)
     i32 off = 24 * opened_count;
     opened_count++;
     i32 win = <Window title="Terminal" x={220 + off} y={40 + off} w={560} h={400}>
@@ -164,7 +165,7 @@ void (borrow Terminal t) cmd_cat(str path) {
  * @param path NUL-terminated executable path or app name to launch.
  */
 void (borrow Terminal t) cmd_run(str path) {
-    if (t.pid != 0) {
+    if (t.pid.is_some()) {
         t.say_line("a process is still running here");
         return;
     }
@@ -173,7 +174,7 @@ void (borrow Terminal t) cmd_run(str path) {
         Ok(value) -> value;
         Err(e) -> ({ t.say_error("run", e.describe()); return; });
     };
-    t.pid = pid;
+    t.pid = Some(pid);
     t.line_buf.clear();
     t.line_buf.append("[pid ");
     Text<12> pid_text = pid.to_string();
@@ -198,10 +199,10 @@ void (borrow Terminal t) run_line(str line) {
     t.say("$ ");
     t.say_line(line);
 
-    if (t.pid != 0) {
-        process.feed_line(t.pid, line);
-        return;
-    }
+    case t.pid of {
+        Some(pid) -> ({ process.feed_line(pid, line); return; });
+        None -> _;
+    };
     // "cmd arg": split at the first space, skipping the spaces after it.
     i32 end = case line.find(" ") of { Some(at) -> at; None -> line.length; };
     str command = part(line, 0, end);
@@ -246,8 +247,7 @@ void (borrow Terminal t) submit(i32 id) {
 @timer(100)
 /** Checks the attached child process and reports/reaps it after exit. */
 void (borrow Terminal t) poll() {
-    if (t.pid == 0) { return; }
-    i32 pid = t.pid;
+    i32 pid = case t.pid of { Some(value) -> value; None -> ({ return; }); };
     Result<bool, ProcessControlError> status = process.has_exited(pid);
     bool exited = case status of {
         Ok(value) -> value;
@@ -262,7 +262,7 @@ void (borrow Terminal t) poll() {
         Ok(value) -> ({ exit_status = value; got_status = true; });
         Err(_) -> _;
     };
-    t.pid = 0;
+    t.pid = None;
     t.line_buf.clear();
     t.line_buf.append("[pid ");
     Text<12> pid_text = pid.to_string();
@@ -296,5 +296,5 @@ void (borrow Terminal t) poll() {
 @on_close
 /** Unbinds the child process from this terminal's output node before close. */
 void (borrow Terminal t) closing() {
-    if (t.pid != 0) { terminal.unbind(t.pid); }
+    case t.pid of { Some(pid) -> terminal.unbind(pid); None -> _; };
 }

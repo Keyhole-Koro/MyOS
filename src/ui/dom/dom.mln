@@ -395,6 +395,9 @@ export Result<i32, UiError> create_node(i32 kind, str name) {
     n.kind = (u16)kind;
     n.name = replaced_text(n.name, name);
     n.owner = g_current_owner;
+    // A fresh row is zero bytes, and zero bytes read as Some(0).
+    n.sel = None;
+    n.color = None;
     touch();
     return Ok(id);
 }
@@ -531,9 +534,9 @@ export void drain_events() {
 // Kernel tasks preempt on the timer, so the test-and-set is done with
 // interrupts off.
 
-i32 g_lock = 0;      // held
+bool g_lock = false; // held
 i32 g_want = 0;      // tasks waiting for it
-i32 g_handoff = 0;   // unlock() passed the lock straight to a waiter
+bool g_handoff = false; // unlock() passed the lock straight to a waiter
 
 /**
  * Acquires the DOM lock, sleeping until ownership is handed to this task when contended.
@@ -545,7 +548,7 @@ export void lock() {
         i32 was = irq.save_disable();
         defer irq.restore(was);
         if (!g_lock) {
-            g_lock = 1;
+            g_lock = true;
             return;
         }
         g_want = g_want + 1;
@@ -554,10 +557,10 @@ export void lock() {
         {
             i32 was = irq.save_disable();
             defer irq.restore(was);
-            if (g_handoff != 0) {
-                g_handoff = 0;
+            if (g_handoff) {
+                g_handoff = false;
                 g_want = g_want - 1;
-                return;   // g_lock stays 1: it is ours now
+                return;   // g_lock stays set: it is ours now
             }
         }
         scheduler.sleep(1);
@@ -569,9 +572,9 @@ export void unlock() {
     i32 was = irq.save_disable();
     defer irq.restore(was);
     if (g_want != 0) {
-        g_handoff = 1;   // the next waiter to look owns it
+        g_handoff = true;   // the next waiter to look owns it
     } else {
-        g_lock = 0;
+        g_lock = false;
     }
 }
 
@@ -1023,13 +1026,13 @@ export void set_colors(i32 id, i32 background, i32 border) {
 }
 
 /**
- * Sets foreground/text color of a node (0 restores theme default).
+ * Sets foreground/text color of a node, in place of the theme default.
  * @param id DOM Node ID.
  * @param color Text color (RGB).
  */
 export void set_color(i32 id, i32 color) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
-    n.color = color;
+    n.color = Some(color);
     damage_row(n);
 }
 

@@ -22,7 +22,7 @@ entity Node max 512 {
     u16 cursor;      // TextInput: caret position (0..len)
     u16 radius;      // Panel corner radius, display pixels
     u16 scroll;      // TextArea/List: first visible line/row
-    u16 sel;         // List: selected row + 1 (0 = none); Menu: hovered row + 1
+    Option<i32> sel; // List: selected row; Menu: hovered row
     u16 sx;          // Window: bounds saved by maximize_window
     u16 sy;
     u16 sw;
@@ -33,7 +33,7 @@ entity Node max 512 {
     fn(i32 owner, i32 id, i32 arg) -> void on_click;
     i32 background_color; // NODE_BOX fill colour (0 is valid black)
     i32 border_color;     // NODE_BOX border colour
-    i32 color;            // foreground/text colour ; 0 = theme default
+    Option<i32> color;    // foreground/text colour; None = theme default
     fn(i32 owner, i32 id, i32 arg) -> i32 on_key; // key filter for DOWN events
     fn(i32 owner, i32 id, i32 arg) -> void on_change;
     fn(i32 owner, i32 id, i32 arg) -> void on_tick;

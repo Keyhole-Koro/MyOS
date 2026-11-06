@@ -78,7 +78,7 @@ export Result<i32, UiError> create(Request *m) {
         id = dom_elements.create_text(s0, x, y)?;
         dom.set_text(id, s0);
         if (m->a3) { dom.set_style(id, NodeStyle::BOLD); }
-        dom.set_color(id, m->a2);
+        if (m->a2 != 0) { dom.set_color(id, m->a2); } // the wire's zero: theme default
     } else if (op == UiOp::CREATE_BOX) {
         id = dom_elements.create_box(x, y, w, h, m->a4, m->a5)?;
     } else if (op == UiOp::CREATE_PANEL) {

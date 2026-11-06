@@ -24,15 +24,13 @@ import { Text } from "@std/text/text.mln";
 // call nested inside another package's argument list does not resolve.
 
 /**
- * Resolves foreground text color for a node, returning fallback if unset (0).
+ * Resolves foreground text color for a node, returning fallback if unset.
  * @param n Pointer to DOM Node.
- * @param fallback Default RGB color if node color is 0.
+ * @param fallback Default RGB color if the node has none.
  * @return Resolved RGB color.
  */
 export i32 node_fg(borrow NodeRow n, i32 fallback) {
-    i32 c = n.color;
-    if (c != 0) { return c; }
-    return fallback;
+    return case n.color of { Some(color) -> color; None -> fallback; };
 }
 
 /**
@@ -296,13 +294,12 @@ export void draw_text_area(borrow NodeRow n) {
 }
 
 /**
- * Renders text rows for List or Menu controls with an optional highlighted selection row.
+ * Renders text rows for List or Menu controls, highlighting the row in `sel`.
  * @param n Pointer to DOM Node.
- * @param hl Index of row to highlight, or None.
  * @param hl_color Background RGB color for highlight.
  * @param hl_fg Foreground text RGB color for highlight.
  */
-export void draw_rows(borrow NodeRow n, Option<i32> hl, i32 hl_color, i32 hl_fg) {
+export void draw_rows(borrow NodeRow n, i32 hl_color, i32 hl_fg) {
     i32 s = dom.ui_scale();
     i32 x = n.x;
     i32 y = n.y;
@@ -326,7 +323,7 @@ export void draw_rows(borrow NodeRow n, Option<i32> hl, i32 hl_color, i32 hl_fg)
         i32 llen = dom_widgets.line_len_at(n, start);
         i32 ty = y + pad + row * lh;
         i32 color = fg;
-        bool highlighted = case hl of {
+        bool highlighted = case n.sel of {
             Some(index) -> first + row == index;
             None -> false;
         };
@@ -350,15 +347,13 @@ export void draw_list(borrow NodeRow n) {
     i32 state = n.state;
     i32 focused = state & NodeState::FOCUSED;
     draw_rows_box(n, focused);
-    Option<i32> sel = None;
-    if (n.sel != 0) { sel = Some(n.sel - 1); }
     i32 hl = theme.ACCENT;
     i32 hl_fg = theme.ON_ACCENT;
     if (!focused) {
         hl = theme.BUTTON_FACE_PRESSED;
         hl_fg = theme.TEXT_PRIMARY;
     }
-    draw_rows(n, sel, hl, hl_fg);
+    draw_rows(n, hl, hl_fg);
 }
 
 /**
@@ -375,9 +370,7 @@ export void draw_menu(borrow NodeRow n) {
     graphics.draw_round_rect(n.x, n.y, n.w, n.h, r, s, border);
     i32 hl = theme.ACCENT;
     i32 hl_fg = theme.ON_ACCENT;
-    Option<i32> sel = None;
-    if (n.sel != 0) { sel = Some(n.sel - 1); }
-    draw_rows(n, sel, hl, hl_fg);
+    draw_rows(n, hl, hl_fg);
 }
 
 /**
