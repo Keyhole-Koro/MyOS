@@ -657,7 +657,6 @@ export void list_set_items(NodeId id, str items) {
     }
     buf.put(i, (char)0);
     n.len = (u16)i;
-    n.sel = None;
     n.scroll = 0;
     dom.damage_row(&n);
     dom.touch();
@@ -765,7 +764,7 @@ export void list_click(NodeId id, i32 px, i32 py) {
     bool again = case n.sel of { Some(was) -> was == row; None -> false; };
     list_select(id, row);
     if (again) {
-        dom.emit(&n, UiEventKind::ACTIVATE, n.on_click, 0);
+        dom.fire_activate(&n);
     } else {
         dom.fire_change(&n);
     }
@@ -799,9 +798,7 @@ export EditResult list_handle(borrow NodeRow n, i32 type, i32 code) {
     if (code == KeyCode::HOME) { list_select(id, 0); dom.fire_change(&n); return EditResult::Moved; }
     if (code == KeyCode::END) { list_select(id, count - 1); dom.fire_change(&n); return EditResult::Moved; }
     if (code == KeyCode::ENTER) {
-        if (n.sel.is_some()) {
-            dom.emit(&n, UiEventKind::ACTIVATE, n.on_click, 0);
-        }
+        if (n.sel.is_some()) { dom.fire_activate(&n); }
         return EditResult::Moved;
     }
     return EditResult::Unhandled;

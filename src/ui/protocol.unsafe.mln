@@ -89,6 +89,7 @@ RequestStatus run_request(Request *m) {
     if (op == UiOp::AREA_CLEAR)     { area_clear(id); return RequestStatus::OK; }
     if (op == UiOp::AREA_LINES)     { return answer<Result<i32, UiError>>(m, area_lines(id)); }
     if (op == UiOp::LIST_SET_ITEMS) { list_set_items(id, m->s0); return RequestStatus::OK; }
+    if (op == UiOp::LIST_SELECT)    { dom_widgets.list_select(id, m->a1); return RequestStatus::OK; }
     if (op == UiOp::LIST_COUNT)     { return answer<Result<i32, UiError>>(m, list_count(id)); }
     if (op == UiOp::LIST_SELECTED) {
         return answer<Result<Option<i32>, UiError>>(m, dom_widgets.list_selected(id));

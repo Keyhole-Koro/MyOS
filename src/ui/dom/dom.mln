@@ -1185,10 +1185,20 @@ export void fire_change(borrow NodeRow n) {
     emit(&n, UiEventKind::CHANGE, n.on_change, change_value(&n));
 }
 
+/**
+ * Reports that the user activated a List's selected row.
+ * @param n The List.
+ */
+export void fire_activate(borrow NodeRow n) {
+    emit(&n, UiEventKind::ACTIVATE, n.on_click, change_value(&n));
+}
+
 // The value a change event carries, which is the node's new value.
 i32 change_value(borrow NodeRow n) {
     if (n.kind == NodeKind::CHECKBOX) { return (n.state & NodeState::CHECKED) != 0 ? 1 : 0; }
-    if (n.kind == NodeKind::LIST) { return n.sel.unwrap_or(-1); }
+    if (n.kind == NodeKind::LIST) {
+        return case n.sel of { Some(row) -> row; None -> -1; };
+    }
     return 0;
 }
 
