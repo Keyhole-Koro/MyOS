@@ -210,8 +210,7 @@ void on_right_press(i32 ex, i32 ey) {
         None -> ({
             if (g_desktop_menu_items != 0) {
                 str desktop_items = str.from_c(g_desktop_menu_items);
-                Option<NodeId> no_target = None;
-                case dom_widgets.open_menu(ex, ey, desktop_items, g_desktop_menu_handler, no_target) of { Ok(_) -> _; Err(_) -> _; };
+                case dom_widgets.open_menu(ex, ey, desktop_items, g_desktop_menu_handler, None) of { Ok(_) -> _; Err(_) -> _; };
             }
             return;
         });

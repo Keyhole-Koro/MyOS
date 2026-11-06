@@ -215,8 +215,7 @@ Option<Instance> instance_of_app(i32 app) {
     for (Instance each in instances.instance_all()) {
         borrow InstanceRow row = each.row();
         if (!row.done && row.app == app) {
-            Option<Instance> found = Some(each);
-            return found;
+            return Some(each);
         }
     }
     return None;
@@ -492,8 +491,7 @@ export void launch_menu() {
     if (rows < 1) { rows = 1; }
     i32 y = graphics.display_height() - dom_widgets.taskbar_height() - (rows * 34 + 20) * s;
     str items = menu_items();
-    Option<NodeId> no_target = None;
-    case dom_widgets.open_menu(8 * s, y, items, on_menu, no_target) of {
+    case dom_widgets.open_menu(8 * s, y, items, on_menu, None) of {
         Ok(_) -> _;
         Err(_) -> _;
     };

@@ -1408,20 +1408,14 @@ export void set_taskbar_id(NodeId id) { g_taskbar_id = Some(id); }
 /** Returns the active top-level window ID, if there is one. */
 export Option<NodeId> active_window_id() { return g_active_window; }
 
-/** Updates the active top-level window ID. */
-export void set_active_window_id(NodeId id) { g_active_window = Some(id); }
-
-/** Records that no window is active. */
-export void clear_active_window_id() { g_active_window = None; }
+/** Updates the active top-level window ID; None records that no window is active. */
+export void set_active_window_id(Option<NodeId> id) { g_active_window = id; }
 
 /** Returns the focused control ID, if there is one. */
 export Option<NodeId> focus_id() { return g_focus_id; }
 
-/** Updates the focused control ID. */
-export void set_focus_id(NodeId id) { g_focus_id = Some(id); }
-
-/** Records that no control has focus. */
-export void clear_focus_id() { g_focus_id = None; }
+/** Updates the focused control ID; None records that no control has focus. */
+export void set_focus_id(Option<NodeId> id) { g_focus_id = id; }
 
 /** Returns the taskbar launcher callback address. */
 export fn() -> void launcher_handler() { return g_launcher; }

@@ -59,7 +59,7 @@ export void clear_focus() {
         Some(id) -> dom.set_state_flag(id, NodeState::FOCUSED, 0);
         None -> _;
     };
-    dom.clear_focus_id();
+    dom.set_focus_id(None);
 }
 
 // Whether the focused node, if any, is inside a window.
@@ -79,7 +79,7 @@ export void set_focus(NodeId id) {
     if (dom.holds(dom.focus_id(), id)) { return; }
     clear_focus();
     if (!dom.node_exists(id)) { return; }
-    dom.set_focus_id(id);
+    dom.set_focus_id(Some(id));
     dom.set_state_flag(id, NodeState::FOCUSED, 1);
 }
 
@@ -99,7 +99,7 @@ export void focus_window(NodeId win) {
             Some(active) -> dom.set_state_flag(active, NodeState::FOCUSED, 0);
             None -> _;
         };
-        dom.set_active_window_id(win);
+        dom.set_active_window_id(Some(win));
         dom.set_state_flag(win, NodeState::FOCUSED, 1);
         if (!focus_is_in(win)) { clear_focus(); }
         dom.damage_taskbar(); // the active entry's highlight moved
@@ -125,7 +125,7 @@ export void activate_topmost() {
     }
     case top of {
         Some(win) -> focus_window(win);
-        None -> dom.clear_active_window_id();
+        None -> dom.set_active_window_id(None);
     };
     dom.damage_taskbar();
 }
@@ -178,7 +178,7 @@ export void minimize_window(NodeId win) {
     if (focus_is_in(win)) { clear_focus(); }
     if (dom.holds(dom.active_window_id(), win)) {
         dom.set_state_flag(win, NodeState::FOCUSED, 0);
-        dom.clear_active_window_id();
+        dom.set_active_window_id(None);
         activate_topmost();
     }
     dom.damage_taskbar();
