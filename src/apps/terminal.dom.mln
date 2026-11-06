@@ -1,22 +1,23 @@
 package terminal;
 
+import app from "@app/app.mln";
+import { App, View } from "@app/app.mln";
 import elements from "@app/elements.mln";
 import ui from "@app/ui.mln";
-import { app, timer, key, on_close } from "@app/annotations.mln";
+import { TextField, TextLog } from "@app/ui.mln";
+import { app, timer, key } from "@app/annotations.mln";
 import terminal from "@app/terminal.mln";
 import fs from "@std/hosted/fs.mln";
 import { DirEntry, FsChunk } from "@std/hosted/fs.mln";
 import process from "@std/hosted/process.mln";
 import str from "@std/text/str.mln";
-import { text_copy } from "@app/ui_text.mln";
 import { Text } from "@std/text/text.mln";
 import { Result } from "@std/core/result.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
 import { SpawnError } from "@contracts/process/spawn.contract.mln";
 import { LoaderError } from "@contracts/process/loader.contract.mln";
-import { ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
+import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
 import { Option } from "@std/core/option.mln";
-import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 
 // Terminal: a read-only TextArea for output and a command line. Lines typed
 // while a user process is attached go to its stdin; otherwise they are
@@ -25,42 +26,36 @@ import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 // separate process whose stdout lands in this window (see proc/console.mln).
 // Each instance polls its own process on a @timer and reports its exit status.
 
-i32 opened_count = 0; // desktop placement sequence shared by Terminal windows
-
 /**
- * Per-window state for a terminal instance.
- * @property out DOM node ID of the output text area.
- * @property input DOM node ID of the command input field.
+ * The state of a terminal.
+ * @property out What the terminal and its child have printed.
+ * @property input The command line.
  * @property pid Attached child process, while a program is running.
- * @property line_buf Scratch buffer for formatted output lines.
- * @property cmd Mutable command-line copy used by command parsing.
  */
+@app
 struct Terminal {
-    NodeId out;      // output TextArea
-    NodeId input;    // command TextInput
-    Option<i32> pid; // attached process
-    Text<96> line_buf; // scratch for one formatted line
+    TextLog out;
+    TextField input;
+    Option<Pid> pid;
 };
 
-@app
-/**
- * Builds the terminal window and focuses its command input.
- * @return DOM node ID of the terminal window.
- */
-NodeId (borrow Terminal t) view() {
-    t.pid = None; // the instance starts as zero bytes, which read as Some(0)
-    i32 off = 24 * opened_count;
-    opened_count++;
-    NodeId win = <Window title="Terminal" x={220 + off} y={40 + off} w={560} h={400}>
-        <TextArea ref={t.out} name="output" x={12} y={12} w={536} h={296} capacity={6144} readonly={1} testId="terminal-output" />
-        <Row x={12} y={320} w={536} h={34} gap={8}>
-            <TextInput ref={t.input} placeholder="type a command, e.g. help" w={440} h={34} capacity={96} testId="terminal-input" />
-            <PrimaryButton text="Run" w={88} h={34} onClick={t.submit} />
-        </Row>
-    </Window>;
-    t.say_line("MyOS terminal. Type help, ls, or the name of a program (hello, echo, count).");
-    ui.focus(t.input);
-    return win;
+impl App for Terminal {
+    Self start() { return Terminal { out: ui.log(), input: ui.field() }; }
+
+    View (Self t) view() {
+        return <Window title="Terminal" x={220} y={40} w={560} h={400}>
+            <TextArea log={t.out} text="MyOS terminal. Type help, ls, or the name of a program (hello, echo, count).\n" name="output" x={12} y={12} w={536} h={296} capacity={6144} readonly={1} testId="terminal-output" />
+            <Row x={12} y={320} w={536} h={34} gap={8}>
+                <TextInput field={t.input} placeholder="type a command, e.g. help" w={440} h={34} capacity={96} focus={true} testId="terminal-input" />
+                <PrimaryButton text="Run" w={88} h={34} onClick={t.submit} />
+            </Row>
+        </Window>;
+    }
+
+    /** Stops routing the child's output to a log that is going away. */
+    void (borrow Self t) close() {
+        case t.pid of { Some(pid) -> terminal.unbind(pid); None -> _; };
+    }
 }
 
 /**
@@ -68,7 +63,7 @@ NodeId (borrow Terminal t) view() {
  * @param s NUL-terminated text to append.
  */
 void (Terminal t) say(str s) {
-    ui.area_append(t.out, s);
+    t.out.append(s);
 }
 
 /**
@@ -106,26 +101,26 @@ void (borrow Terminal t) cmd_ls(str dir) {
             Err(e) -> ({ t.say_error("ls", e.describe()); return; });
         };
         i32 idx = entry.index;
-        t.line_buf.clear();
-        t.line_buf.append("  ");
-        t.line_buf.append(entry.name.as_str());
+        Text<96> line = Text<96> {};
+        line.append("  ");
+        line.append(entry.name.as_str());
         bool is_directory = case fs.is_dir(idx) of {
             Ok(value) -> value;
             Err(e) -> ({ t.say_error("ls", e.describe()); return; });
         };
         if (is_directory) {
-            t.line_buf.append("/\n");
+            line.append("/\n");
         } else {
             i32 size = case fs.entry_size(idx) of {
                 Ok(value) -> value;
                 Err(e) -> ({ t.say_error("ls", e.describe()); return; });
             };
-            t.line_buf.append("  ");
+            line.append("  ");
             Text<12> size_text = size.to_string();
-            t.line_buf.append(size_text.as_str());
-            t.line_buf.append(" bytes\n");
+            line.append(size_text.as_str());
+            line.append(" bytes\n");
         }
-        t.say(t.line_buf.as_str());
+        t.say(line.as_str());
         n++;
         start = idx + 1;
     }
@@ -166,19 +161,25 @@ void (borrow Terminal t) cmd_run(str path) {
         t.say_line("a process is still running here");
         return;
     }
-    i32 pid = case terminal.spawn_bound(path, t.out) of {
+    Pid pid = case terminal.spawn_bound(path, t.out) of {
         Ok(value) -> value;
         Err(e) -> ({ t.say_error("run", e.describe()); return; });
     };
     t.pid = Some(pid);
-    t.line_buf.clear();
-    t.line_buf.append("[pid ");
-    Text<12> pid_text = pid.to_string();
-    t.line_buf.append(pid_text.as_str());
-    t.line_buf.append("] ");
-    t.line_buf.append(path);
-    t.line_buf.append("\n");
-    t.say(t.line_buf.as_str());
+    Text<128> line = pid_line(pid);
+    line.append("] ");
+    line.append(path);
+    line.append("\n");
+    t.say(line.as_str());
+}
+
+// The start of a line about a process: `[pid 3`.
+Text<128> pid_line(Pid pid) {
+    Text<128> line = Text<128> {};
+    Text<12> number = ((i32)pid).to_string();
+    line.append("[pid ");
+    line.append(number.as_str());
+    return line;
 }
 
 // The part of `line` from `start` to `end`.
@@ -215,7 +216,7 @@ void (borrow Terminal t) run_line(str line) {
         return;
     }
     if (command == "ls") { t.cmd_ls(arg); return; }
-    if (command == "clear") { ui.area_clear(t.out); return; }
+    if (command == "clear") { terminal.clear(t.out); return; }
     if (command == "cat") { t.cmd_cat(arg); return; }
     if (command == "run") { t.cmd_run(arg); return; }
     t.cmd_run(command);
@@ -223,71 +224,52 @@ void (borrow Terminal t) run_line(str line) {
 
 // Enter anywhere in the window, or the Run button, submits the command line.
 @key("Enter")
-/**
- * Submits the current input text as a terminal command.
- * @param id DOM node ID supplied by the key/button event.
- */
-void (borrow Terminal t) submit(NodeId id) {
-    case text_copy<96>(t.input, &t.line_buf) of {
-        Ok(_) -> _;
-        Err(_) -> ({ t.say_line("cannot read command input"); return; });
-    };
-    ui.input_set(t.input, "");
-    Text<96> line = t.line_buf;
-    t.run_line(line.as_str());
-    ui.focus(t.input);
+/** Submits the current input text as a terminal command. */
+void (borrow Terminal t) submit() {
+    str line = t.input.read();
+    t.input.clear();
+    t.run_line(line);
+    t.input.focus();
 }
 
 // Poll the attached process; report and reap it once it exits.
 @timer(100)
 /** Checks the attached child process and reports/reaps it after exit. */
 void (borrow Terminal t) poll() {
-    i32 pid = case t.pid of { Some(value) -> value; None -> ({ return; }); };
+    Pid pid = case t.pid of { Some(value) -> value; None -> ({ return; }); };
     bool exited = case process.has_exited(pid) of {
         Ok(value) -> value;
         Err(ProcessControlError::InvalidPid(_)) -> true;
         Err(ProcessControlError::NotExited(_)) -> false;
     };
     if (!exited) { return; }
-    ProcessExitStatus exit_status;
-    bool got_status = false;
-    case process.reap(pid) of {
-        Ok(value) -> ({ exit_status = value; got_status = true; });
-        Err(_) -> _;
-    };
     t.pid = None;
-    t.line_buf.clear();
-    t.line_buf.append("[pid ");
-    Text<12> pid_text = pid.to_string();
-    t.line_buf.append(pid_text.as_str());
-    if (got_status) {
-        case exit_status of {
-            ProcessExitStatus::Code(code) -> ({
-                t.line_buf.append(" exited with ");
-                Text<12> code_text = code.to_string();
-                t.line_buf.append(code_text.as_str());
-            });
-            ProcessExitStatus::PageFault -> ({
-                t.line_buf.append(" terminated by page fault");
-            });
-            ProcessExitStatus::PrivilegeViolation -> ({
-                t.line_buf.append(" terminated by privilege violation");
-            });
-            ProcessExitStatus::IllegalInstruction -> ({
-                t.line_buf.append(" terminated by illegal instruction");
-            });
-        };
-    } else {
-        t.line_buf.append(" could not be reaped");
-    }
-    t.line_buf.append("]\n");
-    t.say(t.line_buf.as_str());
+    case process.reap(pid) of {
+        Ok(status) -> t.say_exit(pid, Some(status));
+        Err(_) -> t.say_exit(pid, None);
+    };
 }
 
-// Closing the window while a process is attached: stop routing its output
-// to a TextArea that no longer exists.
-@on_close
-/** Unbinds the child process from this terminal's output node before close. */
-void (borrow Terminal t) closing() {
-    case t.pid of { Some(pid) -> terminal.unbind(pid); None -> _; };
+/**
+ * Reports how a child ended.
+ * @param pid The child.
+ * @param status Its exit status, or None when it could not be reaped.
+ */
+void (Terminal t) say_exit(Pid pid, Option<ProcessExitStatus> status) {
+    Text<128> line = pid_line(pid);
+    case status of {
+        Some(ProcessExitStatus::Code(code)) -> ({
+            Text<12> code_text = code.to_string();
+            line.append(" exited with ");
+            line.append(code_text.as_str());
+        });
+        Some(ProcessExitStatus::PageFault) -> ({ line.append(" terminated by page fault"); });
+        Some(ProcessExitStatus::PrivilegeViolation) -> ({ line.append(" terminated by privilege violation"); });
+        Some(ProcessExitStatus::IllegalInstruction) -> ({ line.append(" terminated by illegal instruction"); });
+        None -> ({ line.append(" could not be reaped"); });
+    };
+    line.append("]\n");
+    t.say(line.as_str());
 }
+
+i32 main() { return app.run<Terminal>(); }
