@@ -124,13 +124,6 @@ Option<ChannelId> channel_of(i32 owner) {
 i32 dropped_count = 0;   // events lost to a full channel (an app that stopped polling)
 
 /**
- * Returns the total number of events dropped due to full IPC channels.
- *
- * @return Cumulative dropped event count.
- */
-export i32 dropped() { return dropped_count; }
-
-/**
  * Queues an event for a process owner.
  *
  * For TIMER events, suppresses redundant ticks if an earlier tick is already pending

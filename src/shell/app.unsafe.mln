@@ -206,12 +206,6 @@ void scan_disk() {
     }
 }
 
-/**
- * Returns the number of applications discovered during installation.
- * @return Number of installed application records.
- */
-export i32 count() { return registry_count; }
-
 // --- instances -------------------------------------------------------------------------------
 
 Text<256> menu_buf; // "\n"-joined app names

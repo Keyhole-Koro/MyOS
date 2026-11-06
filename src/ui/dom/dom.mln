@@ -274,9 +274,7 @@ export bool node_exists(NodeId id) {
  * @return Some(row) for a live node, None for a dead ID.
  */
 export Option<borrow NodeRow> find_row(NodeId id) {
-    i32 word = (i32)id;
-    if (!dom_model.node_live_id(word)) { return None; }
-    return Some(dom_model.node_row_id(word));
+    return dom_model.node_find_id((i32)id);
 }
 
 /**
@@ -1145,17 +1143,6 @@ export void set_on_click(NodeId id, fn(i32 owner, NodeId id, i32 arg) -> void ha
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     n.on_click = handler;
     set_hit_testable(id, handler != 0);
-}
-
-/**
- * Returns the click handler function pointer of a node.
- * @param id DOM Node ID.
- * @return Ok(Some(handler)) when registered, Ok(None) when absent, or Err for an invalid ID.
- */
-export Result<Option<fn(i32 owner, NodeId id, i32 arg) -> void>, UiError> get_on_click(NodeId id) {
-    borrow NodeRow n = require_row(id)?;
-    if (n.on_click == 0) { return Ok(None); }
-    return Ok(Some(n.on_click));
 }
 
 /**

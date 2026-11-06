@@ -32,8 +32,6 @@ export enum SsdError {
     DeviceError,
 }
 
-export const i32 BLOCK_SIZE = 65536;
-
 /**
  * Waits for an in-flight SSD command to complete.
  * @return Ok(DONE) after a completed transfer, or Err(DeviceError).

@@ -39,8 +39,5 @@ export const i32 BITMAP_BLOCK = 2; // Block allocation bitmap (1 block)
 /** First block available for file and directory data. */
 export const i32 DATA_START   = 3; // First data block
 
-// --- Inode & File Descriptor Limits ---
-/** Maximum number of filesystem entries cached in memory at once. */
-export const i32 MINODE_CACHE_MAX = 16; // Maximum active in-memory cached inodes
 /** Maximum number of open file descriptors shared system-wide. */
 export const i32 FD_MAX           = 8;  // Maximum simultaneous open descriptors system-wide

@@ -3461,13 +3461,6 @@ export i32 face_for(bool bold, i32 scale) {
 export i32 line_height(i32 face) { return face_line_h[face]; }
 
 /**
- * Returns the font ascent in pixels above the baseline.
- * @param face Font face index.
- * @return Ascent in pixels.
- */
-export i32 ascent(i32 face) { return face_ascent[face]; }
-
-/**
  * Computes the glyph array index for a character in the specified face.
  *
  * Characters outside the printable ASCII range 0x20..0x7E map to '?'.
