@@ -1,128 +1,138 @@
 package editor;
 
+import app from "@app/app.mln";
+import { App, View } from "@app/app.mln";
 import elements from "@app/elements.mln";
 import ui from "@app/ui.mln";
-import { app, open, key } from "@app/annotations.mln";
+import { TextField } from "@app/ui.mln";
+import { app, key, open } from "@app/annotations.mln";
 import fs from "@std/hosted/fs.mln";
 import { FsChunk } from "@std/hosted/fs.mln";
+import str from "@std/text/str.mln";
 import { Result } from "@std/core/result.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
-import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
-import { text_copy } from "@app/ui_text.mln";
-import str from "@std/text/str.mln";
 import { Text } from "@std/text/text.mln";
 import { KeyEventType, KeyCode } from "@contracts/input/keyboard.contract.mln";
 
 // Text editor: a TextArea over one file on the MFS disk. Save rewrites the
 // file (MFS writes are append-only, so the file is removed and recreated).
 //
-// Single instance: `@app(single)` makes a second launch focus the existing
-// window, and `ui.open(path)` from another app (Files) lands in the @open
-// method of the running instance -- or of a fresh one if none is open.
-
-i32 CAP = 4096;
+// The text being edited stays in the DOM and is read on save. Single instance:
+// `single` makes a second launch focus the existing window, and `ui.open(path)`
+// from another app (Files) lands in `open` of the running instance, or of a
+// fresh one if none is open.
 
 /**
- * Per-window state for the single-instance text editor.
- * @property area DOM node ID of the editable text area.
- * @property name DOM node ID of the filename input.
- * @property status DOM node ID of the status label.
- * @property save_name Scratch buffer holding the filename copied from the input.
- * @property save_text Scratch buffer holding text copied from the editor before saving.
+ * The editor's state.
+ * @property name The file name field.
+ * @property body The text being edited.
+ * @property status What the last load or save did.
  */
+@app(name = "Editor", single, opens)
+@open // what the shell looks for until it reads `opens`
 struct Editor {
-    NodeId area;     // TextArea
-    NodeId name;     // filename TextInput
-    NodeId status;   // Label
-    Text<32> save_name;
-    Text<4096> save_text;
+    TextField name;
+    TextField body;
+    Text<96> status;
 };
 
-@app(single)
-/** Builds the editor window and opens a scratch document for a plain launch.
- * @return DOM node ID of the editor window.
- */
-NodeId (borrow Editor e) view() {
-    NodeId win = <Window title="Editor" x={300} y={120} w={520} h={420}>
-        <Row x={12} y={12} w={496} h={34} gap={8}>
-            <TextInput ref={e.name} placeholder="file name" w={300} h={34} capacity={16} testId="editor-name" />
-            <PrimaryButton text="Save" w={90} h={34} onClick={e.save} />
-        </Row>
-        <TextArea ref={e.area} name="Type here..." x={12} y={56} w={496} h={294} capacity={4096} testId="editor-text" />
-        <Label ref={e.status} text="" x={12} y={360} color={ui.TEXT_SECONDARY} testId="editor-status" />
-    </Window>;
-    // A plain launch starts on a scratch file; ui.open() replaces it.
-    Text<64> scratch = Text<64> {};
-    scratch.append("untitled.txt");
-    e.open(scratch);
-    return win;
+impl App for Editor {
+    Self start() { return Editor { name: ui.field(), body: ui.field() }; }
+
+    View (Self e) view() {
+        return <Window title="Editor" x={300} y={120} w={520} h={420}>
+            <Row x={12} y={12} w={496} h={34} gap={8}>
+                <TextInput field={e.name} placeholder="file name" w={300} h={34} capacity={16} testId="editor-name" />
+                <PrimaryButton text="Save" w={90} h={34} onClick={e.save} />
+            </Row>
+            <TextArea field={e.body} name="Type here..." x={12} y={56} w={496} h={294} capacity={4096} testId="editor-text" />
+            <Label text={e.status} x={12} y={360} color={ui.TEXT_SECONDARY} testId="editor-status" />
+        </Window>;
+    }
+
+    /**
+     * Loads a file, or leaves an empty document for a new path.
+     * @param path File path to load; a plain launch starts on a scratch file.
+     */
+    void (borrow Self e) open(str path) {
+        if (path.is_empty()) { e.open("untitled.txt"); return; }
+        e.name.write(path);
+        e.body.clear();
+        e.body.focus();
+        i32 fd = case fs.open(path) of {
+            Ok(v) -> v;
+            Err(_) -> ({ e.show("new file"); return; });
+        };
+        i32 total = 0;
+        while (1) {
+            FsChunk chunk = case fs.read(fd) of {
+                Ok(v) -> v;
+                Err(error) -> ({
+                    fs.close(fd);
+                    e.show_error("read failed", error.describe());
+                    return;
+                });
+            };
+            if (chunk.got <= 0) { break; }
+            e.body.append(chunk.text.as_str());
+            total = total + chunk.got;
+        }
+        fs.close(fd);
+        // Appending leaves the caret at the end; start at the top instead.
+        ui.send_key(KeyEventType::DOWN, KeyCode::HOME, 0); // Home of the last line
+        e.show_bytes("loaded", total);
+    }
 }
 
-// Load `path` into the text area (empty when the file does not exist).
-@open
-/**
- * Opens a file into the editor, or leaves an empty document for a new path.
- * @param path File path to load.
- */
-void (borrow Editor e) open(Text<64> path) {
-    ui.input_set(e.name, path.as_str());
-    ui.area_clear(e.area);
-    ui.focus(e.area);
-    i32 fd = case fs.open(path.as_str()) of {
-        Ok(v) -> v;
-        Err(_) -> ({ ui.set_text(e.status, "new file"); return; });
-    };
-    i32 total = 0;
-    while (1) {
-        FsChunk chunk = case fs.read(fd) of {
-            Ok(v) -> v;
-            Err(error) -> ({
-                fs.close(fd);
-                ui.set_error(e.status, "read failed", error.describe());
-                return;
-            });
-        };
-        if (chunk.got <= 0) { break; }
-        ui.area_append(e.area, chunk.text.as_str());
-        total = total + chunk.got;
-    }
-    fs.close(fd);
-    // area_append leaves the caret at the end; start at the top instead.
-    ui.send_key(KeyEventType::DOWN, KeyCode::HOME, 0); // Home of the last line
-    ui.set_text_fmt(e.status, "loaded %d bytes", "", total);
+/** Puts `text` on the status line. */
+void (borrow Editor e) show(str text) {
+    e.status.clear();
+    e.status.append(text);
+}
+
+/** Shows a failure as `what: <message>`. */
+void (borrow Editor e) show_error(str what, str message) {
+    e.show(what);
+    e.status.append(": ");
+    e.status.append(message);
+}
+
+/** Shows `<verb> <n> bytes`. */
+void (borrow Editor e) show_bytes(str verb, i32 n) {
+    Text<12> count = n.to_string();
+    e.show(verb);
+    e.status.append(" ");
+    e.status.append(count.as_str());
+    e.status.append(" bytes");
 }
 
 @key("Ctrl+S")
-/** Saves the editor contents under the filename currently in the name field.
- * @param id DOM node ID supplied by the key event.
- */
-void (borrow Editor e) save(NodeId id) {
-    case text_copy<32>(e.name, &e.save_name) of {
-        Ok(_) -> _;
-        Err(error) -> ({ ui.set_error(e.status, "save failed", error.describe()); return; });
-    };
-    str path = e.save_name.as_str();
-    if (path.is_empty()) { ui.set_text(e.status, "enter a file name first"); return; }
-    i32 len = case text_copy<4096>(e.area, &e.save_text) of {
-        Ok(value) -> value;
-        Err(error) -> ({ ui.set_error(e.status, "save failed", error.describe()); return; });
-    };
+/** Saves the body under the file name in the name field. */
+void (borrow Editor e) save() {
+    // A read lasts until the next one, and the body is read next.
+    Text<32> name = Text<32> {};
+    name.append(e.name.read());
+    str path = name.as_str();
+    if (path.is_empty()) { e.show("enter a file name first"); return; }
+    str body = e.body.read();
     fs.remove(path);
     i32 fd = case fs.create(path) of {
         Ok(v) -> v;
-        Err(error) -> ({ ui.set_error(e.status, "save failed", error.describe()); return; });
+        Err(error) -> ({ e.show_error("save failed", error.describe()); return; });
     };
     i32 written = 0;
-    if (len > 0) {
-        written = case fs.write(fd, e.save_text.as_str()) of {
+    if (!body.is_empty()) {
+        written = case fs.write(fd, body) of {
             Ok(v) -> v;
             Err(error) -> ({
                 fs.close(fd);
-                ui.set_error(e.status, "save failed", error.describe());
+                e.show_error("save failed", error.describe());
                 return;
             });
         };
     }
     fs.close(fd);
-    ui.set_text_fmt(e.status, "saved %d bytes", "", written);
+    e.show_bytes("saved", written);
 }
+
+i32 main() { return app.run<Editor>(); }
