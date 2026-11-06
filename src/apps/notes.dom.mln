@@ -1,76 +1,65 @@
 package notes;
 
+import app from "@app/app.mln";
+import { App, View } from "@app/app.mln";
 import elements from "@app/elements.mln";
 import ui from "@app/ui.mln";
+import { TextField } from "@app/ui.mln";
 import { app } from "@app/annotations.mln";
-import { text_copy } from "@app/ui_text.mln";
 import { Text } from "@std/text/text.mln";
-import { Result } from "@std/core/result.mln";
-import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
+import { NodeId } from "@contracts/ui/widget.contract.mln";
 
 // "Notes": a small form that exercises keyboard input. Two text fields, a
-// checkbox and a separator, plus a label that echoes what was typed. Every
-// launch is its own Notes instance, so the fields and the echo label are
-// per-window state on the struct; each new window cascades down and right
-// of the previous one.
-
-i32 opened_count = 0; // desktop placement sequence shared by Notes windows
+// checkbox and a separator, plus a label that echoes what was typed. What is
+// being typed stays in the fields; the echo is state.
 
 /**
- * Per-window state for the Notes form.
- * @property title DOM node ID of the title text input.
- * @property body DOM node ID of the body text input.
- * @property echo DOM node ID of the label that mirrors typed text.
- * @property typed Scratch buffer used to copy text from the changed input.
+ * The Notes form's state.
+ * @property title The title field.
+ * @property body The body field.
+ * @property typed Text of the field that last changed.
  */
+@app
 struct Notes {
-    NodeId title;
-    NodeId body;
-    NodeId echo;
+    TextField title;
+    TextField body;
     Text<128> typed;
 };
 
-@app
-/** Builds a Notes window with per-instance title and body fields.
- * @return DOM node ID of the new Notes window.
- */
-NodeId (borrow Notes n) view() {
-    i32 offset = 28 * opened_count;
-    opened_count++;
-    return <Window title="Notes" x={540 + offset} y={96 + offset} w={380} h={330}>
-        <Column x={24} y={20} w={332} h={270} gap={12}>
-            <Label text="Click a field and type. Tab moves between fields." color={ui.TEXT_SECONDARY} />
-            <TextInput ref={n.title} placeholder="Title" w={332} h={34} capacity={64} onChange={n.changed} />
-            <TextInput ref={n.body} placeholder="Write something..." w={332} h={34} capacity={64} onChange={n.changed} />
-            <Separator w={332} />
-            <Checkbox text="Mark as done" checked={true} />
-            <Row w={332} h={34} gap={10}>
-                <Button text="Clear" w={90} h={34} onClick={n.clear} />
-            </Row>
-            <Label ref={n.echo} text="You typed: " />
-        </Column>
-    </Window>;
+impl App for Notes {
+    Self start() { return Notes { title: ui.field(), body: ui.field() }; }
+
+    View (Self n) view() {
+        return <Window title="Notes" x={540} y={96} w={380} h={330}>
+            <Column x={24} y={20} w={332} h={270} gap={12}>
+                <Label text="Click a field and type. Tab moves between fields." color={ui.TEXT_SECONDARY} />
+                <TextInput field={n.title} placeholder="Title" w={332} h={34} capacity={64} onChange={n.changed} />
+                <TextInput field={n.body} placeholder="Write something..." w={332} h={34} capacity={64} onChange={n.changed} />
+                <Separator w={332} />
+                <Checkbox text="Mark as done" checked={true} />
+                <Row w={332} h={34} gap={10}>
+                    <Button text="Clear" w={90} h={34} onClick={n.clear} />
+                </Row>
+                <Label text={"You typed: %s", n.typed} />
+            </Column>
+        </Window>;
+    }
 }
 
 /**
- * Copies a changed input's text and mirrors it in the echo label.
- * @param id DOM node ID of the input that changed.
+ * Keeps the text of the field that changed.
+ * @param text The field's new text.
  */
-void (borrow Notes n) changed(NodeId id) {
-    case text_copy<128>(id, &n.typed) of {
-        Ok(_) -> _;
-        Err(_) -> ({ return; });
-    };
-    str typed = n.typed.as_str();
-    ui.set_text_fmt(n.echo, "You typed: %s", typed, 0);
+void (borrow Notes n) changed(str text) {
+    n.typed.clear();
+    n.typed.append(text);
 }
 
-/**
- * Clears the title and body fields and refreshes the echo label.
- * @param id DOM node ID supplied by the clear-button event.
- */
-void (borrow Notes n) clear(NodeId id) {
-    ui.input_set(n.title, "");
-    ui.input_set(n.body, "");
-    n.changed(n.title);
+/** Clears both fields and the echo. */
+void (borrow Notes n) clear() {
+    n.title.clear();
+    n.body.clear();
+    n.typed.clear();
 }
+
+i32 main() { return app.run<Notes>(); }

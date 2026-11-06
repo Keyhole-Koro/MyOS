@@ -41,6 +41,11 @@ def main() -> int:
             title.fill("Hello")
             expect(title).to_have_value("Hello")
             expect(os.get_by_text("You typed: Hello")).to_be_visible()
+
+            # Clear writes to the fields and to the state the echo reads.
+            os.get_by_role("button", name="Clear").click()
+            expect(title).to_have_value("")
+            expect(os.get_by_text("You typed: Hello")).to_have_count(0)
         print("PASS: strict locators, click, checkbox and fill via automation bridge")
         return 0
     except (AssertionError, RuntimeError) as error:
