@@ -87,11 +87,11 @@ export void set_cursor(i32 x, i32 y) {
 
 /**
  * Shows or hides the hardware cursor sprite.
- * @param on 1 to show, 0 to hide.
+ * @param on True to show, false to hide.
  */
-export void show_cursor(i32 on) {
+export void show_cursor(bool on) {
     i32* ctrl = (i32*)CURSOR_CTRL_ADDR;
-    *ctrl = on;
+    *ctrl = (i32)on;
 }
 
 // ---------------------------------------------------------------------------
@@ -904,23 +904,23 @@ export void fill_disc(i32 cx, i32 cy, i32 r, i32 color) {
 
 /**
  * Returns the line height in pixels for proportional font_sans.
- * @param bold Non-zero for bold typeface, 0 for regular.
+ * @param bold True for bold typeface.
  * @param scale Font scaling factor (1 or 2).
  * @return Line height in pixels.
  */
 @safe
-export i32 text_height(i32 bold, i32 scale) {
+export i32 text_height(bool bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     return font_sans.line_height(face);
 }
 
 /**
  * Returns the font ascent in pixels from top of line box to baseline.
- * @param bold Non-zero for bold typeface, 0 for regular.
+ * @param bold True for bold typeface.
  * @param scale Font scaling factor (1 or 2).
  * @return Ascent in pixels.
  */
-export i32 text_ascent(i32 bold, i32 scale) {
+export i32 text_ascent(bool bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     return font_sans.ascent(face);
 }
@@ -928,12 +928,12 @@ export i32 text_ascent(i32 bold, i32 scale) {
 /**
  * Calculates the total width in pixels of a string rendered in font_sans.
  * @param s Pointer to null-terminated string.
- * @param bold Non-zero for bold typeface.
+ * @param bold True for bold typeface.
  * @param scale Scaling factor.
  * @return String advance width in pixels.
  */
 @safe
-export i32 text_width(str s, i32 bold, i32 scale) {
+export i32 text_width(str s, bool bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     i32 w = 0;
     i32 i = 0;
@@ -958,12 +958,12 @@ i32 text_byte(str s, i32 i) {
  * Calculates the width in pixels of the first `n` characters of a string.
  * @param s Pointer to null-terminated string.
  * @param n Number of characters to measure.
- * @param bold Non-zero for bold typeface.
+ * @param bold True for bold typeface.
  * @param scale Scaling factor.
  * @return Width in pixels.
  */
 @safe
-export i32 text_width_n(str s, i32 n, i32 bold, i32 scale) {
+export i32 text_width_n(str s, i32 n, bool bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     i32 w = 0;
     i32 i = 0;
@@ -985,11 +985,11 @@ export i32 text_width_n(str s, i32 n, i32 bold, i32 scale) {
  * @param y Top position of line box.
  * @param ch ASCII character code.
  * @param color Text color.
- * @param bold Non-zero for bold.
+ * @param bold True for bold.
  * @param scale Scaling factor.
  * @return Horizontal advance in pixels.
  */
-export i32 draw_glyph(i32 x, i32 y, i32 ch, i32 color, i32 bold, i32 scale) {
+export i32 draw_glyph(i32 x, i32 y, i32 ch, i32 color, bool bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     i32 w = font_sans.width(face, ch);
     i32 h = font_sans.height(face, ch);
@@ -1010,11 +1010,11 @@ export i32 draw_glyph(i32 x, i32 y, i32 ch, i32 color, i32 bold, i32 scale) {
  * @param y Origin Y coordinate.
  * @param s String to draw.
  * @param color Text color.
- * @param bold Non-zero for bold typeface.
+ * @param bold True for bold typeface.
  * @param scale Scaling factor.
  */
 @safe
-export void draw_label(i32 x, i32 y, str s, i32 color, i32 bold, i32 scale) {
+export void draw_label(i32 x, i32 y, str s, i32 color, bool bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     i32 line_h = font_sans.line_height(face);
     i32 cx = x;
@@ -1047,11 +1047,11 @@ export void draw_label(i32 x, i32 y, str s, i32 color, i32 bold, i32 scale) {
  * @param w Bounding width in pixels.
  * @param s String to draw.
  * @param color Text color.
- * @param bold Non-zero for bold.
+ * @param bold True for bold.
  * @param scale Scaling factor.
  */
 @safe
-export void draw_label_centered(i32 x, i32 y, i32 w, str s, i32 color, i32 bold, i32 scale) {
+export void draw_label_centered(i32 x, i32 y, i32 w, str s, i32 color, bool bold, i32 scale) {
     i32 tw = text_width(s, bold, scale);
     draw_label(x + (w - tw) / 2, y, s, color, bold, scale);
 }
@@ -1063,10 +1063,10 @@ export void draw_label_centered(i32 x, i32 y, i32 w, str s, i32 color, i32 bold,
  * @param h Bounding height in pixels.
  * @param s String to draw.
  * @param color Text color.
- * @param bold Non-zero for bold.
+ * @param bold True for bold.
  * @param scale Scaling factor.
  */
-export void draw_label_vcentered(i32 x, i32 y, i32 h, str s, i32 color, i32 bold, i32 scale) {
+export void draw_label_vcentered(i32 x, i32 y, i32 h, str s, i32 color, bool bold, i32 scale) {
     i32 th = text_height(bold, scale);
     draw_label(x, y + (h - th) / 2, s, color, bold, scale);
 }
@@ -1115,11 +1115,7 @@ export void draw_char(i32 x, i32 y, i32 ch, i32 fg, i32 bg) {
     // without per-pixel put_pixel calls (avoids 64 function calls + 256
     // bounds checks per character). Glyphs that are not fully inside the clip
     // rectangle fall back to the per-pixel path, which clips.
-    i32 partial = 0;
-    if (x < g_clip.x0) { partial = 1; }
-    if (y < g_clip.y0) { partial = 1; }
-    if (x + 8 > g_clip.x1) { partial = 1; }
-    if (y + 8 > g_clip.y1) { partial = 1; }
+    bool partial = x < g_clip.x0 || y < g_clip.y0 || x + 8 > g_clip.x1 || y + 8 > g_clip.y1;
     if (partial) {
         draw_char_clipped(x, y, ch, fg);
         return;

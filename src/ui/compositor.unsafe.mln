@@ -393,7 +393,7 @@ export void run() {
             // Application service work is answered here, on this task. The app
             // task sleeps on each request until its reply; its handlers run over
             // there, on events the DOM emitted above.
-            i32 served = g_request_pump();
+            bool served = g_request_pump();
 
             // The server's own queued handlers (taskbar, menus, the shell's
             // window-close hook) run here, between input and paint.
@@ -404,9 +404,9 @@ export void run() {
             // requests is likely in the middle of an app's burst (view() is a
             // dozen creates, each one pass apart): hold the paint until a quiet
             // pass, but never for more than a few, so a chatty app still shows.
-            if (served > 0) { g_paint_deferred++; } else { g_paint_deferred = 0; }
+            if (served) { g_paint_deferred++; } else { g_paint_deferred = 0; }
             if (dom.has_damage()) {
-                if (served == 0 || g_paint_deferred > 8) {
+                if (!served || g_paint_deferred > 8) {
                     g_paint_deferred = 0;
                     present_frame();
                 }

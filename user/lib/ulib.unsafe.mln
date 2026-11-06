@@ -74,15 +74,15 @@ export void println(str s) {
 export void print_i32(i32 v) {
     char digits[12];
     i32 n = 0;
-    i32 neg = 0;
-    if (v < 0) { neg = 1; v = -v; }
+    bool neg = false;
+    if (v < 0) { neg = true; v = -v; }
     if (v == 0) { digits[n] = '0'; n++; }
     while (v > 0) {
         digits[n] = (char)('0' + v % 10);
         v = v / 10;
         n++;
     }
-    if (neg != 0) { digits[n] = '-'; n++; }
+    if (neg) { digits[n] = '-'; n++; }
     // Digits were produced least significant first; emit them reversed.
     char out[12];
     i32 i = 0;

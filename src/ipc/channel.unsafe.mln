@@ -142,16 +142,16 @@ export bool submit(Request *request, ChannelId reply_channel) {
  * or `shell_protocol` based on `domain`, and sends the result word to the caller's
  * reply channel.
  *
- * @return Number of requests processed and answered during this pass.
+ * @return True if this pass answered at least one request.
  */
-export i32 serve() {
-    i32 served = 0;
+export bool serve() {
+    bool served = false;
     i32 w[24];
     while (ipc.recv(g_requests, &w[0])) {
         // A successful receive makes at least one slot available. Failed
         // submitters armed this bit before returning to user space.
         scheduler.notify_armed(TransportSignal::REQUEST_SPACE);
-        served++;
+        served = true;
         Request m;
         decode_request_words(&w[0], &m);
         i32 r[24];

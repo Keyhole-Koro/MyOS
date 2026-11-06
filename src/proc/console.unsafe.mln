@@ -60,7 +60,7 @@ struct ConsoleSlot {
 };
 ConsoleSlot consoles[8];
 
-i32 ready = 0;
+bool ready = false;
 
 /**
  * Looks up the console slot index for a given process ID.
@@ -240,9 +240,9 @@ Result<Option<i32>, SpawnError> try_open(char *path) {
 }
 
 Result<i32, SpawnError> open_executable(char *path) {
-    i32 has_slash = 0;
+    bool has_slash = false;
     i32 i = 0;
-    while (path[i] != 0) { if (path[i] == '/') { has_slash = 1; } i++; }
+    while (path[i] != 0) { if (path[i] == '/') { has_slash = true; } i++; }
     if (!has_slash) {
         spawn_path.clear();
         spawn_path.append("bin/");
@@ -394,5 +394,5 @@ export void init() {
     }
     syscall.set_console(on_write, on_read);
     syscall.set_spawn_handler(on_spawn);
-    ready = 1;
+    ready = true;
 }

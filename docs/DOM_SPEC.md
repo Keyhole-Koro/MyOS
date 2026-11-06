@@ -140,7 +140,7 @@ enforcement は後回し。
 
 **決定: グローバル 1 本のイベントキューにする。**
 
-- 既存の `mouse.mln` が既にグローバルな circular queue（`q_x[64]` など）を持っており、
+- 既存の `mouse.mln` が既にグローバルな circular queue（`queue[64]`）を持っており、
   DOM イベントもこれに倣う。
 - `Event { type, target, current, x, y, key, data0, data1 }`（ISSUE-006 の構造案）を
   グローバル固定長リングバッファに積む。

@@ -62,7 +62,7 @@ enum PathError {
 // Shared block buffer (allocated at init).
 // Constraint: Single global transfer buffer; file operations are synchronous and non-reentrant.
 i32 g_buf = 0;
-i32 g_enabled = 0;
+bool g_enabled = false;
 
 // =========================================================================
 // 1. Open File & Descriptor Table (mfile & mfd)
@@ -200,9 +200,9 @@ void zero_buf() {
 /**
  * Queries the allocation state of a data block in the active bitmap buffer.
  * @param block_num Data block number.
- * @return Non-zero if allocated, zero if free.
+ * @return True if allocated.
  */
-i32 bitmap_get(i32 block_num) {
+bool bitmap_get(i32 block_num) {
     char *bits = (char *)g_buf;
     return bitset.get(bits, block_num);
 }
@@ -210,9 +210,9 @@ i32 bitmap_get(i32 block_num) {
 /**
  * Sets or clears the allocation bit for a data block in the active bitmap buffer.
  * @param block_num Data block number.
- * @param value 1 to mark allocated, 0 to mark free.
+ * @param value True to mark allocated, false to mark free.
  */
-void bitmap_set(i32 block_num, i32 value) {
+void bitmap_set(i32 block_num, bool value) {
     char *bits = (char *)g_buf;
     bitset.put(bits, block_num, value);
 }
@@ -244,7 +244,7 @@ void free_block(i32 block_num) {
         Ok(_) -> _;
         Err(_) -> ({ return; });
     };
-    bitmap_set(block_num, 0);
+    bitmap_set(block_num, false);
     case ssd.write_block(fs_config.BITMAP_BLOCK, g_buf) of {
         Ok(_) -> _;
         Err(_) -> ({ return; });
@@ -483,7 +483,7 @@ export void format() {
     zero_buf();
     i32 i = 0;
     while (i < fs_config.DATA_START) {
-        bitmap_set(i, 1);
+        bitmap_set(i, true);
         i++;
     }
     case ssd.write_block(fs_config.BITMAP_BLOCK, g_buf) of {
@@ -523,7 +523,7 @@ export void init() {
         format();
     }
     debug.println("kernel: fs ready");
-    g_enabled = 1;
+    g_enabled = true;
 }
 
 // =========================================================================

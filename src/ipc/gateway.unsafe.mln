@@ -245,7 +245,7 @@ export bool request(i32 pid, UserAddress user_request) {
  *
  * @param pid Process ID.
  * @param user_out Destination virtual address in user space for the return scalar.
- * @return 1 if a reply was received, 0 if no reply is available.
+ * @return True if a reply was received.
  */
 export bool reply(i32 pid, UserAddress user_out) {
     i32 i = case slot(pid) of {
@@ -282,7 +282,7 @@ export bool reply(i32 pid, UserAddress user_out) {
  *
  * @param pid Process ID.
  * @param user_event Pointer to an Event with its own inline text storage.
- * @return 1 if an event was dequeued, 0 if no events are pending.
+ * @return True if an event was dequeued.
  */
 export bool poll(i32 pid, UserAddress user_event) {
     if (!ready(pid)) { debug.panic("request_gateway: invalid poll PID"); }

@@ -60,16 +60,16 @@ i32 APPS_MAX = 16;
  * Metadata read from an installed executable's @app annotation.
  * @property path NUL-terminated executable path copied into the shell's stable string storage.
  * @property type Application receiver type recorded in the @app annotation.
- * @property single Nonzero when launch requests should reuse an existing instance.
+ * @property single True when launch requests should reuse an existing instance.
  * @property name Launcher label; falls back to type when the annotation omits a name.
- * @property opens Nonzero when this application declares an @open handler.
+ * @property opens True when this application declares an @open handler.
  */
 struct AppRecord {
     i32 path;                   // char*: the executable on disk
     i32 type;                   // char*: "Counter", the @app row's receiver type
-    i32 single;
+    bool single;
     i32 name;                   // char*: launcher label
-    i32 opens;                  // 1 if the type has an @open method
+    bool opens;                 // the type has an @open method
 };
 AppRecord registry[16];
 i32 registry_count = 0;
@@ -123,7 +123,7 @@ char *keep(char *s) {
     return out;
 }
 
-void register_app(char *path, char *type, i32 single, char *name, i32 opens) {
+void register_app(char *path, char *type, bool single, char *name, bool opens) {
     if (registry_count >= APPS_MAX) {
         debug.println("app: registry full");
         return;
@@ -185,7 +185,7 @@ void scan_disk() {
                             case type_result of {
                                 Ok(type_text) -> ({
                                     char *type = keep(type_text);
-                                    Result<i32, AnnotationError> single_result = rows.arg(0);
+                                    Result<bool, AnnotationError> single_result = rows.flag(0);
                                     Result<char*, AnnotationError> name_result = rows.text(1);
                                     case single_result of {
                                         Ok(single) -> ({
@@ -193,8 +193,7 @@ void scan_disk() {
                                                 Ok(label) -> ({
                                                     Annotations opens = annotations.in_image(image);
                                                     opens.on("open", type);
-                                                    i32 has_open = 0;
-                                                    if (opens.next()) { has_open = 1; }
+                                                    bool has_open = opens.next();
                                                     register_app(keep(scan_path.as_ptr()), type, single, keep(label), has_open);
                                                     debug.printf("app: installed %s (%s)\n", (i32)type, (i32)(scan_path.as_ptr()));
                                                 });
@@ -501,7 +500,7 @@ void reap_exited(i32 owner, i32 id, i32 arg) {
  */
 export Result<Option<i32>, AppError> launch(i32 index) {
     if (index < 0 || index >= registry_count) { return Err(AppError::InvalidIndex(index)); }
-    if (registry[index].single != 0) {
+    if (registry[index].single) {
         case slot_of_app(index) of {
             Some(slot) -> ({
                 AppInstance instance = case instances[slot] of {
@@ -554,10 +553,10 @@ export Result<Option<i32>, AppError> open(char *path) {
     if (path_text.length > 63) { return Err(AppError::PathTooLong(path_text.length)); }
     i32 a = 0;
     while (a < registry_count) {
-        if (registry[a].opens != 0) {
+        if (registry[a].opens) {
             i32 slot = 0;
             bool found = false;
-            if (registry[a].single != 0) {
+            if (registry[a].single) {
                 case slot_of_app(a) of {
                     Some(v) -> ({ slot = v; found = true; });
                     None -> _;

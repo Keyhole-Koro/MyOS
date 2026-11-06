@@ -28,13 +28,13 @@ export i32 scale_for(i32 base_width, i32 base_height) {
 
 /** Measures text width using the active graphics font. */
 @safe
-export i32 text_width(str text, i32 bold, i32 scale) {
+export i32 text_width(str text, bool bold, i32 scale) {
     return graphics.text_width(text, bold, scale);
 }
 
 /** Returns one line of text height using the active graphics font. */
 @safe
-export i32 text_height(i32 bold, i32 scale) {
+export i32 text_height(bool bold, i32 scale) {
     return graphics.text_height(bold, scale);
 }
 

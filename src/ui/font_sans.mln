@@ -3451,11 +3451,11 @@ export i32 face_count() { return FACE_COUNT; }
 
 /**
  * Selects the appropriate font face index based on weight and display scale.
- * @param bold Non-zero for bold weight, zero for regular weight.
+ * @param bold True for bold weight.
  * @param scale UI scale factor (2 or higher selects 2x face).
  * @return Font face index (0 to 3).
  */
-export i32 face_for(i32 bold, i32 scale) {
+export i32 face_for(bool bold, i32 scale) {
     i32 f = 0;
     if (scale >= 2) { f = 1; }
     if (bold) { f = f + 2; }

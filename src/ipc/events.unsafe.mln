@@ -89,16 +89,20 @@ export void push_shell(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *te
  * @param channel Kernel IPC channel handle.
  */
 export void bind(i32 owner, ChannelId channel) {
-    i32 free = -1;
+    Option<i32> free = None;
     i32 i = 0;
     while (i < OWNERS_MAX) {
         if (event_bindings[i].owner == owner) { event_bindings[i].channel = channel; return; }
-        if (event_bindings[i].owner == 0 && free < 0) { free = i; }
+        if (event_bindings[i].owner == 0 && free.is_none()) { free = Some(i); }
         i++;
     }
-    if (free < 0) { return; }
-    event_bindings[free].owner = owner;
-    event_bindings[free].channel = channel;
+    case free of {
+        Some(slot) -> ({
+            event_bindings[slot].owner = owner;
+            event_bindings[slot].channel = channel;
+        });
+        None -> _;
+    };
 }
 
 /**
