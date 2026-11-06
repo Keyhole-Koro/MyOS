@@ -3,6 +3,7 @@ package notes;
 import elements from "@app/elements.mln";
 import ui from "@app/ui.mln";
 import { app } from "@app/annotations.mln";
+import { text_copy } from "@app/ui_text.mln";
 import { Text } from "@std/text/text.mln";
 import { Result } from "@std/core/result.mln";
 import { UiError } from "@contracts/ui/widget.contract.mln";
@@ -33,20 +34,20 @@ struct Notes {
 /** Builds a Notes window with per-instance title and body fields.
  * @return DOM node ID of the new Notes window.
  */
-i32 (Notes *n) view() {
+i32 (borrow mut Notes n) view() {
     i32 offset = 28 * opened_count;
     opened_count++;
     return <Window title="Notes" x={540 + offset} y={96 + offset} w={380} h={330}>
         <Column x={24} y={20} w={332} h={270} gap={12}>
             <Label text="Click a field and type. Tab moves between fields." color={ui.TEXT_SECONDARY} />
-            <TextInput ref={n->title} placeholder="Title" w={332} h={34} capacity={64} onChange={n->changed} />
-            <TextInput ref={n->body} placeholder="Write something..." w={332} h={34} capacity={64} onChange={n->changed} />
+            <TextInput ref={n.title} placeholder="Title" w={332} h={34} capacity={64} onChange={n.changed} />
+            <TextInput ref={n.body} placeholder="Write something..." w={332} h={34} capacity={64} onChange={n.changed} />
             <Separator w={332} />
             <Checkbox text="Mark as done" checked={1} />
             <Row w={332} h={34} gap={10}>
-                <Button text="Clear" w={90} h={34} onClick={n->clear} />
+                <Button text="Clear" w={90} h={34} onClick={n.clear} />
             </Row>
-            <Label ref={n->echo} text="You typed: " />
+            <Label ref={n.echo} text="You typed: " />
         </Column>
     </Window>;
 }
@@ -55,22 +56,22 @@ i32 (Notes *n) view() {
  * Copies a changed input's text and mirrors it in the echo label.
  * @param id DOM node ID of the input that changed.
  */
-void (Notes *n) changed(i32 id) {
-    Result<i32, UiError> copied = ui.text_copy(id, n->typed.as_ptr(), n->typed.data.length);
+void (borrow mut Notes n) changed(i32 id) {
+    Result<i32, UiError> copied = text_copy<128>(id, &mut n.typed);
     case copied of {
         Ok(_) -> _;
         Err(_) -> ({ return; });
     };
-    n->typed.sync_from_ptr();
-    ui.set_text_fmt(n->echo, "You typed: %s", (i32)(n->typed.as_ptr()), 0);
+    str typed = n.typed.as_str();
+    ui.set_text_fmt(n.echo, "You typed: %s", typed, 0);
 }
 
 /**
  * Clears the title and body fields and refreshes the echo label.
  * @param id DOM node ID supplied by the clear-button event.
  */
-void (Notes *n) clear(i32 id) {
-    ui.input_set(n->title, "");
-    ui.input_set(n->body, "");
-    n->changed(n->title);
+void (borrow mut Notes n) clear(i32 id) {
+    ui.input_set(n.title, "");
+    ui.input_set(n.body, "");
+    n.changed(n.title);
 }

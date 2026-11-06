@@ -20,7 +20,8 @@ import { ProcessControlError, ProcessExitStatus } from "@contracts/process/contr
 import { AppError, KeyClaimError } from "@contracts/myapp/lifecycle.contract.mln";
 import console from "@os/proc/console.mln";
 import mbin from "@std/format/mbin.mln";
-import { Result, result_take_ok } from "@std/core/result.mln";
+import { Result } from "@std/core/result.mln";
+import { result_take_ok } from "@std/core/result_take.mln";
 import { Option } from "@std/core/option.mln";
 import { ShellEventKind } from "events.mln";
 import { KeyModifier, KeyCode } from "@contracts/input/keyboard.contract.mln";
@@ -619,7 +620,8 @@ export void launch_menu() {
     i32 rows = registry_count;
     if (rows < 1) { rows = 1; }
     i32 y = graphics.display_height() - dom_widgets.taskbar_height() - (rows * 34 + 20) * s;
-    case dom_widgets.open_menu(8 * s, y, menu_items(), on_menu, 0) of {
+    str items = str.from_c(menu_items());
+    case dom_widgets.open_menu(8 * s, y, items, on_menu, 0) of {
         Ok(_) -> _;
         Err(_) -> _;
     };

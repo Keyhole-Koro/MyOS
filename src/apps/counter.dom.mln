@@ -58,7 +58,7 @@ i32 (borrow mut Counter c) view() {
 
 /** Refreshes the count label from the current counter state. */
 void (borrow mut Counter c) refresh() {
-    ui.set_text_fmt(c.label, "clicks: %d", c.clicks, 0);
+    ui.set_text_fmt(c.label, "clicks: %d", "", c.clicks);
 }
 
 /**

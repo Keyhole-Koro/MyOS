@@ -1,6 +1,8 @@
 package dom_hit_test;
 
 import dom from "dom.mln";
+import { NodeRow } from "dom_model.mln";
+import { Blob } from "@std/memory/blob.mln";
 import { Children } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 

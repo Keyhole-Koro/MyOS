@@ -8,46 +8,59 @@ import { SyscallStatus } from "@contracts/myos/syscall.contract.mln";
 // stack frames -- a process gets one 4 KiB stack page.
 
 /**
- * Computes the length of a null-terminated string.
- * @param s Null-terminated string.
- * @return Number of characters before null terminator.
+ * One line of input.
+ * @property data The bytes.
+ * @property length Number of bytes.
  */
-export i32 strlen(char* s) {
-    i32 n = 0;
-    for (; s[n] != 0; n++) {}
-    return n;
+export struct Line {
+    char data[96];
+    i32 length;
+};
+
+/**
+ * Tests a line against a string.
+ * @param line Line to compare.
+ * @param s Expected text.
+ * @return True if they hold the same bytes.
+ */
+@safe
+export bool line_is(borrow Line line, str s) {
+    if (line.length != s.length) { return false; }
+    i32 i = 0;
+    while (i < s.length) {
+        if (line.data[i] != s.data[i]) { return false; }
+        i++;
+    }
+    return true;
 }
 
 /**
- * Compares two null-terminated strings for equality.
- * @param a First string.
- * @param b Second string.
- * @return True if strings match character for character, false otherwise.
+ * Writes a line to standard output, followed by a newline.
+ * @param line Line to write.
  */
-export bool str_eq(char* a, char* b) {
-    i32 i = 0;
-    while (a[i] != 0) {
-        if (a[i] != b[i]) { return false; }
-        i++;
-    }
-    if (b[i] != 0) { return false; }
-    return true;
+@safe
+export void print_line(borrow Line line) {
+    i32 written = 0;
+    sys_write(1, &line.data[0], line.length, &written);
+    sys_write(1, "\n", 1, &written);
 }
 
 /**
  * Writes a string to standard output (file descriptor 1).
  * @param s String to write.
  */
-export void print(char* s) {
+@safe
+export void print(str s) {
     i32 written = 0;
-    sys_write(1, s, strlen(s), &written);
+    sys_write(1, s.data, s.length, &written);
 }
 
 /**
  * Writes a string followed by a newline to standard output.
  * @param s String to write.
  */
-export void println(char* s) {
+@safe
+export void println(str s) {
     print(s);
     i32 written = 0;
     sys_write(1, "\n", 1, &written);
@@ -57,6 +70,7 @@ export void println(char* s) {
  * Prints a 32-bit signed integer in decimal form to standard output.
  * @param v Integer value to print.
  */
+@safe
 export void print_i32(i32 v) {
     char digits[12];
     i32 n = 0;
@@ -81,15 +95,13 @@ export void print_i32(i32 v) {
 }
 
 /**
- * Reads a line of text from standard input (descriptor 0) into a buffer.
- *
- * Strips the trailing newline character and null-terminates the string.
- * @param buf Destination character buffer.
- * @param cap Maximum capacity of the destination buffer including null byte.
- * @return Length of the line read.
+ * Reads a line of text from standard input (descriptor 0).
+ * The trailing newline is dropped; bytes past the line's capacity are lost.
+ * @param out Destination line.
  */
-export i32 readline(char* buf, i32 cap) {
-    i32 len = 0;
+@safe
+export void read_line(borrow mut Line out) {
+    out.length = 0;
     while (1) {
         char c[1];
         i32 got = 0;
@@ -98,23 +110,24 @@ export i32 readline(char* buf, i32 cap) {
             sys_yield();
         } else {
             i32 ch = (i32)c[0] & 0xFF;
-            if (ch == 10) {
-                buf[len] = (char)0;
-                return len;
-            }
-            if (len + 1 < cap) {
-                buf[len] = (char)ch;
-                len++;
+            if (ch == 10) { return; }
+            if (out.length < 96) {
+                out.data[out.length] = (char)ch;
+                out.length++;
             }
         }
     }
-    return len;
 }
+
+/** Gives up the CPU until the scheduler returns to this process. */
+@safe
+export void yield_cpu() { sys_yield(); }
 
 /**
  * Terminates the current process with the given exit code.
  * @param code Process exit status code.
  */
+@safe
 export void exit(i32 code) {
     sys_exit(code);
 }

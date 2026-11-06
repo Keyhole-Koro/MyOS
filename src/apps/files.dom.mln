@@ -4,7 +4,9 @@ import elements from "@app/elements.mln";
 import ui from "@app/ui.mln";
 import { app } from "@app/annotations.mln";
 import fs from "@std/hosted/fs.mln";
+import { DirEntry } from "@std/hosted/fs.mln";
 import str from "@std/text/str.mln";
+import { list_item } from "@app/ui_text.mln";
 import { Text } from "@std/text/text.mln";
 import { Result } from "@std/core/result.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
@@ -47,37 +49,37 @@ struct Files {
  * Builds the file-manager window, loads the root directory, and focuses its list.
  * @return DOM node ID of the file-manager window.
  */
-i32 (Files *f) view() {
+i32 (borrow mut Files f) view() {
     i32 win = <Window title="Files" x={60} y={60} w={440} h={400}>
-        <List ref={f->list} name="files" x={12} y={12} w={416} h={270} capacity={1024}
-              onChange={f->select} onActivate={f->open} testId="file-list" />
+        <List ref={f.list} name="files" x={12} y={12} w={416} h={270} capacity={1024}
+              onChange={f.select} onActivate={f.open} testId="file-list" />
         <Row x={12} y={294} w={416} h={34} gap={8}>
-            <PrimaryButton text="Open" w={90} h={34} onClick={f->open} />
-            <Button text="New" w={80} h={34} onClick={f->create} />
-            <Button text="Delete" w={90} h={34} onClick={f->delete} />
-            <Button text="Refresh" w={96} h={34} onClick={f->refresh} />
+            <PrimaryButton text="Open" w={90} h={34} onClick={f.open} />
+            <Button text="New" w={80} h={34} onClick={f.create} />
+            <Button text="Delete" w={90} h={34} onClick={f.delete} />
+            <Button text="Refresh" w={96} h={34} onClick={f.refresh} />
         </Row>
-        <Label ref={f->status} text="" x={12} y={340} color={ui.TEXT_SECONDARY} testId="files-status" />
+        <Label ref={f.status} text="" x={12} y={340} color={ui.TEXT_SECONDARY} testId="files-status" />
     </Window>;
-    f->refresh(0);
-    ui.focus(f->list);
+    f.refresh(0);
+    ui.focus(f.list);
     return win;
 }
 
 // `name` inside the directory shown, as a path.
 /**
  * Builds a path under the currently displayed directory.
- * @param name NUL-terminated child entry name.
- * @return Pointer to the instance's reusable path buffer.
+ * @param name Child entry name.
+ * @return View of the instance's reusable path buffer.
  */
-char* (Files *f) path_of(char *name) {
-    f->path.clear();
-    if (!f->dir.is_empty()) {
-        f->path.append(f->dir.as_str());
-        f->path.append("/");
+str (borrow mut Files f) path_of(str name) {
+    f.path.clear();
+    if (!f.dir.is_empty()) {
+        f.path.append(f.dir.as_str());
+        f.path.append("/");
     }
-    f->path.append(str.from_c(name));
-    return f->path.as_ptr();
+    f.path.append(name);
+    return f.path.as_str();
 }
 
 // Rebuild the list from the directory shown: ".." first unless at the
@@ -87,54 +89,53 @@ char* (Files *f) path_of(char *name) {
  * Refreshes the list widget and status label from the current directory.
  * @param id DOM event argument (unused).
  */
-void (Files *f) refresh(i32 id) {
-    Text<16> name = Text<16> {};
-    f->items.clear();
+void (borrow mut Files f) refresh(i32 id) {
+    f.items.clear();
     i32 start = 0;
     i32 count = 0;
-    if (!f->dir.is_empty()) {
-        f->items.append("..");
+    if (!f.dir.is_empty()) {
+        f.items.append("..");
         count++;
     }
     while (1) {
         // None ends enumeration; Err reports a disk failure.
-        name.clear();
-        Result<Option<i32>, FsError> res = fs.dir_next_at(f->dir.as_ptr(), start, name.as_ptr(), name.data.length);
-        i32 idx = case res of {
-            Ok(v) -> case v of { Some(n) -> n; None -> ({ break; }); };
-            Err(e) -> ({ ui.set_error(f->status, "cannot list", e.describe()); return; });
+        Result<Option<DirEntry>, FsError> res = fs.next_entry(f.dir.as_str(), start);
+        DirEntry entry = case res of {
+            Ok(v) -> case v of { Some(found) -> found; None -> ({ break; }); };
+            Err(e) -> ({ ui.set_error(f.status, "cannot list", e.describe()); return; });
         };
-        name.sync_from_ptr();
-        if (count > 0) { f->items.append("\n"); }
-        f->items.append(name.as_str());
+        i32 idx = entry.index;
+        if (count > 0) { f.items.append("\n"); }
+        f.items.append(entry.name.as_str());
         Result<bool, FsError> directory = fs.is_dir(idx);
         bool is_directory = case directory of {
             Ok(value) -> value;
-            Err(e) -> ({ ui.set_error(f->status, "cannot list", e.describe()); return; });
+            Err(e) -> ({ ui.set_error(f.status, "cannot list", e.describe()); return; });
         };
         if (is_directory) {
-            f->items.append("/");
+            f.items.append("/");
         } else {
             Result<i32, FsError> size_result = fs.entry_size(idx);
             i32 size = case size_result of {
                 Ok(value) -> value;
-                Err(e) -> ({ ui.set_error(f->status, "cannot list", e.describe()); return; });
+                Err(e) -> ({ ui.set_error(f.status, "cannot list", e.describe()); return; });
             };
-            f->items.append("   (");
+            f.items.append("   (");
             Text<12> size_text = size.to_string();
-            f->items.append(size_text.as_str());
-            f->items.append(" bytes)");
+            f.items.append(size_text.as_str());
+            f.items.append(" bytes)");
         }
         count++;
         start = idx + 1;
     }
-    ui.list_set_items(f->list, f->items.as_ptr());
-    if (!f->dir.is_empty()) {
-        ui.set_text_fmt(f->status, "/%s: %d entries", (i32)(f->dir.as_ptr()), count - 1);
+    ui.list_set_items(f.list, f.items.as_str());
+    if (!f.dir.is_empty()) {
+        str shown = f.dir.as_str();
+        ui.set_text_fmt(f.status, "/%s: %d entries", shown, count - 1);
     } else {
-        ui.set_text_fmt(f->status, "%d entries on disk", count, 0);
+        ui.set_text_fmt(f.status, "%d entries on disk", "", count);
     }
-    f->selected.clear();
+    f.selected.clear();
 }
 
 // Whether the selected row is a directory ("name/" or "..").
@@ -143,17 +144,16 @@ void (Files *f) refresh(i32 id) {
  * @return Ok(true) for a directory or parent row, Ok(false) for a file or no selection,
  *         or Err when the list query fails.
  */
-Result<bool, UiError> (Files *f) selected_is_dir() {
-    Option<i32> selected = ui.list_selected(f->list)?;
+Result<bool, UiError> (borrow mut Files f) selected_is_dir() {
+    Option<i32> selected = ui.list_selected(f.list)?;
     i32 row = case selected of {
         Some(n) -> n;
         None -> ({ return Ok(false); });
     };
     Text<48> item = Text<48> {};
     item.clear();
-    Result<i32, UiError> copied = ui.list_item(f->list, row, item.as_ptr(), item.data.length);
+    Result<i32, UiError> copied = list_item<48>(f.list, row, &mut item);
     copied?;
-    item.sync_from_ptr();
     if (item.len() == 2 && item.data[0] == '.' && item.data[1] == '.') { return Ok(true); }
     if (!item.is_empty() && item.data[item.len() - 1] == '/') { return Ok(true); }
     return Ok(false);
@@ -164,94 +164,94 @@ Result<bool, UiError> (Files *f) selected_is_dir() {
  * Changes the displayed directory and refreshes its contents.
  * @param name Directory name to enter, or ".." to move to the parent.
  */
-void (Files *f) enter(char *name) {
-    if (name[0] == '.' && name[1] == '.' && name[2] == 0) {
-        i32 n = f->dir.len();
-        while (n > 0 && f->dir.data[n - 1] != '/') { n--; }
+void (borrow mut Files f) enter(str name) {
+    if (name == "..") {
+        i32 n = f.dir.len();
+        while (n > 0 && f.dir.data[n - 1] != '/') { n--; }
         if (n > 0) { n--; }
-        f->dir.truncate(n);
+        f.dir.truncate(n);
     } else {
-        if (!f->dir.is_empty()) { f->dir.append("/"); }
-        f->dir.append(str.from_c(name));
+        if (!f.dir.is_empty()) { f.dir.append("/"); }
+        f.dir.append(name);
     }
-    f->refresh(0);
+    f.refresh(0);
 }
 
-// The selected row's file name (the part before the size), or 0.
+// Copy the selected row's file name (the part before the size) into
+// f.selected. False when no row is selected.
 /**
  * Copies the selected entry's name out of its display row.
- * @return Pointer to the instance's selected-name buffer, or null if no row is selected.
+ * @return True when f.selected now holds a name, false if no row is selected.
  */
-char* (Files *f) selected_name() {
-    Result<Option<i32>, UiError> selected = ui.list_selected(f->list);
+bool (borrow mut Files f) load_selected() {
+    Result<Option<i32>, UiError> selected = ui.list_selected(f.list);
     i32 row = case selected of {
         Ok(v) -> case v of {
             Some(n) -> n;
-            None -> ({ return (char*)0; });
+            None -> ({ return false; });
         };
-        Err(_) -> ({ return (char*)0; });
+        Err(_) -> ({ return false; });
     };
     Text<48> item = Text<48> {};
     item.clear();
-    Result<i32, UiError> copied = ui.list_item(f->list, row, item.as_ptr(), item.data.length);
+    Result<i32, UiError> copied = list_item<48>(f.list, row, &mut item);
     case copied of {
         Ok(_) -> _;
-        Err(_) -> ({ return (char*)0; });
+        Err(_) -> ({ return false; });
     };
-    item.sync_from_ptr();
-    f->selected.clear();
+    f.selected.clear();
     i32 i = 0;
     while (i < item.len()) {
         if (item.data[i] == ' ') { break; }
         if (item.data[i] == '/') { break; }
-        f->selected.push((u8)item.data[i]);
+        f.selected.push((u8)item.data[i]);
         i++;
         if (i >= fs.NAME_MAX - 1) { break; }
     }
-    return f->selected.as_ptr();
+    return true;
 }
 
 /**
  * Updates the status label when the selected row changes.
  * @param id DOM node ID supplied by the list change event.
  */
-void (Files *f) select(i32 id) {
-    char *name = f->selected_name();
-    if (name == 0) { return; }
-    ui.set_text_fmt(f->status, "selected %s", (i32)name, 0);
+void (borrow mut Files f) select(i32 id) {
+    if (!f.load_selected()) { return; }
+    str shown = f.selected.as_str();
+    ui.set_text_fmt(f.status, "selected %s", shown, 0);
 }
 
 /**
  * Enters the selected directory or routes the selected file to an @open application.
  * @param id DOM node ID supplied by the open/activate event.
  */
-void (Files *f) open(i32 id) {
-    char *name = f->selected_name();
-    if (name == 0) { ui.set_text(f->status, "select a file first"); return; }
-    Result<bool, UiError> is_dir = f->selected_is_dir();
+void (borrow mut Files f) open(i32 id) {
+    if (!f.load_selected()) { ui.set_text(f.status, "select a file first"); return; }
+    Text<16> name = f.selected;
+    Result<bool, UiError> is_dir = f.selected_is_dir();
     bool directory = case is_dir of {
         Ok(value) -> value;
-        Err(_) -> ({ ui.set_text(f->status, "could not read selected item"); return; });
+        Err(_) -> ({ ui.set_text(f.status, "could not read selected item"); return; });
     };
-    if (directory) { f->enter(name); return; }
-    ui.open(f->path_of(name));
+    if (directory) { f.enter(name.as_str()); return; }
+    ui.open(f.path_of(name.as_str()));
 }
 
 /**
  * Opens the editor on the default new-file path.
  * @param id DOM node ID supplied by the New-button event (unused).
  */
-void (Files *f) create(i32 id) {
-    ui.open(f->path_of("untitled.txt"));
+void (borrow mut Files f) create(i32 id) {
+    ui.open(f.path_of("untitled.txt"));
 }
 
 // --- delete confirmation dialog ---
 
 /** Closes the active confirmation dialog, if one exists. */
-void (Files *f) close_dialog() {
-    if (f->dialog != 0) {
-        ui.close(f->dialog);
-        f->dialog = 0;
+void (borrow mut Files f) close_dialog() {
+    if (f.dialog != 0) {
+        ui.close(f.dialog);
+        f.dialog = 0;
     }
 }
 
@@ -259,14 +259,14 @@ void (Files *f) close_dialog() {
  * Removes the selected file after confirmation and refreshes the list.
  * @param id DOM node ID supplied by the confirmation button (unused).
  */
-void (Files *f) confirm_delete(i32 id) {
-    f->close_dialog();
-    char *name = f->selected_name();
-    if (name == 0) { return; }
-    Result<_, FsError> removed = fs.remove(f->path_of(name));
+void (borrow mut Files f) confirm_delete(i32 id) {
+    f.close_dialog();
+    if (!f.load_selected()) { return; }
+    Text<16> name = f.selected;
+    Result<_, FsError> removed = fs.remove(f.path_of(name.as_str()));
     case removed of {
-        Ok(_) -> ({ f->refresh(0); ui.set_text(f->status, "deleted"); });
-        Err(e) -> ({ ui.set_error(f->status, "delete failed", e.describe()); });
+        Ok(_) -> ({ f.refresh(0); ui.set_text(f.status, "deleted"); });
+        Err(e) -> ({ ui.set_error(f.status, "delete failed", e.describe()); });
     };
 }
 
@@ -274,38 +274,38 @@ void (Files *f) confirm_delete(i32 id) {
  * Dismisses the delete confirmation without changing the filesystem.
  * @param id DOM node ID supplied by the cancel button (unused).
  */
-void (Files *f) cancel_delete(i32 id) {
-    f->close_dialog();
+void (borrow mut Files f) cancel_delete(i32 id) {
+    f.close_dialog();
 }
 
 /**
  * Opens a confirmation dialog for deleting the selected entry.
  * @param id DOM node ID supplied by the Delete-button event (unused).
  */
-void (Files *f) delete(i32 id) {
-    char *name = f->selected_name();
-    if (name == 0) { ui.set_text(f->status, "select a file first"); return; }
-    f->close_dialog();
-    f->question.clear();
-    f->question.append("Delete \"");
-    f->question.append(str.from_c(name));
-    f->question.append("\" permanently?");
-    Option<i32> enclosing = case ui.window_of(f->list) of {
+void (borrow mut Files f) delete(i32 id) {
+    if (!f.load_selected()) { ui.set_text(f.status, "select a file first"); return; }
+    f.close_dialog();
+    f.question.clear();
+    f.question.append("Delete \"");
+    f.question.append(f.selected.as_str());
+    f.question.append("\" permanently?");
+    Option<i32> enclosing = case ui.window_of(f.list) of {
         Ok(value) -> value;
-        Err(_) -> ({ ui.set_text(f->status, "window lookup failed"); return; });
+        Err(_) -> ({ ui.set_text(f.status, "window lookup failed"); return; });
     };
     i32 win = case enclosing of {
         Some(value) -> value;
-        None -> ({ ui.set_text(f->status, "window not found"); return; });
+        None -> ({ ui.set_text(f.status, "window not found"); return; });
     };
     i32 wx = case ui.window_x(win) of { Ok(value) -> value + 60; Err(_) -> ({ return; }); };
     i32 wy = case ui.window_y(win) of { Ok(value) -> value + 90; Err(_) -> ({ return; }); };
-    f->dialog = <Window title="Delete file?" x={wx} y={wy} w={340} h={140}>
-        <Label text={f->question.as_ptr()} x={20} y={16} />
+    str question = f.question.as_str();
+    f.dialog = <Window title="Delete file?" x={wx} y={wy} w={340} h={140}>
+        <Label text={question} x={20} y={16} />
         <Row x={20} y={60} w={300} h={34} gap={10}>
-            <PrimaryButton text="Delete" w={110} h={34} onClick={f->confirm_delete} />
-            <Button text="Cancel" w={110} h={34} onClick={f->cancel_delete} />
+            <PrimaryButton text="Delete" w={110} h={34} onClick={f.confirm_delete} />
+            <Button text="Cancel" w={110} h={34} onClick={f.cancel_delete} />
         </Row>
     </Window>;
-    ui.show(f->dialog);
+    ui.show(f.dialog);
 }

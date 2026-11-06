@@ -1,4 +1,4 @@
-import { kernel_main } from "main.mln"
+import { kernel_main } from "main.unsafe.mln"
 
 __START__:
   call kernel_main

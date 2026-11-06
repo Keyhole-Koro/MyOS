@@ -1,7 +1,9 @@
+import str from "@std/text/str.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 package compositor;
 
+import blob from "@std/memory/blob.mln";
 import dom from "dom/dom.mln";
 import dom_hit_test from "dom/dom_hit_test.mln";
 import { NodeKind } from "dom/dom.mln";
@@ -218,7 +220,8 @@ void on_right_press(i32 ex, i32 ey) {
         Some(id) -> id;
         None -> ({
             if (g_desktop_menu_items != 0) {
-                case dom_widgets.open_menu(ex, ey, g_desktop_menu_items, g_desktop_menu_handler, 0) of { Ok(_) -> _; Err(_) -> _; };
+                str desktop_items = str.from_c(g_desktop_menu_items);
+                case dom_widgets.open_menu(ex, ey, desktop_items, g_desktop_menu_handler, 0) of { Ok(_) -> _; Err(_) -> _; };
             }
             return;
         });
@@ -406,6 +409,9 @@ export void run() {
                 }
             }
 
+            // Every view of a DOM string lives inside a pass, under this lock,
+            // so this is where freed text may really go.
+            blob.collect();
         }
         scheduler.sleep(1); // yield the CPU to other tasks between passes
     }

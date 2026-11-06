@@ -10,6 +10,7 @@
  */
 package protocol_elements;
 
+import str from "@std/text/str.mln";
 import dom from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
 import dom_elements from "dom/dom_elements.mln";
@@ -28,30 +29,8 @@ import { UiError } from "@contracts/ui/widget.contract.mln";
  * @param testId Test identifier string (empty string for none).
  */
 Result<_, UiError> tag(i32 id, char *testId) {
-    if (testId[0] != 0) {
-        char *copy = dup_string(testId)?;
-        dom.set_test_id(id, copy);
-    }
+    if (testId[0] != 0) { dom.set_test_id(id, str.from_c(testId)); }
     return Ok(_);
-}
-
-/**
- * Duplicates a null-terminated string into newly allocated kernel heap memory.
- *
- * @param s Source string.
- * @return Pointer to newly allocated string copy on heap, or empty string on allocation failure.
- */
-Result<char*, UiError> dup_string(char *s) {
-    i32 len = 0;
-    while (s[len] != 0) { len++; }
-    i32 copy_address = case heap.alloc(len + 1) of {
-        Ok(pointer) -> pointer;
-        Err(_) -> ({ return Err(UiError::AllocationFailed(len + 1)); });
-    };
-    char *copy = (char*)copy_address;
-    i32 k = 0;
-    while (k <= len) { copy[k] = s[k]; k++; }
-    return Ok(copy);
 }
 
 /**
@@ -80,50 +59,42 @@ export Result<i32, UiError> create(Request *m) {
     if (op == UiOp::CREATE_TIMER) {
         return dom_widgets.create_timer(m->a0, 0); // ticks become TIMER events (owner != 0)
     }
-    char *s0 = dup_string(m->s0)?;
-    // The node keeps its name for its lifetime; until one exists, the copy
-    // is freed on every way out.
-    HeapBlock name = HeapBlock { addr: (i32)s0 };
-    bool named = true; // false for the kinds created without a name
+    // The DOM keeps its own copy of every string it is given.
+    str s0 = str.from_c(m->s0);
     if (op == UiOp::CREATE_WINDOW) {
         id = dom_elements.create_window(s0, x, y, w, h)?;
-        dom.set_text_copy(id, m->s0);
+        dom.set_text(id, s0);
     } else if (op == UiOp::CREATE_BUTTON) {
         id = dom_elements.create_button(s0, x, y, w, h)?;
-        dom.set_text_copy(id, m->s0);
+        dom.set_text(id, s0);
     } else if (op == UiOp::CREATE_PRIMARY_BUTTON) {
         id = dom_elements.create_button(s0, x, y, w, h)?;
-        dom.set_text_copy(id, m->s0);
+        dom.set_text(id, s0);
         dom.set_style(id, NodeStyle::PRIMARY);
     } else if (op == UiOp::CREATE_TEXT) {
         id = dom_elements.create_text(s0, x, y)?;
-        dom.set_text_copy(id, m->s0);
+        dom.set_text(id, s0);
     } else if (op == UiOp::CREATE_LABEL) {
         id = dom_elements.create_text(s0, x, y)?;
-        dom.set_text_copy(id, m->s0);
+        dom.set_text(id, s0);
         if (m->a3) { dom.set_style(id, NodeStyle::BOLD); }
         dom.set_color(id, m->a2);
     } else if (op == UiOp::CREATE_BOX) {
         id = dom_elements.create_box(x, y, w, h, m->a4, m->a5)?;
-        named = false;
     } else if (op == UiOp::CREATE_PANEL) {
         id = dom_elements.create_panel(x, y, w, h, m->a4)?;
-        named = false;
     } else if (op == UiOp::CREATE_COLUMN) {
         id = dom_elements.create_column(x, y, w, h, m->a4, m->a5)?;
-        named = false;
     } else if (op == UiOp::CREATE_ROW) {
         id = dom_elements.create_row(x, y, w, h, m->a4, m->a5)?;
-        named = false;
     } else if (op == UiOp::CREATE_TEXT_INPUT) {
         id = dom_elements.create_text_input(s0, x, y, w, h, m->a4)?;
     } else if (op == UiOp::CREATE_CHECKBOX) {
         id = dom_elements.create_checkbox(s0, x, y, m->a2)?;
-        dom.set_text_copy(id, m->s0);
+        dom.set_text(id, s0);
         dom.set_hit_testable(id, 1); // toggles on click even with no handler
     } else if (op == UiOp::CREATE_SEPARATOR) {
         id = dom_elements.create_separator(x, y, w)?;
-        named = false;
     } else if (op == UiOp::CREATE_TEXT_AREA) {
         id = dom_elements.create_text_area(s0, x, y, w, h, m->a4, m->a5)?;
     } else if (op == UiOp::CREATE_LIST) {
@@ -132,7 +103,6 @@ export Result<i32, UiError> create(Request *m) {
     } else {
         return Err(UiError::UnknownOperation(op));
     }
-    if (named) { name.keep(); }
     case tag(id, m->s1) of {
         Ok(_) -> _;
         Err(e) -> ({ dom.remove_node(id); return Err(e); });

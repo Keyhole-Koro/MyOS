@@ -37,6 +37,8 @@ enum RequestWord {
     S1,
     RESULT_OUT,
     RESULT_SIZE,
+    S0_LEN,
+    S1_LEN,
     REPLY_CHANNEL,
 }
 
@@ -55,7 +57,7 @@ void clear_message(i32 *words) {
 }
 
 /**
- * Decodes the 13-word Request prefix of an IPC message into named fields.
+ * Decodes the 15-word Request prefix of an IPC message into named fields.
  * @param words Source wire words.
  * @param request Destination Request structure.
  */
@@ -73,6 +75,8 @@ export void decode_request_words(i32 *words, Request *request) {
     request->s1 = (char*)words[RequestWord::S1];
     request->result_out = words[RequestWord::RESULT_OUT];
     request->result_size = words[RequestWord::RESULT_SIZE];
+    request->s0_len = words[RequestWord::S0_LEN];
+    request->s1_len = words[RequestWord::S1_LEN];
 }
 
 /**
@@ -96,6 +100,8 @@ void encode_request_words(Request *request, ChannelId reply_channel, i32 *words)
     words[RequestWord::S1] = (i32)request->s1;
     words[RequestWord::RESULT_OUT] = request->result_out;
     words[RequestWord::RESULT_SIZE] = request->result_size;
+    words[RequestWord::S0_LEN] = request->s0_len;
+    words[RequestWord::S1_LEN] = request->s1_len;
     words[RequestWord::REPLY_CHANNEL] = (i32)reply_channel;
 }
 

@@ -5,10 +5,12 @@ import ui from "@app/ui.mln";
 import { app, timer, key, on_close } from "@app/annotations.mln";
 import terminal from "@app/terminal.mln";
 import fs from "@std/hosted/fs.mln";
+import { DirEntry, FsChunk } from "@std/hosted/fs.mln";
 import process from "@std/hosted/process.mln";
 import str from "@std/text/str.mln";
+import { text_copy } from "@app/ui_text.mln";
 import { Text } from "@std/text/text.mln";
-import { Result, result_take_ok } from "@std/core/result.mln";
+import { Result } from "@std/core/result.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
 import { SpawnError } from "@contracts/process/spawn.contract.mln";
 import { LoaderError } from "@contracts/process/loader.contract.mln";
@@ -38,7 +40,6 @@ struct Terminal {
     i32 input;    // command TextInput
     i32 pid;      // attached process, 0 = none
     Text<96> line_buf; // scratch for one formatted line
-    Text<96> cmd;      // mutable copy used by run_line
 };
 
 @app
@@ -46,18 +47,18 @@ struct Terminal {
  * Builds the terminal window and focuses its command input.
  * @return DOM node ID of the terminal window.
  */
-i32 (Terminal *t) view() {
+i32 (borrow mut Terminal t) view() {
     i32 off = 24 * opened_count;
     opened_count++;
     i32 win = <Window title="Terminal" x={220 + off} y={40 + off} w={560} h={400}>
-        <TextArea ref={t->out} name="output" x={12} y={12} w={536} h={296} capacity={6144} readonly={1} testId="terminal-output" />
+        <TextArea ref={t.out} name="output" x={12} y={12} w={536} h={296} capacity={6144} readonly={1} testId="terminal-output" />
         <Row x={12} y={320} w={536} h={34} gap={8}>
-            <TextInput ref={t->input} placeholder="type a command, e.g. help" w={440} h={34} capacity={96} testId="terminal-input" />
-            <PrimaryButton text="Run" w={88} h={34} onClick={t->submit} />
+            <TextInput ref={t.input} placeholder="type a command, e.g. help" w={440} h={34} capacity={96} testId="terminal-input" />
+            <PrimaryButton text="Run" w={88} h={34} onClick={t.submit} />
         </Row>
     </Window>;
-    t->say_line("MyOS terminal. Type help, ls, or the name of a program (hello, echo, count).");
-    ui.focus(t->input);
+    t.say_line("MyOS terminal. Type help, ls, or the name of a program (hello, echo, count).");
+    ui.focus(t.input);
     return win;
 }
 
@@ -65,17 +66,17 @@ i32 (Terminal *t) view() {
  * Appends text to the terminal output area.
  * @param s NUL-terminated text to append.
  */
-void (Terminal *t) say(char *s) {
-    ui.area_append(t->out, s);
+void (borrow Terminal t) say(str s) {
+    ui.area_append(t.out, s);
 }
 
 /**
  * Appends a line of text and a newline to the terminal output area.
  * @param s NUL-terminated line to append.
  */
-void (Terminal *t) say_line(char *s) {
-    t->say(s);
-    t->say("\n");
+void (borrow Terminal t) say_line(str s) {
+    t.say(s);
+    t.say("\n");
 }
 
 /**
@@ -83,10 +84,10 @@ void (Terminal *t) say_line(char *s) {
  * @param what The command, as the line's prefix.
  * @param message Why, typically an error's `describe()`.
  */
-void (Terminal *t) say_error(char *what, char *message) {
-    t->say(what);
-    t->say(": ");
-    t->say_line(message);
+void (borrow Terminal t) say_error(str what, str message) {
+    t.say(what);
+    t.say(": ");
+    t.say_line(message);
 }
 
 // `ls [dir]`: the root, or a directory (`ls apps`).
@@ -94,152 +95,133 @@ void (Terminal *t) say_error(char *what, char *message) {
  * Lists entries in a directory in the terminal output.
  * @param dir NUL-terminated directory path; empty string selects the root.
  */
-void (Terminal *t) cmd_ls(char *dir) {
-    Text<16> name = Text<16> {};
+void (borrow mut Terminal t) cmd_ls(str dir) {
     i32 n = 0;
     i32 start = 0;
     while (1) {
         // None breaks enumeration; Err remains a distinct filesystem result.
-        name.clear();
-        Result<Option<i32>, FsError> res = fs.dir_next_at(dir, start, name.as_ptr(), name.data.length);
-        i32 idx = case res of {
-            Ok(v) -> case v of { Some(n) -> n; None -> ({ break; }); };
-            Err(e) -> ({ t->say_error("ls", e.describe()); return; });
+        Result<Option<DirEntry>, FsError> res = fs.next_entry(dir, start);
+        DirEntry entry = case res of {
+            Ok(v) -> case v of { Some(found) -> found; None -> ({ break; }); };
+            Err(e) -> ({ t.say_error("ls", e.describe()); return; });
         };
-        name.sync_from_ptr();
-        t->line_buf.clear();
-        t->line_buf.append("  ");
-        t->line_buf.append(name.as_str());
+        i32 idx = entry.index;
+        t.line_buf.clear();
+        t.line_buf.append("  ");
+        t.line_buf.append(entry.name.as_str());
         Result<bool, FsError> directory = fs.is_dir(idx);
         bool is_directory = case directory of {
             Ok(value) -> value;
-            Err(e) -> ({ t->say_error("ls", e.describe()); return; });
+            Err(e) -> ({ t.say_error("ls", e.describe()); return; });
         };
         if (is_directory) {
-            t->line_buf.append("/\n");
+            t.line_buf.append("/\n");
         } else {
             Result<i32, FsError> size_result = fs.entry_size(idx);
             i32 size = case size_result of {
                 Ok(value) -> value;
-                Err(e) -> ({ t->say_error("ls", e.describe()); return; });
+                Err(e) -> ({ t.say_error("ls", e.describe()); return; });
             };
-            t->line_buf.append("  ");
+            t.line_buf.append("  ");
             Text<12> size_text = size.to_string();
-            t->line_buf.append(size_text.as_str());
-            t->line_buf.append(" bytes\n");
+            t.line_buf.append(size_text.as_str());
+            t.line_buf.append(" bytes\n");
         }
-        t->say(t->line_buf.as_ptr());
+        t.say(t.line_buf.as_str());
         n++;
         start = idx + 1;
     }
-    if (n == 0) { t->say_line("  (empty)"); }
+    if (n == 0) { t.say_line("  (empty)"); }
 }
 
 /**
  * Reads a file and writes its contents to the terminal output.
  * @param path NUL-terminated file path to display.
  */
-void (Terminal *t) cmd_cat(char *path) {
+void (borrow mut Terminal t) cmd_cat(str path) {
     i32 fd = case fs.open(path) of {
         Ok(v) -> v;
-        Err(e) -> ({ t->say_error("cat", e.describe()); return; });
+        Err(e) -> ({ t.say_error("cat", e.describe()); return; });
     };
-    char chunk[64];
     while (1) {
-        i32 got = case fs.read(fd, (i32)(&chunk[0]), 63) of {
+        FsChunk chunk = case fs.read(fd) of {
             Ok(v) -> v;
             Err(e) -> ({
                 fs.close(fd);
-                t->say_error("cat", e.describe());
+                t.say_error("cat", e.describe());
                 return;
             });
         };
-        if (got <= 0) { break; }
-        chunk[got] = (char)0;
-        t->say(&chunk[0]);
+        if (chunk.got <= 0) { break; }
+        t.say(chunk.text.as_str());
     }
     fs.close(fd);
-    t->say("\n");
+    t.say("\n");
 }
 
 /**
  * Starts an executable in a child process and routes its output to this terminal.
  * @param path NUL-terminated executable path or app name to launch.
  */
-void (Terminal *t) cmd_run(char *path) {
-    if (t->pid != 0) {
-        t->say_line("a process is still running here");
+void (borrow mut Terminal t) cmd_run(str path) {
+    if (t.pid != 0) {
+        t.say_line("a process is still running here");
         return;
     }
-    Result<i32, SpawnError> started = terminal.spawn_bound(path, t->out);
+    Result<i32, SpawnError> started = terminal.spawn_bound(path, t.out);
     i32 pid = case started of {
         Ok(value) -> value;
-        Err(e) -> ({ t->say_error("run", e.describe()); return; });
+        Err(e) -> ({ t.say_error("run", e.describe()); return; });
     };
-    t->pid = pid;
-    t->line_buf.clear();
-    t->line_buf.append("[pid ");
+    t.pid = pid;
+    t.line_buf.clear();
+    t.line_buf.append("[pid ");
     Text<12> pid_text = pid.to_string();
-    t->line_buf.append(pid_text.as_str());
-    t->line_buf.append("] ");
-    t->line_buf.append(str.from_c(path));
-    t->line_buf.append("\n");
-    t->say(t->line_buf.as_ptr());
+    t.line_buf.append(pid_text.as_str());
+    t.line_buf.append("] ");
+    t.line_buf.append(path);
+    t.line_buf.append("\n");
+    t.say(t.line_buf.as_str());
 }
 
-// Split "cmd arg" at the first space (in place) and return the argument.
-/**
- * Splits a mutable command line at its first space.
- * @param line NUL-terminated command buffer, modified to end after the command word.
- * @return Pointer to the first non-space argument, or the terminating NUL when absent.
- */
-char* split_arg(char *line) {
-    i32 i = 0;
-    while (line[i] != 0) {
-        if (line[i] == ' ') {
-            line[i] = (char)0;
-            i++;
-            while (line[i] == ' ') { i++; }
-            return &line[i];
-        }
-        i++;
-    }
-    return &line[i];
+// The part of `line` from `start` to `end`.
+str part(str line, i32 start, i32 end) {
+    return case line.slice(start, end) of { Some(view) -> view; None -> ""; };
 }
 
 /**
  * Echoes and dispatches a command line, forwarding it to an attached process when present.
- * @param line NUL-terminated command line.
+ * @param line Command line.
  */
-void (Terminal *t) run_line(char *line) {
+void (borrow mut Terminal t) run_line(str line) {
     // Echo the command line into the transcript.
-    t->say("$ ");
-    t->say_line(line);
+    t.say("$ ");
+    t.say_line(line);
 
-    if (t->pid != 0) {
-        process.feed_line(t->pid, line);
+    if (t.pid != 0) {
+        process.feed_line(t.pid, line);
         return;
     }
-    // Work on a copy: split_arg edits in place.
-    t->cmd.clear();
-    t->cmd.append(str.from_c(line));
-    char *arg = split_arg(t->cmd.as_ptr());
-    char *cmd = t->cmd.as_ptr();
-    if (cmd[0] == 0) { return; }
-    str command = cmd.as_str();
+    // "cmd arg": split at the first space, skipping the spaces after it.
+    i32 end = case line.find(" ") of { Some(at) -> at; None -> line.length; };
+    str command = part(line, 0, end);
+    if (command.is_empty()) { return; }
+    i32 start = end;
+    while (start < line.length && part(line, start, start + 1) == " ") { start++; }
+    str arg = part(line, start, line.length);
     if (command == "help") {
-        t->say_line("help          this text");
-        t->say_line("ls [dir]      list the disk, or a directory (bin, apps)");
-        t->say_line("cat <file>    print a file");
-        t->say_line("run <file>    start a user program (or just type its name)");
-        t->say_line("clear         clear the screen");
+        t.say_line("help          this text");
+        t.say_line("ls [dir]      list the disk, or a directory (bin, apps)");
+        t.say_line("cat <file>    print a file");
+        t.say_line("run <file>    start a user program (or just type its name)");
+        t.say_line("clear         clear the screen");
         return;
     }
-    if (command == "ls") { t->cmd_ls(arg); return; }
-    if (command == "clear") { ui.area_clear(t->out); return; }
-    if (command == "cat") { t->cmd_cat(arg); return; }
-    if (command == "run") { t->cmd_run(arg); return; }
-    t->cmd_run(cmd);
+    if (command == "ls") { t.cmd_ls(arg); return; }
+    if (command == "clear") { ui.area_clear(t.out); return; }
+    if (command == "cat") { t.cmd_cat(arg); return; }
+    if (command == "run") { t.cmd_run(arg); return; }
+    t.cmd_run(command);
 }
 
 // Enter anywhere in the window, or the Run button, submits the command line.
@@ -248,24 +230,24 @@ void (Terminal *t) run_line(char *line) {
  * Submits the current input text as a terminal command.
  * @param id DOM node ID supplied by the key/button event.
  */
-void (Terminal *t) submit(i32 id) {
-    Result<i32, UiError> copied = ui.text_copy(t->input, t->line_buf.as_ptr(), t->line_buf.data.length);
+void (borrow mut Terminal t) submit(i32 id) {
+    Result<i32, UiError> copied = text_copy<96>(t.input, &mut t.line_buf);
     case copied of {
         Ok(_) -> _;
-        Err(_) -> ({ t->say_line("cannot read command input"); return; });
+        Err(_) -> ({ t.say_line("cannot read command input"); return; });
     };
-    t->line_buf.sync_from_ptr();
-    ui.input_set(t->input, "");
-    t->run_line(t->line_buf.as_ptr());
-    ui.focus(t->input);
+    ui.input_set(t.input, "");
+    Text<96> line = t.line_buf;
+    t.run_line(line.as_str());
+    ui.focus(t.input);
 }
 
 // Poll the attached process; report and reap it once it exits.
 @timer(100)
 /** Checks the attached child process and reports/reaps it after exit. */
-void (Terminal *t) poll() {
-    if (t->pid == 0) { return; }
-    i32 pid = t->pid;
+void (borrow mut Terminal t) poll() {
+    if (t.pid == 0) { return; }
+    i32 pid = t.pid;
     Result<bool, ProcessControlError> status = process.has_exited(pid);
     bool exited = case status of {
         Ok(value) -> value;
@@ -275,40 +257,44 @@ void (Terminal *t) poll() {
     if (!exited) { return; }
     Result<ProcessExitStatus, ProcessControlError> reaped = process.reap(pid);
     ProcessExitStatus exit_status;
-    bool got_status = result_take_ok<ProcessExitStatus, ProcessControlError>(&reaped, &exit_status);
-    t->pid = 0;
-    t->line_buf.clear();
-    t->line_buf.append("[pid ");
+    bool got_status = false;
+    case reaped of {
+        Ok(value) -> ({ exit_status = value; got_status = true; });
+        Err(_) -> _;
+    };
+    t.pid = 0;
+    t.line_buf.clear();
+    t.line_buf.append("[pid ");
     Text<12> pid_text = pid.to_string();
-    t->line_buf.append(pid_text.as_str());
+    t.line_buf.append(pid_text.as_str());
     if (got_status) {
         case exit_status of {
             ProcessExitStatus::Code(code) -> ({
-                t->line_buf.append(" exited with ");
+                t.line_buf.append(" exited with ");
                 Text<12> code_text = code.to_string();
-                t->line_buf.append(code_text.as_str());
+                t.line_buf.append(code_text.as_str());
             });
             ProcessExitStatus::PageFault -> ({
-                t->line_buf.append(" terminated by page fault");
+                t.line_buf.append(" terminated by page fault");
             });
             ProcessExitStatus::PrivilegeViolation -> ({
-                t->line_buf.append(" terminated by privilege violation");
+                t.line_buf.append(" terminated by privilege violation");
             });
             ProcessExitStatus::IllegalInstruction -> ({
-                t->line_buf.append(" terminated by illegal instruction");
+                t.line_buf.append(" terminated by illegal instruction");
             });
         };
     } else {
-        t->line_buf.append(" could not be reaped");
+        t.line_buf.append(" could not be reaped");
     }
-    t->line_buf.append("]\n");
-    t->say(t->line_buf.as_ptr());
+    t.line_buf.append("]\n");
+    t.say(t.line_buf.as_str());
 }
 
 // Closing the window while a process is attached: stop routing its output
 // to a TextArea that no longer exists.
 @on_close
 /** Unbinds the child process from this terminal's output node before close. */
-void (Terminal *t) closing() {
-    if (t->pid != 0) { terminal.unbind(t->pid); }
+void (borrow mut Terminal t) closing() {
+    if (t.pid != 0) { terminal.unbind(t.pid); }
 }

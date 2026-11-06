@@ -4,9 +4,12 @@ import elements from "@app/elements.mln";
 import ui from "@app/ui.mln";
 import { app, open, key } from "@app/annotations.mln";
 import fs from "@std/hosted/fs.mln";
+import { FsChunk } from "@std/hosted/fs.mln";
 import { Result } from "@std/core/result.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
 import { UiError } from "@contracts/ui/widget.contract.mln";
+import { text_copy } from "@app/ui_text.mln";
+import str from "@std/text/str.mln";
 import { Text } from "@std/text/text.mln";
 import { KeyEventType, KeyCode } from "@contracts/input/keyboard.contract.mln";
 
@@ -39,17 +42,19 @@ struct Editor {
 /** Builds the editor window and opens a scratch document for a plain launch.
  * @return DOM node ID of the editor window.
  */
-i32 (Editor *e) view() {
+i32 (borrow mut Editor e) view() {
     i32 win = <Window title="Editor" x={300} y={120} w={520} h={420}>
         <Row x={12} y={12} w={496} h={34} gap={8}>
-            <TextInput ref={e->name} placeholder="file name" w={300} h={34} capacity={16} testId="editor-name" />
-            <PrimaryButton text="Save" w={90} h={34} onClick={e->save} />
+            <TextInput ref={e.name} placeholder="file name" w={300} h={34} capacity={16} testId="editor-name" />
+            <PrimaryButton text="Save" w={90} h={34} onClick={e.save} />
         </Row>
-        <TextArea ref={e->area} name="Type here..." x={12} y={56} w={496} h={294} capacity={4096} testId="editor-text" />
-        <Label ref={e->status} text="" x={12} y={360} color={ui.TEXT_SECONDARY} testId="editor-status" />
+        <TextArea ref={e.area} name="Type here..." x={12} y={56} w={496} h={294} capacity={4096} testId="editor-text" />
+        <Label ref={e.status} text="" x={12} y={360} color={ui.TEXT_SECONDARY} testId="editor-status" />
     </Window>;
     // A plain launch starts on a scratch file; ui.open() replaces it.
-    e->open("untitled.txt");
+    Text<64> scratch = Text<64> {};
+    scratch.append("untitled.txt");
+    e.open(&scratch);
     return win;
 }
 
@@ -57,77 +62,72 @@ i32 (Editor *e) view() {
 @open
 /**
  * Opens a file into the editor, or leaves an empty document for a new path.
- * @param path NUL-terminated file path to load.
+ * @param path File path to load.
  */
-void (Editor *e) open(char *path) {
-    ui.input_set(e->name, path);
-    ui.area_clear(e->area);
-    ui.focus(e->area);
-    i32 fd = case fs.open(path) of {
+void (borrow mut Editor e) open(borrow Text<64> path) {
+    ui.input_set(e.name, path.as_str());
+    ui.area_clear(e.area);
+    ui.focus(e.area);
+    i32 fd = case fs.open(path.as_str()) of {
         Ok(v) -> v;
-        Err(_) -> ({ ui.set_text(e->status, "new file"); return; });
+        Err(_) -> ({ ui.set_text(e.status, "new file"); return; });
     };
-    char chunk[128];
     i32 total = 0;
     while (1) {
-        i32 got = case fs.read(fd, (i32)(&chunk[0]), 127) of {
+        FsChunk chunk = case fs.read(fd) of {
             Ok(v) -> v;
             Err(error) -> ({
                 fs.close(fd);
-                ui.set_error(e->status, "read failed", error.describe());
+                ui.set_error(e.status, "read failed", error.describe());
                 return;
             });
         };
-        if (got <= 0) { break; }
-        chunk[got] = (char)0;
-        ui.area_append(e->area, &chunk[0]);
-        total = total + got;
+        if (chunk.got <= 0) { break; }
+        ui.area_append(e.area, chunk.text.as_str());
+        total = total + chunk.got;
     }
     fs.close(fd);
     // area_append leaves the caret at the end; start at the top instead.
     ui.send_key(KeyEventType::DOWN, KeyCode::HOME, 0); // Home of the last line
-    ui.set_text_fmt(e->status, "loaded %d bytes", total, 0);
+    ui.set_text_fmt(e.status, "loaded %d bytes", "", total);
 }
 
 @key("Ctrl+S")
 /** Saves the editor contents under the filename currently in the name field.
  * @param id DOM node ID supplied by the key event.
  */
-void (Editor *e) save(i32 id) {
-    char *path = e->save_name.as_ptr();
-    Result<i32, UiError> name_copy = ui.text_copy(e->name, path, e->save_name.data.length);
+void (borrow mut Editor e) save(i32 id) {
+    Result<i32, UiError> name_copy = text_copy<32>(e.name, &mut e.save_name);
     case name_copy of {
         Ok(_) -> _;
-        Err(error) -> ({ ui.set_error(e->status, "save failed", error.describe()); return; });
+        Err(error) -> ({ ui.set_error(e.status, "save failed", error.describe()); return; });
     };
-    e->save_name.sync_from_ptr();
-    if (path[0] == 0) { ui.set_text(e->status, "enter a file name first"); return; }
-    char *text = e->save_text.as_ptr();
-    Result<i32, UiError> text_copy = ui.text_copy(e->area, text, e->save_text.data.length);
-    i32 len = case text_copy of {
+    str path = e.save_name.as_str();
+    if (path.is_empty()) { ui.set_text(e.status, "enter a file name first"); return; }
+    Result<i32, UiError> text_result = text_copy<4096>(e.area, &mut e.save_text);
+    i32 len = case text_result of {
         Ok(value) -> value;
-        Err(error) -> ({ ui.set_error(e->status, "save failed", error.describe()); return; });
+        Err(error) -> ({ ui.set_error(e.status, "save failed", error.describe()); return; });
     };
-    e->save_text.sync_from_ptr();
     // Bind the Result: a discarded aggregate return has no out-pointer.
     Result<_, FsError> removed = fs.remove(path);
     case removed of { Ok(_) -> _; Err(_) -> _; };
     i32 fd = case fs.create(path) of {
         Ok(v) -> v;
-        Err(error) -> ({ ui.set_error(e->status, "save failed", error.describe()); return; });
+        Err(error) -> ({ ui.set_error(e.status, "save failed", error.describe()); return; });
     };
     i32 written = 0;
     if (len > 0) {
-        Result<i32, FsError> write_result = fs.write(fd, (i32)text, len);
+        Result<i32, FsError> write_result = fs.write(fd, e.save_text.as_str());
         written = case write_result of {
             Ok(v) -> v;
             Err(error) -> ({
                 fs.close(fd);
-                ui.set_error(e->status, "save failed", error.describe());
+                ui.set_error(e.status, "save failed", error.describe());
                 return;
             });
         };
     }
     fs.close(fd);
-    ui.set_text_fmt(e->status, "saved %d bytes", written, 0);
+    ui.set_text_fmt(e.status, "saved %d bytes", "", written);
 }

@@ -18,6 +18,7 @@ export const i32 VRAM_BASE = 0x30000000;
  * Retrieves the screen width in pixels from hardware display config.
  * @return Screen width.
  */
+@safe
 export i32 display_width() {
     return display_config.width();
 }
@@ -26,6 +27,7 @@ export i32 display_width() {
  * Retrieves the screen height in pixels from hardware display config.
  * @return Screen height.
  */
+@safe
 export i32 display_height() {
     return display_config.height();
 }
@@ -65,6 +67,7 @@ i32 DMA2D_CMD_SHADOW = 10;
 /**
  * Swaps back buffer to front buffer, presenting the rendered frame.
  */
+@safe
 export void present() {
     i32* swap = (i32*)DISPLAY_SWAP_ADDR;
     *swap = 1;
@@ -241,6 +244,7 @@ void sync_scissor() {
  * @param w Width in pixels.
  * @param h Height in pixels.
  */
+@safe
 export void set_clip(i32 x, i32 y, i32 w, i32 h) {
     i32 width = display_config.width();
     i32 height = display_config.height();
@@ -262,6 +266,7 @@ export void set_clip(i32 x, i32 y, i32 w, i32 h) {
 /**
  * Resets the active clipping rectangle to cover the entire screen.
  */
+@safe
 export void clear_clip() {
     g_clip_x0 = 0;
     g_clip_y0 = 0;
@@ -277,6 +282,7 @@ export void clear_clip() {
  * @param w Width in pixels.
  * @param h Height in pixels.
  */
+@safe
 export void push_clip(i32 x, i32 y, i32 w, i32 h) {
     if (g_clip_sp < ui_config.CLIP_DEPTH) {
         g_clip_stack_x0[g_clip_sp] = g_clip_x0;
@@ -297,6 +303,7 @@ export void push_clip(i32 x, i32 y, i32 w, i32 h) {
 /**
  * Pops and restores the previous clipping rectangle from the clip stack.
  */
+@safe
 export void pop_clip() {
     if (g_clip_sp <= 0) { return; }
     g_clip_sp--;
@@ -519,6 +526,7 @@ export void blend_pixel(i32 x, i32 y, i32 color) {
  * @param h Height in pixels.
  * @param color 24-bit RGB color.
  */
+@safe
 export void fill_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
     if (!clip_rect(x, y, w, h)) { return; }
     dma_dest(g_cl_x, g_cl_y, g_cl_w, g_cl_h);
@@ -534,6 +542,7 @@ export void fill_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
  * @param h Height in pixels.
  * @param color 32-bit ARGB color with alpha in the top byte.
  */
+@safe
 export void blend_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
     i32 a = alpha_of(color);
     if (a == 0) { return; }
@@ -553,6 +562,7 @@ export void blend_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
  * @param c0 Top color.
  * @param c1 Bottom color.
  */
+@safe
 export void fill_gradient_v(i32 x, i32 y, i32 w, i32 h, i32 c0, i32 c1) {
     if (h <= 0) { return; }
     if (w <= 0) { return; }
@@ -667,6 +677,7 @@ export void draw_rect(i32 x, i32 y, i32 w, i32 h, i32 color) {
  * @param color 24-bit RGB outline color.
  * @param scale Border thickness scaling factor.
  */
+@safe
 export void draw_rect_scaled(i32 x, i32 y, i32 w, i32 h, i32 color, i32 scale) {
     if (scale < 1) { scale = 1; }
     fill_rect(x, y, w, scale, color);
@@ -726,6 +737,7 @@ export i32 isqrt(i32 n) {
  * @param r Corner radius in pixels.
  * @param color 24-bit RGB or 32-bit ARGB fill color.
  */
+@safe
 export void fill_round_rect(i32 x, i32 y, i32 w, i32 h, i32 r, i32 color) {
     if (w <= 0) { return; }
     if (h <= 0) { return; }
@@ -752,6 +764,7 @@ export void fill_round_rect(i32 x, i32 y, i32 w, i32 h, i32 r, i32 color) {
  * @param t Outline thickness in pixels.
  * @param color Outline color.
  */
+@safe
 export void draw_round_rect(i32 x, i32 y, i32 w, i32 h, i32 r, i32 t, i32 color) {
     if (w <= 0) { return; }
     if (h <= 0) { return; }
@@ -774,6 +787,7 @@ export void draw_round_rect(i32 x, i32 y, i32 w, i32 h, i32 r, i32 t, i32 color)
  * @param offset_y Vertical shadow offset in pixels.
  * @param alpha Maximum shadow opacity (0-255).
  */
+@safe
 export void draw_shadow(i32 x, i32 y, i32 w, i32 h, i32 r, i32 size, i32 offset_y, i32 alpha) {
     if (size < 1) { return; }
     if (w <= 0) { return; }
@@ -798,6 +812,7 @@ export void draw_shadow(i32 x, i32 y, i32 w, i32 h, i32 r, i32 size, i32 offset_
  * @param y1 Ending Y coordinate.
  * @param color Line color.
  */
+@safe
 export void draw_line(i32 x0, i32 y0, i32 x1, i32 y1, i32 color) {
     i32 dx = iabs(x1 - x0);
     i32 dy = iabs(y1 - y0);
@@ -883,6 +898,7 @@ export void fill_circle(i32 cx, i32 cy, i32 r, i32 color) {
  * @param r Radius in pixels.
  * @param color Disc fill color.
  */
+@safe
 export void fill_disc(i32 cx, i32 cy, i32 r, i32 color) {
     fill_round_rect(cx - r, cy - r, 2 * r, 2 * r, r, color);
 }
@@ -899,6 +915,7 @@ export void fill_disc(i32 cx, i32 cy, i32 r, i32 color) {
  * @param scale Font scaling factor (1 or 2).
  * @return Line height in pixels.
  */
+@safe
 export i32 text_height(i32 bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     return font_sans.line_height(face);
@@ -922,19 +939,26 @@ export i32 text_ascent(i32 bold, i32 scale) {
  * @param scale Scaling factor.
  * @return String advance width in pixels.
  */
-export i32 text_width(char* s, i32 bold, i32 scale) {
+@safe
+export i32 text_width(str s, i32 bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     i32 w = 0;
     i32 i = 0;
-    i32 c = ascii.byte(s[i]);
+    i32 c = text_byte(s, i);
     while (c != 0) {
         if (c != 10) {
             w = w + font_sans.advance(face, c);
         }
         i++;
-        c = ascii.byte(s[i]);
+        c = text_byte(s, i);
     }
     return w;
+}
+
+// The byte at `i`, or zero past the end, which ends the loops below.
+i32 text_byte(str s, i32 i) {
+    if (i >= s.length) { return 0; }
+    return ascii.byte(s.data[i]);
 }
 
 /**
@@ -945,18 +969,19 @@ export i32 text_width(char* s, i32 bold, i32 scale) {
  * @param scale Scaling factor.
  * @return Width in pixels.
  */
-export i32 text_width_n(char* s, i32 n, i32 bold, i32 scale) {
+@safe
+export i32 text_width_n(str s, i32 n, i32 bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     i32 w = 0;
     i32 i = 0;
-    i32 c = ascii.byte(s[i]);
+    i32 c = text_byte(s, i);
     while (c != 0) {
         if (i >= n) { return w; }
         if (c != 10) {
             w = w + font_sans.advance(face, c);
         }
         i++;
-        c = ascii.byte(s[i]);
+        c = text_byte(s, i);
     }
     return w;
 }
@@ -995,13 +1020,14 @@ export i32 draw_glyph(i32 x, i32 y, i32 ch, i32 color, i32 bold, i32 scale) {
  * @param bold Non-zero for bold typeface.
  * @param scale Scaling factor.
  */
-export void draw_label(i32 x, i32 y, char* s, i32 color, i32 bold, i32 scale) {
+@safe
+export void draw_label(i32 x, i32 y, str s, i32 color, i32 bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     i32 line_h = font_sans.line_height(face);
     i32 cx = x;
     i32 cy = y;
     i32 i = 0;
-    i32 c = ascii.byte(s[i]);
+    i32 c = text_byte(s, i);
     while (c != 0) {
         if (c == 10) {
             cx = x;
@@ -1017,7 +1043,7 @@ export void draw_label(i32 x, i32 y, char* s, i32 color, i32 bold, i32 scale) {
             cx = cx + adv;
         }
         i++;
-        c = ascii.byte(s[i]);
+        c = text_byte(s, i);
     }
 }
 
@@ -1031,7 +1057,8 @@ export void draw_label(i32 x, i32 y, char* s, i32 color, i32 bold, i32 scale) {
  * @param bold Non-zero for bold.
  * @param scale Scaling factor.
  */
-export void draw_label_centered(i32 x, i32 y, i32 w, char* s, i32 color, i32 bold, i32 scale) {
+@safe
+export void draw_label_centered(i32 x, i32 y, i32 w, str s, i32 color, i32 bold, i32 scale) {
     i32 tw = text_width(s, bold, scale);
     draw_label(x + (w - tw) / 2, y, s, color, bold, scale);
 }
@@ -1046,7 +1073,7 @@ export void draw_label_centered(i32 x, i32 y, i32 w, char* s, i32 color, i32 bol
  * @param bold Non-zero for bold.
  * @param scale Scaling factor.
  */
-export void draw_label_vcentered(i32 x, i32 y, i32 h, char* s, i32 color, i32 bold, i32 scale) {
+export void draw_label_vcentered(i32 x, i32 y, i32 h, str s, i32 color, i32 bold, i32 scale) {
     i32 th = text_height(bold, scale);
     draw_label(x, y + (h - th) / 2, s, color, bold, scale);
 }

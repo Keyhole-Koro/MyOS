@@ -9,6 +9,7 @@ import dom_render from "@os/ui/dom/dom_render.mln";
 import graphics from "@os/ui/graphics.mln";
 import theme from "@os/ui/theme.mln";
 import heap from "@kernel/mm/heap.mln";
+import allocator from "@std/memory/allocator.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { UiError } from "@contracts/ui/widget.contract.mln";
@@ -95,6 +96,7 @@ i32 click_at(i32 x, i32 y) {
 }*/
 void dom_hit_dispatch() {
     heap.init();
+    allocator.configure(heap.alloc, heap.free);
     desktop.init();
 
     // The public scalar boundary keeps DOM's Node representation private.
@@ -224,10 +226,10 @@ void dom_hit_dispatch() {
     dom_widgets.dispatch_key_event(1, 8, 0);   // backspace
     dom_widgets.dispatch_key_event(3, 'o', 0);
     dom.drain_events();
-    char *typed = dom.text_of(field);
-    assert.assert_true(typed[0] == 'h', "first typed char");
-    assert.assert_true(typed[1] == 'o', "backspace then insert");
-    assert.assert_true(typed[2] == 0, "terminated");
+    str typed = dom.text_of(field);
+    assert.assert_true(typed.data[0] == 'h', "first typed char");
+    assert.assert_true(typed.data[1] == 'o', "backspace then insert");
+    assert.assert_true(typed.length == 2, "terminated");
     assert.assert_true(g_changes == 5, "each edit fires on_change");
 
     // List queries preserve the semantic difference between no selection and
@@ -250,13 +252,12 @@ void dom_hit_dispatch() {
     };
     assert.assert_true(selected_row == 1, "selected list row is Ok(Some(1))");
 
-    char item[16];
-    Result<i32, UiError> copied = dom_widgets.list_item(list, 1, &item[0], 16);
-    i32 copied_len = case copied of { Ok(n) -> n; Err(_) -> 0; };
-    assert.assert_true(copied_len == 6, "valid list item returns copied length");
-    assert.assert_true(item[0] == 's', "valid list item copies text");
+    Result<str, UiError> copied = dom_widgets.list_item(list, 1);
+    str item = case copied of { Ok(view) -> view; Err(_) -> ""; };
+    assert.assert_true(item.length == 6, "valid list item returns its row");
+    assert.assert_true(item.data[0] == 's', "valid list item views the text");
 
-    Result<i32, UiError> bad_item = dom_widgets.list_item(list, 9, &item[0], 16);
+    Result<str, UiError> bad_item = dom_widgets.list_item(list, 9);
     i32 invalid_index = case bad_item of {
         Ok(_) -> 0;
         Err(cause) -> case cause of { UiError::InvalidIndex(value) -> value == 9; _ -> 0; };

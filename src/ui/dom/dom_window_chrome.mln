@@ -1,6 +1,8 @@
 package dom_window_chrome;
 
 import dom from "dom.mln";
+import { NodeRow } from "dom_model.mln";
+import { Blob } from "@std/memory/blob.mln";
 import ui_config from "@os/ui/config.mln";
 import ui_metrics from "@os/ui/ui_metrics.mln";
 import { Option } from "@std/core/option.mln";

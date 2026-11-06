@@ -11,7 +11,8 @@ import process from "@kernel/kernel/process.mln";
 import thread from "@kernel/kernel/thread.mln";
 import { ProcessState, ProcessError } from "@kernel/kernel/process.mln";
 import { LoaderError } from "@contracts/process/loader.contract.mln";
-import { Result, result_take_ok } from "@std/core/result.mln";
+import { Result } from "@std/core/result.mln";
+import { result_take_ok } from "@std/core/result_take.mln";
 import { AllocationError } from "@std/memory/allocator.mln";
 import { Option } from "@std/core/option.mln";
 import { SpawnError, SpawnFsOperation, SpawnFilesystemError, SpawnReadMismatch } from "@contracts/process/spawn.contract.mln";
@@ -185,7 +186,8 @@ i32 on_write(i32 pid, i32 buf, i32 count) {
         }
         return count;
     }
-    dom_widgets.append_bytes(out, buf, count);
+    str bytes = str { data: (char*)buf, length: count };
+    dom_widgets.append_bytes(out, bytes);
     return count;
 }
 
@@ -342,7 +344,7 @@ export Result<bool, ProcessControlError> has_exited(i32 pid) {
     Result<bool, ProcessControlError> result;
     case state of {
         Some(s) -> ({
-            bool exited = case s of { Zombie(_) -> true; _ -> false; };
+            bool exited = case s of { ProcessState::Zombie(_) -> true; _ -> false; };
             result = Ok(exited);
         });
         None -> ({ result = Err(ProcessControlError::InvalidPid(pid)); });
@@ -361,7 +363,7 @@ export Result<ProcessExitStatus, ProcessControlError> reap(i32 pid) {
     case state of {
         Some(s) -> ({
             case s of {
-                Zombie(status) -> ({
+                ProcessState::Zombie(status) -> ({
                     Result<_, ProcessError> freed = process.free_proc(pid);
                     case freed of {
                         Ok(_) -> ({ unbind(pid); result = Ok(status); });

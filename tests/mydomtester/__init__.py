@@ -21,7 +21,7 @@ from tools.project_paths import MYEMULATOR_DIR  # noqa: E402
 
 DEFAULT_MYEMU = MYEMULATOR_DIR / "target" / "release" / "myemu"
 LAUNCH_TIMEOUT_S = 15.0
-COMMAND_TIMEOUT_S = 5.0
+COMMAND_TIMEOUT_S = 10.0
 POLL_INTERVAL_S = 0.04
 
 

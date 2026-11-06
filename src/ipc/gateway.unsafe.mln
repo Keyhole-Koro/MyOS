@@ -96,11 +96,11 @@ i32 alloc_or_panic(i32 n) {
 
 /**
  * Reads the fixed-width Request wire record and decodes it into named fields.
- * @param user_request User-space address of a 13-word Request.
+ * @param user_request User-space address of a 15-word Request.
  * @param request Destination Request structure.
  */
 void read_user_request(i32 user_request, Request *request) {
-    i32 words[13];
+    i32 words[15];
     i32 word = 0;
     while (word < request_channel.REQUEST_WORD_COUNT) {
         words[word] = mem.read_word(user_request + word * 4);
@@ -117,8 +117,8 @@ void read_user_request(i32 user_request, Request *request) {
 void copy_request_strings(i32 slot_index, Request *request) {
     char *s0 = (char*)gateway_slots[slot_index].s0;
     char *s1 = (char*)gateway_slots[slot_index].s1;
-    user_memory.copy_in_string((i32)request->s0, s0, S0_CAP);
-    user_memory.copy_in_string((i32)request->s1, s1, S1_CAP);
+    user_memory.copy_in_view((i32)request->s0, request->s0_len, s0, S0_CAP);
+    user_memory.copy_in_view((i32)request->s1, request->s1_len, s1, S1_CAP);
     request->s0 = s0;
     request->s1 = s1;
 }

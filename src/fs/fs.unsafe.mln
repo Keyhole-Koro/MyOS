@@ -699,9 +699,9 @@ export struct FileHandle {
 };
 
 export impl Drop for FileHandle {
-    void (Self *self) drop() {
-        close(self->fd);
-        self->fd = 0;
+    void (borrow mut Self self) drop() {
+        close(self.fd);
+        self.fd = 0;
     }
 }
 

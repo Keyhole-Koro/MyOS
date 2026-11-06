@@ -1,6 +1,6 @@
 package dom_render;
 import debug from "@kernel/debug/debug.mln";
-import heap from "@kernel/mm/heap.mln";
+import blob from "@std/memory/blob.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
 import graphics from "@os/ui/graphics.mln";
 import theme from "@os/ui/theme.mln";
@@ -8,7 +8,9 @@ import { halt_cpu } from "@kernel/arch/halt.masm";
 import dom_widgets from "dom_widgets.mln";
 import dom_window_chrome from "dom_window_chrome.mln";
 import dom from "dom.mln";
-import { Node, NodeKind, NodeRole, NodeState, NodeStyle, Children } from "dom.mln";
+import { NodeRow } from "dom_model.mln";
+import { Blob } from "@std/memory/blob.mln";
+import { NodeKind, NodeRole, NodeState, NodeStyle, Children } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Text } from "@std/text/text.mln";
 
@@ -27,8 +29,8 @@ import { Text } from "@std/text/text.mln";
  * @param fallback Default RGB color if node color is 0.
  * @return Resolved RGB color.
  */
-export i32 node_fg(Node *n, i32 fallback) {
-    i32 c = n->color;
+export i32 node_fg(borrow mut NodeRow n, i32 fallback) {
+    i32 c = n.color;
     if (c != 0) { return c; }
     return fallback;
 }
@@ -37,13 +39,13 @@ export i32 node_fg(Node *n, i32 fallback) {
  * Renders a WINDOW node including drop shadow, title bar, chrome buttons, resize grip, and border.
  * @param n Pointer to Window Node.
  */
-export void draw_window(Node *n) {
+export void draw_window(borrow mut NodeRow n) {
     i32 s = dom.ui_scale();
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 w = n->w;
-    i32 h = n->h;
-    i32 state = n->state;
+    i32 x = n.x;
+    i32 y = n.y;
+    i32 w = n.w;
+    i32 h = n.h;
+    i32 state = n.state;
     i32 active = state & NodeState::FOCUSED;
     i32 hovered = state & NodeState::HOVERED;
 
@@ -78,12 +80,12 @@ export void draw_window(Node *n) {
 
     // Title-bar buttons: close, minimize, maximize discs; their glyphs
     // (x, -, +) appear while the pointer is over the window.
-    Option<i32> close_x_result = dom_window_chrome.close_button_cx(n->id);
+    Option<i32> close_x_result = dom_window_chrome.close_button_cx(n.id);
     i32 cx = case close_x_result of {
         Some(value) -> value;
         None -> ({ return; });
     };
-    Option<i32> button_y_result = dom_window_chrome.button_cy(n->id);
+    Option<i32> button_y_result = dom_window_chrome.button_cy(n.id);
     i32 cy = case button_y_result of {
         Some(value) -> value;
         None -> ({ return; });
@@ -94,7 +96,7 @@ export void draw_window(Node *n) {
     i32 k = cr / 2;
     i32 which = 1;
     while (which <= 3) {
-        Option<i32> button_x_result = dom_window_chrome.button_cx(n->id, which);
+        Option<i32> button_x_result = dom_window_chrome.button_cx(n.id, which);
         i32 bx = case button_x_result of {
             Some(value) -> value;
             None -> ({ return; });
@@ -134,18 +136,19 @@ export void draw_window(Node *n) {
     }
 
     // Title, centred, kept clear of the buttons.
-    if (n->text != 0) {
+    if (n.text.is_live()) {
         i32 title_color = theme.TEXT_PRIMARY;
         if (!active) { title_color = theme.TEXT_SECONDARY; }
         i32 th = graphics.text_height(1, s);
-        Option<i32> third_button_result = dom_window_chrome.button_cx(n->id, 3);
+        Option<i32> third_button_result = dom_window_chrome.button_cx(n.id, 3);
         i32 third_button_x = case third_button_result of {
             Some(value) -> value;
             None -> ({ return; });
         };
         i32 inset = 2 * (third_button_x - x);
         graphics.push_clip(x + inset, y, w - 2 * inset, tb);
-        graphics.draw_label_centered(x, y + (tb - th) / 2, w, (char*)n->text, title_color, 1, s);
+        str label_1 = n.text.as_str();
+        graphics.draw_label_centered(x, y + (tb - th) / 2, w, label_1, title_color, 1, s);
         graphics.pop_clip();
     }
 
@@ -159,14 +162,14 @@ export void draw_window(Node *n) {
  * Renders a BUTTON node with hover, press, focus ring, and primary styling.
  * @param n Pointer to Button Node.
  */
-export void draw_button(Node *n) {
+export void draw_button(borrow mut NodeRow n) {
     i32 s = dom.ui_scale();
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 w = n->w;
-    i32 h = n->h;
-    i32 state = n->state;
-    i32 style = n->style;
+    i32 x = n.x;
+    i32 y = n.y;
+    i32 w = n.w;
+    i32 h = n.h;
+    i32 state = n.state;
+    i32 style = n.style;
     i32 r = theme.BUTTON_RADIUS * s;
 
     i32 face = theme.BUTTON_FACE;
@@ -191,10 +194,11 @@ export void draw_button(Node *n) {
         i32 ring = theme.ACCENT;
         graphics.draw_round_rect(x - 2 * s, y - 2 * s, w + 4 * s, h + 4 * s, r + 2 * s, s, ring);
     }
-    if (n->text != 0) {
+    if (n.text.is_live()) {
         i32 th = graphics.text_height(0, s);
         graphics.push_clip(x, y, w, h);
-        graphics.draw_label_centered(x, y + (h - th) / 2, w, (char*)n->text, label, 0, s);
+        str label_2 = n.text.as_str();
+        graphics.draw_label_centered(x, y + (h - th) / 2, w, label_2, label, 0, s);
         graphics.pop_clip();
     }
 }
@@ -210,12 +214,12 @@ export void draw_button(Node *n) {
  * @param llen Number of bytes to copy.
  * @return A bounded NUL-terminated copy of the requested line.
  */
-export Text<160> copy_line(char *buf, i32 start, i32 llen) {
+export Text<160> copy_line(Blob buf, i32 start, i32 llen) {
     Text<160> out = Text<160> {};
     out.clear();
     i32 i = 0;
     while (i < llen) {
-        if (!out.push((u8)buf[start + i])) { break; }
+        if (!out.push((u8)buf.at(start + i))) { break; }
         i++;
     }
     return out;
@@ -226,32 +230,32 @@ export Text<160> copy_line(char *buf, i32 start, i32 llen) {
  * @param n Pointer to DOM Node.
  * @param focused Non-zero if control has keyboard focus.
  */
-export void draw_rows_box(Node *n, i32 focused) {
+export void draw_rows_box(borrow mut NodeRow n, i32 focused) {
     i32 s = dom.ui_scale();
     i32 r = theme.INPUT_RADIUS * s;
     i32 bg = theme.INPUT_BG;
-    graphics.fill_round_rect(n->x, n->y, n->w, n->h, r, bg);
+    graphics.fill_round_rect(n.x, n.y, n.w, n.h, r, bg);
     i32 border = theme.INPUT_BORDER;
     i32 bw = s;
     if (focused != 0) {
         border = theme.INPUT_BORDER_FOCUS;
         bw = 2 * s;
     }
-    graphics.draw_round_rect(n->x, n->y, n->w, n->h, r, bw, border);
+    graphics.draw_round_rect(n.x, n.y, n.w, n.h, r, bw, border);
 }
 
 /**
  * Renders a multi-line TEXT_AREA node, including text lines and cursor caret.
  * @param n Pointer to TextArea Node.
  */
-export void draw_text_area(Node *n) {
+export void draw_text_area(borrow mut NodeRow n) {
     i32 s = dom.ui_scale();
-    i32 state = n->state;
+    i32 state = n.state;
     i32 focused = state & NodeState::FOCUSED;
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 w = n->w;
-    i32 h = n->h;
+    i32 x = n.x;
+    i32 y = n.y;
+    i32 w = n.w;
+    i32 h = n.h;
     i32 pad = 8 * s;
     i32 lh = graphics.text_height(0, s);
     draw_rows_box(n, focused);
@@ -259,11 +263,11 @@ export void draw_text_area(Node *n) {
     i32 fg = theme.TEXT_PRIMARY;
     fg = node_fg(n, fg);
     bool ro = dom_widgets.is_readonly(n);
-    char *buf = (char*)n->text;
-    i32 len = n->len;
+    Blob buf = n.text;
+    i32 len = n.len;
     graphics.push_clip(x + s, y + s, w - 2 * s, h - 2 * s);
     i32 rows = dom_widgets.visible_lines(n);
-    i32 first = n->scroll;
+    i32 first = n.scroll;
     i32 start = dom_widgets.line_start(n, first);
     i32 row = 0;
     bool has_caret = false;
@@ -274,11 +278,13 @@ export void draw_text_area(Node *n) {
         i32 llen = dom_widgets.line_len_at(n, start);
         i32 ty = y + pad + row * lh;
         Text<160> line = copy_line(buf, start, llen);
-        graphics.draw_label(x + pad, ty, line.as_ptr(), fg, 0, s);
-        i32 cur = n->cursor;
+        str label_3 = line.as_str();
+        graphics.draw_label(x + pad, ty, label_3, fg, 0, s);
+        i32 cur = n.cursor;
         if (cur >= start) {
             if (cur <= start + llen) {
-                caret_x = x + pad + graphics.text_width_n(line.as_ptr(), cur - start, 0, s);
+                str label_4 = line.as_str();
+                caret_x = x + pad + graphics.text_width_n(label_4, cur - start, 0, s);
                 caret_y = ty;
                 has_caret = true;
             }
@@ -298,9 +304,10 @@ export void draw_text_area(Node *n) {
     // Empty editable area: placeholder from the node name.
     if (len == 0) {
         if (!ro) {
-            if (n->name != 0) {
+            if (n.name.is_live()) {
                 i32 ph = theme.INPUT_PLACEHOLDER;
-                graphics.draw_label(x + pad, y + pad, (char*)n->name, ph, 0, s);
+                str label_5 = n.name.as_str();
+                graphics.draw_label(x + pad, y + pad, label_5, ph, 0, s);
             }
         }
     }
@@ -313,23 +320,23 @@ export void draw_text_area(Node *n) {
  * @param hl_color Background RGB color for highlight.
  * @param hl_fg Foreground text RGB color for highlight.
  */
-export void draw_rows(Node *n, Option<i32> hl, i32 hl_color, i32 hl_fg) {
+export void draw_rows(borrow mut NodeRow n, Option<i32> hl, i32 hl_color, i32 hl_fg) {
     i32 s = dom.ui_scale();
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 w = n->w;
-    i32 h = n->h;
+    i32 x = n.x;
+    i32 y = n.y;
+    i32 w = n.w;
+    i32 h = n.h;
     i32 pad = 8 * s;
     i32 lh = graphics.text_height(0, s);
     i32 fg = theme.TEXT_PRIMARY;
     fg = node_fg(n, fg);
-    char *buf = (char*)n->text;
-    i32 len = n->len;
+    Blob buf = n.text;
+    i32 len = n.len;
     i32 r = theme.BUTTON_RADIUS * s;
     graphics.push_clip(x + s, y + s, w - 2 * s, h - 2 * s);
     defer graphics.pop_clip();
     i32 rows = dom_widgets.visible_lines(n);
-    i32 first = n->scroll;
+    i32 first = n.scroll;
     i32 start = dom_widgets.line_start(n, first);
     i32 row = 0;
     while (row < rows) {
@@ -346,7 +353,8 @@ export void draw_rows(Node *n, Option<i32> hl, i32 hl_color, i32 hl_fg) {
             color = hl_fg;
         }
         Text<160> line = copy_line(buf, start, llen);
-        graphics.draw_label(x + pad + 4 * s, ty, line.as_ptr(), color, 0, s);
+        str label_6 = line.as_str();
+        graphics.draw_label(x + pad + 4 * s, ty, label_6, color, 0, s);
         start = start + llen + 1;
         row = row + 1;
     }
@@ -356,12 +364,12 @@ export void draw_rows(Node *n, Option<i32> hl, i32 hl_color, i32 hl_fg) {
  * Renders a LIST control showing item rows and selected item highlight.
  * @param n Pointer to List Node.
  */
-export void draw_list(Node *n) {
-    i32 state = n->state;
+export void draw_list(borrow mut NodeRow n) {
+    i32 state = n.state;
     i32 focused = state & NodeState::FOCUSED;
     draw_rows_box(n, focused);
     Option<i32> sel = None;
-    if (n->sel != 0) { sel = Some(n->sel - 1); }
+    if (n.sel != 0) { sel = Some(n.sel - 1); }
     i32 hl = theme.ACCENT;
     i32 hl_fg = theme.ON_ACCENT;
     if (!focused) {
@@ -375,18 +383,18 @@ export void draw_list(Node *n) {
  * Renders a floating popup MENU control with drop shadow and hovered item highlight.
  * @param n Pointer to Menu Node.
  */
-export void draw_menu(Node *n) {
+export void draw_menu(borrow mut NodeRow n) {
     i32 s = dom.ui_scale();
     i32 r = theme.BUTTON_RADIUS * s;
-    graphics.draw_shadow(n->x, n->y, n->w, n->h, r, 8 * s, 3 * s, 70);
+    graphics.draw_shadow(n.x, n.y, n.w, n.h, r, 8 * s, 3 * s, 70);
     i32 bg = theme.PANEL_BG;
-    graphics.fill_round_rect(n->x, n->y, n->w, n->h, r, bg);
+    graphics.fill_round_rect(n.x, n.y, n.w, n.h, r, bg);
     i32 border = theme.WINDOW_BORDER;
-    graphics.draw_round_rect(n->x, n->y, n->w, n->h, r, s, border);
+    graphics.draw_round_rect(n.x, n.y, n.w, n.h, r, s, border);
     i32 hl = theme.ACCENT;
     i32 hl_fg = theme.ON_ACCENT;
     Option<i32> sel = None;
-    if (n->sel != 0) { sel = Some(n->sel - 1); }
+    if (n.sel != 0) { sel = Some(n.sel - 1); }
     draw_rows(n, sel, hl, hl_fg);
 }
 
@@ -394,18 +402,20 @@ export void draw_menu(Node *n) {
  * Renders a static TEXT node with left or centered alignment.
  * @param n Pointer to Text Node.
  */
-export void draw_text_node(Node *n) {
-    if (n->text == 0) { return; }
+export void draw_text_node(borrow mut NodeRow n) {
+    if (!n.text.is_live()) { return; }
     i32 s = dom.ui_scale();
     i32 color = theme.TEXT_PRIMARY;
     color = node_fg(n, color);
     i32 bold = 0;
     if (dom.text_bold(n)) { bold = 1; }
-    i32 style = n->style;
+    i32 style = n.style;
     if (style & NodeStyle::CENTER) {
-        graphics.draw_label_centered(n->x, n->y, n->w, (char*)n->text, color, bold, s);
+        str label_7 = n.text.as_str();
+        graphics.draw_label_centered(n.x, n.y, n.w, label_7, color, bold, s);
     } else {
-        graphics.draw_label(n->x, n->y, (char*)n->text, color, bold, s);
+        str label_8 = n.text.as_str();
+        graphics.draw_label(n.x, n.y, label_8, color, bold, s);
     }
 }
 
@@ -413,13 +423,13 @@ export void draw_text_node(Node *n) {
  * Renders a single-line TEXT_INPUT control with placeholder or text and blinking caret.
  * @param n Pointer to TextInput Node.
  */
-export void draw_text_input(Node *n) {
+export void draw_text_input(borrow mut NodeRow n) {
     i32 s = dom.ui_scale();
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 w = n->w;
-    i32 h = n->h;
-    i32 state = n->state;
+    i32 x = n.x;
+    i32 y = n.y;
+    i32 w = n.w;
+    i32 h = n.h;
+    i32 state = n.state;
     i32 focused = state & NodeState::FOCUSED;
     i32 r = theme.INPUT_RADIUS * s;
     i32 pad = theme.INPUT_PADDING_X * s;
@@ -438,19 +448,22 @@ export void draw_text_input(Node *n) {
     i32 ty = y + (h - th) / 2;
     graphics.push_clip(x + pad / 2, y, w - pad, h);
     defer graphics.pop_clip();
-    if (n->len == 0) {
-        if (n->name != 0) {
+    if (n.len == 0) {
+        if (n.name.is_live()) {
             i32 ph = theme.INPUT_PLACEHOLDER;
-            graphics.draw_label(x + pad, ty, (char*)n->name, ph, 0, s);
+            str label_9 = n.name.as_str();
+            graphics.draw_label(x + pad, ty, label_9, ph, 0, s);
         }
     } else {
         i32 fg = theme.TEXT_PRIMARY;
         fg = node_fg(n, fg);
-        graphics.draw_label(x + pad, ty, (char*)n->text, fg, 0, s);
+        str label_10 = n.text.as_str();
+        graphics.draw_label(x + pad, ty, label_10, fg, 0, s);
     }
     if (focused != 0) {
-        i32 cur = n->cursor;
-        i32 caret_x = x + pad + graphics.text_width_n((char*)n->text, cur, 0, s);
+        i32 cur = n.cursor;
+        str label_11 = n.text.as_str();
+        i32 caret_x = x + pad + graphics.text_width_n(label_11, cur, 0, s);
         i32 caret = theme.CARET;
         graphics.fill_rect(caret_x, ty + s, s, th - 2 * s, caret);
     }
@@ -460,12 +473,12 @@ export void draw_text_input(Node *n) {
  * Renders a CHECKBOX control with box, checkmark, and label text.
  * @param n Pointer to Checkbox Node.
  */
-export void draw_checkbox(Node *n) {
+export void draw_checkbox(borrow mut NodeRow n) {
     i32 s = dom.ui_scale();
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 h = n->h;
-    i32 state = n->state;
+    i32 x = n.x;
+    i32 y = n.y;
+    i32 h = n.h;
+    i32 state = n.state;
     i32 checked = state & NodeState::CHECKED;
     i32 box = theme.CHECKBOX_SIZE * s;
     i32 r = theme.CHECKBOX_RADIUS * s;
@@ -504,11 +517,12 @@ export void draw_checkbox(Node *n) {
             k++;
         }
     }
-    if (n->text != 0) {
+    if (n.text.is_live()) {
         i32 fg = theme.TEXT_PRIMARY;
         fg = node_fg(n, fg);
         i32 th = graphics.text_height(0, s);
-        graphics.draw_label(x + box + 8 * s, y + (h - th) / 2, (char*)n->text, fg, 0, s);
+        str label_12 = n.text.as_str();
+        graphics.draw_label(x + box + 8 * s, y + (h - th) / 2, label_12, fg, 0, s);
     }
 }
 
@@ -516,13 +530,13 @@ export void draw_checkbox(Node *n) {
  * Renders a rounded card PANEL container.
  * @param n Pointer to Panel Node.
  */
-export void draw_panel(Node *n) {
+export void draw_panel(borrow mut NodeRow n) {
     i32 s = dom.ui_scale();
     i32 bg = theme.PANEL_BG;
     i32 border = theme.PANEL_BORDER;
-    i32 r = n->radius;
-    graphics.fill_round_rect(n->x, n->y, n->w, n->h, r, bg);
-    graphics.draw_round_rect(n->x, n->y, n->w, n->h, r, s, border);
+    i32 r = n.radius;
+    graphics.fill_round_rect(n.x, n.y, n.w, n.h, r, bg);
+    graphics.draw_round_rect(n.x, n.y, n.w, n.h, r, s, border);
 }
 
 // --- taskbar ---
@@ -539,9 +553,9 @@ export void draw_panel(Node *n) {
 export i32 next_window_after(i32 after) {
     i32 best = 0;
     for (i32 child_id in dom.children(dom.desktop_id())) {
-        Node *c = dom.node_ptr(child_id);
-        if (c == 0) { break; }
-        if (c->kind == NodeKind::WINDOW) {
+        if (!dom.node_exists(child_id)) { break; }
+        borrow mut NodeRow c = dom.row_of(child_id);
+        if (c.kind == NodeKind::WINDOW) {
             if (child_id > after) {
                 if (best == 0) { best = child_id; }
                 else if (child_id < best) { best = child_id; }
@@ -590,12 +604,12 @@ export Text<16> format_clock() {
  * Renders the desktop taskbar, launcher button, window list entries, and clock.
  * @param n Pointer to Taskbar Node.
  */
-export void draw_taskbar(Node *n) {
+export void draw_taskbar(borrow mut NodeRow n) {
     i32 s = dom.ui_scale();
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 w = n->w;
-    i32 h = n->h;
+    i32 x = n.x;
+    i32 y = n.y;
+    i32 w = n.w;
+    i32 h = n.h;
 
     i32 bg = theme.TASKBAR_BG;
     graphics.blend_rect(x, y, w, h, bg);
@@ -623,7 +637,7 @@ export void draw_taskbar(Node *n) {
     i32 index = 0;
     i32 win = next_window_after(0);
     while (win != 0) {
-        Node *c = dom.node_ptr(win);
+        borrow mut NodeRow c = dom.row_of(win);
         i32 ex = x + taskbar_entry_x(index);
         i32 ebg = entry_bg;
         i32 fg = dim;
@@ -632,9 +646,10 @@ export void draw_taskbar(Node *n) {
         if (win == dom.active_window_id()) {
             graphics.fill_round_rect(ex + 10 * s, y + h - 9 * s, ew - 20 * s, 2 * s, s, accent);
         }
-        if (c->text != 0) {
+        if (c.text.is_live()) {
             graphics.push_clip(ex + 10 * s, y, ew - 20 * s, h);
-            graphics.draw_label(ex + 12 * s, y + (h - th) / 2, (char*)c->text, fg, 0, s);
+            str label_13 = c.text.as_str();
+            graphics.draw_label(ex + 12 * s, y + (h - th) / 2, label_13, fg, 0, s);
             graphics.pop_clip();
         }
         index = index + 1;
@@ -643,8 +658,10 @@ export void draw_taskbar(Node *n) {
 
     // Clock at the right.
     Text<16> clock = format_clock();
-    i32 cw = graphics.text_width(clock.as_ptr(), 0, s);
-    graphics.draw_label(x + w - cw - 16 * s, y + (h - th) / 2, clock.as_ptr(), on_dark, 0, s);
+    str label_14 = clock.as_str();
+    i32 cw = graphics.text_width(label_14, 0, s);
+    str label_15 = clock.as_str();
+    graphics.draw_label(x + w - cw - 16 * s, y + (h - th) / 2, label_15, on_dark, 0, s);
 }
 
 /** Target identified by hit-testing a pointer position on the taskbar. */
@@ -661,10 +678,10 @@ export enum TaskbarTarget {
  * @return TaskbarTarget (Miss, Launcher, or Window(id)).
  */
 export TaskbarTarget taskbar_target_at(i32 px, i32 py) {
-    Node *n = dom.node_ptr(dom.taskbar_id());
-    if (n == 0) { return TaskbarTarget::Miss; }
+    if (!dom.node_exists(dom.taskbar_id())) { return TaskbarTarget::Miss; }
+    borrow mut NodeRow n = dom.row_of(dom.taskbar_id());
     i32 s = dom.ui_scale();
-    i32 x = n->x;
+    i32 x = n.x;
     i32 lx = x + 8 * s;
     i32 lw = theme.TASKBAR_LAUNCHER_W * s;
     if (px >= lx) {
@@ -703,12 +720,12 @@ export void refresh_taskbar() {
  * Dispatches node drawing to the kind-specific drawing routine.
  * @param n Pointer to DOM Node to render.
  */
-export void draw_node(Node *n) {
-    i32 kind = n->kind;
-    i32 x = n->x;
-    i32 y = n->y;
-    i32 w = n->w;
-    i32 h = n->h;
+export void draw_node(borrow mut NodeRow n) {
+    i32 kind = n.kind;
+    i32 x = n.x;
+    i32 y = n.y;
+    i32 w = n.w;
+    i32 h = n.h;
     i32 scale = dom.ui_scale();
 
     if (kind == NodeKind::TEXT_AREA) {
@@ -718,8 +735,8 @@ export void draw_node(Node *n) {
     } else if (kind == NodeKind::MENU) {
         draw_menu(n);
     } else if (kind == NodeKind::BOX) {
-        graphics.fill_rect(x, y, w, h, n->background_color);
-        graphics.draw_rect_scaled(x, y, w, h, n->border_color, scale);
+        graphics.fill_rect(x, y, w, h, n.background_color);
+        graphics.draw_rect_scaled(x, y, w, h, n.border_color, scale);
     } else if (kind == NodeKind::WINDOW) {
         draw_window(n);
     } else if (kind == NodeKind::BUTTON) {
@@ -746,7 +763,7 @@ export void draw_node(Node *n) {
  * @param n Pointer to DOM Node.
  * @return True if node overlaps damage area or full repaint active, false otherwise.
  */
-export bool node_in_damage(Node *n) {
+export bool node_in_damage(borrow mut NodeRow n) {
     return dom.node_intersects_paint(n);
 }
 
@@ -755,9 +772,9 @@ export bool node_in_damage(Node *n) {
  * @param node_id DOM Node ID to render.
  */
 export void render(i32 node_id) {
-    Node *n = dom.node_ptr(node_id);
-    if (n == 0) { return; }
-    if (!(n->state & NodeState::VISIBLE)) { return; }
+    if (!dom.node_exists(node_id)) { return; }
+    borrow mut NodeRow n = dom.row_of(node_id);
+    if (!(n.state & NodeState::VISIBLE)) { return; }
 
     bool in_damage = node_in_damage(n);
     if (in_damage) {
@@ -770,7 +787,7 @@ export void render(i32 node_id) {
     bool clip = dom.clips_children(n);
     if (clip) {
         if (!in_damage) { return; }
-        graphics.push_clip(n->x, n->y, n->w, n->h);
+        graphics.push_clip(n.x, n.y, n.w, n.h);
     }
     for (i32 child_id in dom.children(node_id)) {
         render(child_id);

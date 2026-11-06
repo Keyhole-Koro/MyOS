@@ -1,17 +1,20 @@
 package dom_widgets;
 import debug from "@kernel/debug/debug.mln";
-import heap from "@kernel/mm/heap.mln";
+import blob from "@std/memory/blob.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
 import ui_metrics from "@os/ui/ui_metrics.mln";
 import { halt_cpu } from "@kernel/arch/halt.masm";
 import dom from "dom.mln";
+import { NodeRow } from "dom_model.mln";
+import { Blob } from "@std/memory/blob.mln";
 import { UiEventKind } from "@os/ui/events.mln";
 import ui_config from "@os/ui/config.mln";
-import { Node, NodeKind, NodeRole, NodeState, NodeStyle, Children, NewNode } from "dom.mln";
+import { NodeKind, NodeRole, NodeState, NodeStyle, Children, NewNode } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { Text } from "@std/text/text.mln";
 import ascii from "@std/text/ascii.mln";
+import str from "@std/text/str.mln";
 import { UiError } from "@contracts/ui/widget.contract.mln";
 import { KeyEventType, KeyModifier, KeyCode } from "@contracts/input/keyboard.contract.mln";
 
@@ -48,9 +51,9 @@ export enum EditResult {
  * @return Taskbar height in pixels.
  */
 export i32 taskbar_height() {
-    Node *n = dom.node_ptr(dom.taskbar_id());
-    if (n == 0) { return 0; }
-    return n->h;
+    if (!dom.node_exists(dom.taskbar_id())) { return 0; }
+    borrow mut NodeRow n = dom.row_of(dom.taskbar_id());
+    return n.h;
 }
 
 /**
@@ -79,8 +82,8 @@ export void set_focus(i32 id) {
     if (id == dom.focus_id()) { return; }
     if (dom.focus_id() != 0) { dom.set_state_flag(dom.focus_id(), NodeState::FOCUSED, 0); }
     dom.set_focus_id(0);
-    Node *n = dom.node_ptr(id);
-    if (n == 0) { return; }
+    if (!dom.node_exists(id)) { return; }
+    borrow mut NodeRow n = dom.row_of(id);
     dom.set_focus_id(id);
     dom.set_state_flag(id, NodeState::FOCUSED, 1);
 }
@@ -90,10 +93,10 @@ export void set_focus(i32 id) {
  * @param win Window DOM Node ID.
  */
 export void focus_window(i32 win) {
-    Node *n = dom.node_ptr(win);
-    if (n == 0) { return; }
-    if (n->kind != NodeKind::WINDOW) { return; }
-    if (n->state & NodeState::MINIMIZED) {
+    if (!dom.node_exists(win)) { return; }
+    borrow mut NodeRow n = dom.row_of(win);
+    if (n.kind != NodeKind::WINDOW) { return; }
+    if (n.state & NodeState::MINIMIZED) {
         dom.set_state_flag(win, NodeState::MINIMIZED, 0);
         dom.set_state_flag(win, NodeState::VISIBLE, 1);
     }
@@ -107,16 +110,21 @@ export void focus_window(i32 win) {
     dom.bring_to_front(win);
 }
 
+// The byte at `index`, or zero past the end.
+i32 byte_of(str s, i32 index) {
+    return s.byte(index);
+}
+
 /**
  * Activates the topmost unminimized window on the desktop.
  */
 export void activate_topmost() {
     i32 top = 0;
     for (i32 child_id in dom.children(dom.desktop_id())) {
-        Node *c = dom.node_ptr(child_id);
-        if (c == 0) { break; }
-        if (c->kind == NodeKind::WINDOW) {
-            if (!(c->state & NodeState::MINIMIZED)) { top = child_id; }
+        if (!dom.node_exists(child_id)) { break; }
+        borrow mut NodeRow c = dom.row_of(child_id);
+        if (c.kind == NodeKind::WINDOW) {
+            if (!(c.state & NodeState::MINIMIZED)) { top = child_id; }
         }
     }
     if (top != 0) { focus_window(top); }
@@ -148,16 +156,16 @@ export void close_window(i32 win) {
  * @param h Target height in pixels.
  */
 export void resize_window(i32 win, i32 w, i32 h) {
-    Node *n = dom.node_ptr(win);
-    if (n == 0) { return; }
+    if (!dom.node_exists(win)) { return; }
+    borrow mut NodeRow n = dom.row_of(win);
     i32 s = dom.ui_scale();
     i32 min_w = 200 * s;
     i32 min_h = 120 * s;
     if (w < min_w) { w = min_w; }
     if (h < min_h) { h = min_h; }
     dom.damage_node(win);
-    n->w = (u16)w;
-    n->h = (u16)h;
+    n.w = (u16)w;
+    n.h = (u16)h;
     dom.damage_node(win);
     dom.touch();
 }
@@ -167,8 +175,8 @@ export void resize_window(i32 win, i32 w, i32 h) {
  * @param win Window DOM Node ID.
  */
 export void minimize_window(i32 win) {
-    Node *n = dom.node_ptr(win);
-    if (n == 0) { return; }
+    if (!dom.node_exists(win)) { return; }
+    borrow mut NodeRow n = dom.row_of(win);
     dom.set_state_flag(win, NodeState::MINIMIZED, 1);
     dom.set_state_flag(win, NodeState::VISIBLE, 0);
     if (widgets_window_id_or_zero(dom.focus_id()) == win) { set_focus(0); }
@@ -204,23 +212,23 @@ export bool is_maximized(i32 win) {
  * @param win Window DOM Node ID.
  */
 export void maximize_window(i32 win) {
-    Node *n = dom.node_ptr(win);
-    if (n == 0) { return; }
-    if (n->state & NodeState::MAXIMIZED) {
-        i32 rx = n->sx;
-        i32 ry = n->sy;
-        dom.move_node(win, rx - n->x, ry - n->y);
-        resize_window(win, n->sw, n->sh);
+    if (!dom.node_exists(win)) { return; }
+    borrow mut NodeRow n = dom.row_of(win);
+    if (n.state & NodeState::MAXIMIZED) {
+        i32 rx = n.sx;
+        i32 ry = n.sy;
+        dom.move_node(win, rx - n.x, ry - n.y);
+        resize_window(win, n.sw, n.sh);
         dom.set_state_flag(win, NodeState::MAXIMIZED, 0);
         return;
     }
-    n->sx = n->x;
-    n->sy = n->y;
-    n->sw = n->w;
-    n->sh = n->h;
+    n.sx = n.x;
+    n.sy = n.y;
+    n.sw = n.w;
+    n.sh = n.h;
     i32 dw = ui_metrics.display_width();
     i32 dh = ui_metrics.display_height() - taskbar_height();
-    dom.move_node(win, -n->x, -n->y);
+    dom.move_node(win, -n.x, -n.y);
     resize_window(win, dw, dh);
     dom.set_state_flag(win, NodeState::MAXIMIZED, 1);
 }
@@ -232,21 +240,21 @@ export void maximize_window(i32 win) {
  * @param n Pointer to DOM Node.
  * @param c ASCII character code to insert.
  */
-export void input_insert(Node *n, i32 c) {
-    i32 len = n->len;
-    i32 cap = n->cap;
+export void input_insert(borrow mut NodeRow n, i32 c) {
+    i32 len = n.len;
+    i32 cap = n.cap;
     if (len + 1 >= cap) { return; }
-    char *buf = (char*)n->text;
-    i32 cur = n->cursor;
+    Blob buf = n.text;
+    i32 cur = n.cursor;
     i32 i = len;
     while (i > cur) {
-        buf[i] = buf[i - 1];
+        buf.put(i, buf.at(i - 1));
         i--;
     }
-    buf[cur] = (char)c;
-    buf[len + 1] = (char)0;
-    n->len = (u16)(len + 1);
-    n->cursor = (u16)(cur + 1);
+    buf.put(cur, (char)c);
+    buf.put(len + 1, (char)0);
+    n.len = (u16)(len + 1);
+    n.cursor = (u16)(cur + 1);
 }
 
 /**
@@ -254,18 +262,18 @@ export void input_insert(Node *n, i32 c) {
  * @param n Pointer to DOM Node.
  * @param at Byte index of character to remove.
  */
-export void input_delete_at(Node *n, i32 at) {
-    i32 len = n->len;
+export void input_delete_at(borrow mut NodeRow n, i32 at) {
+    i32 len = n.len;
     if (at < 0) { return; }
     if (at >= len) { return; }
-    char *buf = (char*)n->text;
+    Blob buf = n.text;
     i32 i = at;
     while (i < len - 1) {
-        buf[i] = buf[i + 1];
+        buf.put(i, buf.at(i + 1));
         i++;
     }
-    buf[len - 1] = (char)0;
-    n->len = (u16)(len - 1);
+    buf.put(len - 1, (char)0);
+    n.len = (u16)(len - 1);
 }
 
 /**
@@ -275,9 +283,9 @@ export void input_delete_at(Node *n, i32 at) {
  * @param code Key code or ASCII character.
  * @return EditResult enum indicating outcome (Changed, Moved, Unhandled).
  */
-export EditResult input_handle(Node *n, i32 type, i32 code) {
-    i32 cur = n->cursor;
-    i32 len = n->len;
+export EditResult input_handle(borrow mut NodeRow n, i32 type, i32 code) {
+    i32 cur = n.cursor;
+    i32 len = n.len;
     if (type == KeyEventType::CHAR) {
         if (ascii.is_printable(code)) {
             input_insert(n, code);
@@ -289,7 +297,7 @@ export EditResult input_handle(Node *n, i32 type, i32 code) {
     if (code == KeyCode::BACKSPACE) {
         if (cur > 0) {
             input_delete_at(n, cur - 1);
-            n->cursor = (u16)(cur - 1);
+            n.cursor = (u16)(cur - 1);
             return EditResult::Changed;
         }
         return EditResult::Unhandled;
@@ -299,15 +307,15 @@ export EditResult input_handle(Node *n, i32 type, i32 code) {
         return EditResult::Unhandled;
     }
     if (code == KeyCode::LEFT) {
-        if (cur > 0) { n->cursor = (u16)(cur - 1); }
+        if (cur > 0) { n.cursor = (u16)(cur - 1); }
         return EditResult::Moved;
     }
     if (code == KeyCode::RIGHT) {
-        if (cur < len) { n->cursor = (u16)(cur + 1); }
+        if (cur < len) { n.cursor = (u16)(cur + 1); }
         return EditResult::Moved;
     }
-    if (code == KeyCode::HOME) { n->cursor = 0; return EditResult::Moved; }
-    if (code == KeyCode::END) { n->cursor = (u16)len; return EditResult::Moved; }
+    if (code == KeyCode::HOME) { n.cursor = 0; return EditResult::Moved; }
+    if (code == KeyCode::END) { n.cursor = (u16)len; return EditResult::Moved; }
     return EditResult::Unhandled;
 }
 
@@ -326,8 +334,8 @@ export EditResult input_handle(Node *n, i32 type, i32 code) {
  * @param n Pointer to DOM Node.
  * @return True if read-only, false otherwise.
  */
-export bool is_readonly(Node *n) {
-    return (n->style & NodeStyle::READONLY) != 0;
+export bool is_readonly(borrow mut NodeRow n) {
+    return (n.style & NodeStyle::READONLY) != 0;
 }
 
 /**
@@ -336,12 +344,12 @@ export bool is_readonly(Node *n) {
  * @param at Byte offset in text buffer.
  * @return 0-based line number.
  */
-export i32 line_of(Node *n, i32 at) {
-    char *buf = (char*)n->text;
+export i32 line_of(borrow mut NodeRow n, i32 at) {
+    Blob buf = n.text;
     i32 line = 0;
     i32 i = 0;
     while (i < at) {
-        if (buf[i] == 10) { line++; }
+        if (buf.at(i) == 10) { line++; }
         i++;
     }
     return line;
@@ -353,14 +361,14 @@ export i32 line_of(Node *n, i32 at) {
  * @param line 0-based line index.
  * @return Byte offset of line start.
  */
-export i32 line_start(Node *n, i32 line) {
-    char *buf = (char*)n->text;
-    i32 len = n->len;
+export i32 line_start(borrow mut NodeRow n, i32 line) {
+    Blob buf = n.text;
+    i32 len = n.len;
     i32 i = 0;
     i32 cur = 0;
     while (cur < line) {
         if (i >= len) { return len; }
-        if (buf[i] == 10) { cur++; }
+        if (buf.at(i) == 10) { cur++; }
         i++;
     }
     return i;
@@ -372,12 +380,12 @@ export i32 line_start(Node *n, i32 line) {
  * @param start Byte offset of line start.
  * @return Line length in bytes.
  */
-export i32 line_len_at(Node *n, i32 start) {
-    char *buf = (char*)n->text;
-    i32 len = n->len;
+export i32 line_len_at(borrow mut NodeRow n, i32 start) {
+    Blob buf = n.text;
+    i32 len = n.len;
     i32 i = start;
     while (i < len) {
-        if (buf[i] == 10) { return i - start; }
+        if (buf.at(i) == 10) { return i - start; }
         i++;
     }
     return len - start;
@@ -389,10 +397,10 @@ export i32 line_len_at(Node *n, i32 start) {
  * @return Ok(line count), or Err when the node is missing or is not a TextArea.
  */
 export Result<i32, UiError> text_area_line_count(i32 id) {
-    Node *n = dom.node_ptr(id);
-    if (n == 0) { return Err(UiError::NodeNotFound(id)); }
-    if (n->kind != NodeKind::TEXT_AREA) { return Err(UiError::WrongNodeKind(id)); }
-    return Ok(line_of(n, n->len) + 1);
+    if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
+    borrow mut NodeRow n = dom.row_of(id);
+    if (n.kind != NodeKind::TEXT_AREA) { return Err(UiError::WrongNodeKind(id)); }
+    return Ok(line_of(n, n.len) + 1);
 }
 
 /**
@@ -400,11 +408,11 @@ export Result<i32, UiError> text_area_line_count(i32 id) {
  * @param n Pointer to DOM Node.
  * @return Number of visible text lines.
  */
-export i32 visible_lines(Node *n) {
+export i32 visible_lines(borrow mut NodeRow n) {
     i32 s = dom.ui_scale();
     i32 pad = 8 * s;
     i32 lh = ui_metrics.text_height(0, s);
-    i32 rows = (n->h - 2 * pad) / lh;
+    i32 rows = (n.h - 2 * pad) / lh;
     if (rows < 1) { rows = 1; }
     return rows;
 }
@@ -413,13 +421,13 @@ export i32 visible_lines(Node *n) {
  * Adjusts TextArea scroll offset to ensure the cursor line is visible.
  * @param n Pointer to TextArea Node.
  */
-export void text_area_reveal_cursor(Node *n) {
-    i32 line = line_of(n, n->cursor);
+export void text_area_reveal_cursor(borrow mut NodeRow n) {
+    i32 line = line_of(n, n.cursor);
     i32 rows = visible_lines(n);
-    i32 scroll = n->scroll;
+    i32 scroll = n.scroll;
     if (line < scroll) { scroll = line; }
     if (line >= scroll + rows) { scroll = line - rows + 1; }
-    n->scroll = (u16)scroll;
+    n.scroll = (u16)scroll;
 }
 
 /**
@@ -427,16 +435,16 @@ export void text_area_reveal_cursor(Node *n) {
  * @param n Pointer to TextArea Node.
  * @param line Target line index.
  */
-export void text_area_goto_line(Node *n, i32 line) {
-    i32 total = line_of(n, n->len) + 1;
+export void text_area_goto_line(borrow mut NodeRow n, i32 line) {
+    i32 total = line_of(n, n.len) + 1;
     if (line < 0) { line = 0; }
     if (line >= total) { line = total - 1; }
-    i32 cur_start = line_start(n, line_of(n, n->cursor));
-    i32 col = n->cursor - cur_start;
+    i32 cur_start = line_start(n, line_of(n, n.cursor));
+    i32 col = n.cursor - cur_start;
     i32 start = line_start(n, line);
     i32 llen = line_len_at(n, start);
     if (col > llen) { col = llen; }
-    n->cursor = (u16)(start + col);
+    n.cursor = (u16)(start + col);
 }
 
 /**
@@ -447,10 +455,10 @@ export void text_area_goto_line(Node *n, i32 line) {
  * @param mods Active modifier keys bitmask.
  * @return EditResult enum indicating outcome (Changed, Moved, Unhandled).
  */
-export EditResult text_area_handle(Node *n, i32 type, i32 code, i32 mods) {
+export EditResult text_area_handle(borrow mut NodeRow n, i32 type, i32 code, i32 mods) {
     bool ro = is_readonly(n);
-    i32 cur = n->cursor;
-    i32 len = n->len;
+    i32 cur = n.cursor;
+    i32 len = n.len;
     if (type == KeyEventType::CHAR) {
         if (ro) { return EditResult::Unhandled; }
         if (ascii.is_printable(code)) {
@@ -471,7 +479,7 @@ export EditResult text_area_handle(Node *n, i32 type, i32 code, i32 mods) {
         if (ro) { return EditResult::Unhandled; }
         if (cur > 0) {
             input_delete_at(n, cur - 1);
-            n->cursor = (u16)(cur - 1);
+            n.cursor = (u16)(cur - 1);
             text_area_reveal_cursor(n);
             return EditResult::Changed;
         }
@@ -486,12 +494,12 @@ export EditResult text_area_handle(Node *n, i32 type, i32 code, i32 mods) {
         return EditResult::Unhandled;
     }
     if (code == KeyCode::LEFT) {
-        if (cur > 0) { n->cursor = (u16)(cur - 1); }
+        if (cur > 0) { n.cursor = (u16)(cur - 1); }
         text_area_reveal_cursor(n);
         return EditResult::Moved;
     }
     if (code == KeyCode::RIGHT) {
-        if (cur < len) { n->cursor = (u16)(cur + 1); }
+        if (cur < len) { n.cursor = (u16)(cur + 1); }
         text_area_reveal_cursor(n);
         return EditResult::Moved;
     }
@@ -516,12 +524,12 @@ export EditResult text_area_handle(Node *n, i32 type, i32 code, i32 mods) {
         return EditResult::Moved;
     }
     if (code == KeyCode::HOME) {
-        n->cursor = (u16)line_start(n, line_of(n, cur));
+        n.cursor = (u16)line_start(n, line_of(n, cur));
         return EditResult::Moved;
     }
     if (code == KeyCode::END) {
         i32 start = line_start(n, line_of(n, cur));
-        n->cursor = (u16)(start + line_len_at(n, start));
+        n.cursor = (u16)(start + line_len_at(n, start));
         return EditResult::Moved;
     }
     return EditResult::Unhandled;
@@ -532,28 +540,27 @@ export EditResult text_area_handle(Node *n, i32 type, i32 code, i32 mods) {
  * @param id DOM Node ID of TextArea.
  * @param s Null-terminated string to append.
  */
-export void append_text(i32 id, char *s) {
-    Node *n = dom.node_ptr(id);
-    if (n == 0) { return; }
-    if (n->kind != NodeKind::TEXT_AREA) { return; }
-    char *buf = (char*)n->text;
-    i32 cap = n->cap;
-    i32 add = 0;
-    while (s[add] != 0) { add++; }
-    i32 len = n->len;
+export void append_text(i32 id, str s) {
+    if (!dom.node_exists(id)) { return; }
+    borrow mut NodeRow n = dom.row_of(id);
+    if (n.kind != NodeKind::TEXT_AREA) { return; }
+    Blob buf = n.text;
+    i32 cap = n.cap;
+    i32 add = s.length;
+    i32 len = n.len;
     if (len + add + 1 > cap) {
         // Drop whole lines from the front until it fits (or everything).
         i32 need = len + add + 1 - cap;
         i32 drop = 0;
         while (drop < len) {
             if (drop >= need) {
-                if (buf[drop - 1] == 10) { break; }
+                if (buf.at(drop - 1) == 10) { break; }
             }
             drop++;
         }
         i32 i = 0;
         while (drop + i < len) {
-            buf[i] = buf[drop + i];
+            buf.put(i, buf.at(drop + i));
             i++;
         }
         len = len - drop;
@@ -562,42 +569,40 @@ export void append_text(i32 id, char *s) {
     i32 i = 0;
     while (i < add) {
         if (len + 1 >= cap) { break; }
-        buf[len] = s[i];
+        buf.put(len, byte_of(s, i));
         len++;
         i++;
     }
-    buf[len] = (char)0;
-    n->len = (u16)len;
-    n->cursor = (u16)len;
+    buf.put(len, (char)0);
+    n.len = (u16)len;
+    n.cursor = (u16)len;
     text_area_reveal_cursor(n);
     dom.damage_node(id);
     dom.touch();
 }
 
 /**
- * Appends raw bytes from a memory address to a TextArea, filtering non-printable ASCII.
+ * Appends bytes to a TextArea, filtering non-printable ASCII.
  * @param id DOM Node ID of TextArea.
- * @param addr Pointer/address of source buffer.
- * @param count Number of bytes to read and append.
+ * @param bytes Source bytes.
  */
-export void append_bytes(i32 id, i32 addr, i32 count) {
+export void append_bytes(i32 id, str bytes) {
     Text<64> tmp = Text<64> {};
     tmp.clear();
     i32 i = 0;
-    while (i < count) {
-        char *p = (char*)(addr + i);
-        i32 c = ascii.byte((i32)(*p));
+    while (i < bytes.length) {
+        i32 c = byte_of(bytes, i);
         bool keep = c == '\n' || ascii.is_printable(c);
         if (keep) {
             if (!tmp.push((u8)c)) {
-                append_text(id, tmp.as_ptr());
+                append_text(id, tmp.as_str());
                 tmp.clear();
                 tmp.push((u8)c);
             }
         }
         i++;
     }
-    if (!tmp.is_empty()) { append_text(id, tmp.as_ptr()); }
+    if (!tmp.is_empty()) { append_text(id, tmp.as_str()); }
 }
 
 /**
@@ -605,15 +610,15 @@ export void append_bytes(i32 id, i32 addr, i32 count) {
  * @param id DOM Node ID of TextArea.
  */
 export void clear_text_area(i32 id) {
-    Node *n = dom.node_ptr(id);
-    if (n == 0) { return; }
-    if (!dom.owns_buffer(n)) { return; }
-    char *buf = (char*)n->text;
-    buf[0] = (char)0;
-    n->len = 0;
-    n->cursor = 0;
-    n->scroll = 0;
-    n->sel = 0;
+    if (!dom.node_exists(id)) { return; }
+    borrow mut NodeRow n = dom.row_of(id);
+    if (!n.text.is_live()) { return; }
+    Blob buf = n.text;
+    buf.put(0, (char)0);
+    n.len = 0;
+    n.cursor = 0;
+    n.scroll = 0;
+    n.sel = 0;
     dom.damage_node(id);
     dom.touch();
 }
@@ -624,18 +629,18 @@ export void clear_text_area(i32 id) {
  * @param lines Line delta (negative = scroll up, positive = scroll down).
  */
 export void scroll_by(i32 id, i32 lines) {
-    Node *n = dom.node_ptr(id);
-    if (n == 0) { return; }
-    if (n->kind != NodeKind::TEXT_AREA) { if (n->kind != NodeKind::LIST) { return; } }
-    i32 total = line_of(n, n->len) + 1;
+    if (!dom.node_exists(id)) { return; }
+    borrow mut NodeRow n = dom.row_of(id);
+    if (n.kind != NodeKind::TEXT_AREA) { if (n.kind != NodeKind::LIST) { return; } }
+    i32 total = line_of(n, n.len) + 1;
     i32 rows = visible_lines(n);
     i32 max_scroll = total - rows;
     if (max_scroll < 0) { max_scroll = 0; }
-    i32 scroll = n->scroll + lines;
+    i32 scroll = n.scroll + lines;
     if (scroll < 0) { scroll = 0; }
     if (scroll > max_scroll) { scroll = max_scroll; }
-    if (scroll != n->scroll) {
-        n->scroll = (u16)scroll;
+    if (scroll != n.scroll) {
+        n.scroll = (u16)scroll;
         dom.damage_node(id);
     }
 }
@@ -660,20 +665,20 @@ export void dispatch_wheel(i32 id, i32 steps) {
  * @param id DOM Node ID of List.
  * @param items Newline-separated list of items.
  */
-export void list_set_items(i32 id, char *items) {
-    Node *n = dom.node_ptr(id);
-    if (n == 0) { return; }
-    if (n->kind != NodeKind::LIST) { return; }
-    char *buf = (char*)n->text;
-    i32 cap = n->cap;
+export void list_set_items(i32 id, str items) {
+    if (!dom.node_exists(id)) { return; }
+    borrow mut NodeRow n = dom.row_of(id);
+    if (n.kind != NodeKind::LIST) { return; }
+    Blob buf = n.text;
+    i32 cap = n.cap;
     i32 i = 0;
-    for (; items[i] != 0 && i + 1 < cap; i++) {
-        buf[i] = items[i];
+    for (; i < items.length && i + 1 < cap; i++) {
+        buf.put(i, byte_of(items, i));
     }
-    buf[i] = (char)0;
-    n->len = (u16)i;
-    n->sel = 0;
-    n->scroll = 0;
+    buf.put(i, (char)0);
+    n.len = (u16)i;
+    n.sel = 0;
+    n.scroll = 0;
     dom.damage_node(id);
     dom.touch();
 }
@@ -685,11 +690,11 @@ export void list_set_items(i32 id, char *items) {
  * @return Result containing an optional 0-based row index.
  */
 export Result<Option<i32>, UiError> list_selected(i32 id) {
-    Node *n = dom.node_ptr(id);
-    if (n == 0) { return Err(UiError::NodeNotFound(id)); }
-    if (n->kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
-    if (n->sel == 0) { return Ok(None); }
-    return Ok(Some(n->sel - 1));
+    if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
+    borrow mut NodeRow n = dom.row_of(id);
+    if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
+    if (n.sel == 0) { return Ok(None); }
+    return Ok(Some(n.sel - 1));
 }
 
 /**
@@ -698,43 +703,33 @@ export Result<Option<i32>, UiError> list_selected(i32 id) {
  * @return Ok(row count), or Err when the node is missing or is not a List.
  */
 export Result<i32, UiError> list_count(i32 id) {
-    Node *n = dom.node_ptr(id);
-    if (n == 0) { return Err(UiError::NodeNotFound(id)); }
-    if (n->kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
-    if (n->len == 0) { return Ok(0); }
-    return Ok(line_of(n, n->len) + 1);
+    if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
+    borrow mut NodeRow n = dom.row_of(id);
+    if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
+    if (n.len == 0) { return Ok(0); }
+    return Ok(line_of(n, n.len) + 1);
 }
 
 /**
  * Retrieves the text of a specific item in a List node.
  * @param id DOM Node ID of List.
  * @param index 0-based item index.
- * @param out Destination buffer for item string.
- * @param cap Buffer capacity in bytes.
- * @return Result containing the copied string length.
+ * @return A view of the row, valid until the list next changes.
  */
-export Result<i32, UiError> list_item(i32 id, i32 index, char *out, i32 cap) {
-    Node *n = dom.node_ptr(id);
-    if (n == 0) { return Err(UiError::NodeNotFound(id)); }
-    if (n->kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
-    if (cap <= 0) { return Err(UiError::InvalidCapacity(cap)); }
+export Result<str, UiError> list_item(i32 id, i32 index) {
+    if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
+    borrow mut NodeRow n = dom.row_of(id);
+    if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
     Result<i32, UiError> count_result = list_count(id);
     i32 count = count_result?;
-    if (index < 0 || index >= count) {
-        out[0] = (char)0;
-        return Err(UiError::InvalidIndex(index));
-    }
+    if (index < 0 || index >= count) { return Err(UiError::InvalidIndex(index)); }
     i32 start = line_start(n, index);
     i32 llen = line_len_at(n, start);
-    char *buf = (char*)n->text;
-    i32 i = 0;
-    while (i < llen) {
-        if (i + 1 >= cap) { break; }
-        out[i] = buf[start + i];
-        i++;
-    }
-    out[i] = (char)0;
-    return Ok(i);
+    str all = n.text.view(n.len);
+    return case all.slice(start, start + llen) of {
+        Some(line) -> Ok(line);
+        None -> Err(UiError::InvalidIndex(index));
+    };
 }
 
 /**
@@ -743,20 +738,20 @@ export Result<i32, UiError> list_item(i32 id, i32 index, char *out, i32 cap) {
  * @param index 0-based item index to select.
  */
 export void list_select(i32 id, i32 index) {
-    Node *n = dom.node_ptr(id);
-    if (n == 0) { return; }
-    i32 count = line_of(n, n->len) + 1;
-    if (n->len == 0) { count = 0; }
-    if (index < 0) { n->sel = 0; }
-    else if (index >= count) { n->sel = 0; }
+    if (!dom.node_exists(id)) { return; }
+    borrow mut NodeRow n = dom.row_of(id);
+    i32 count = line_of(n, n.len) + 1;
+    if (n.len == 0) { count = 0; }
+    if (index < 0) { n.sel = 0; }
+    else if (index >= count) { n.sel = 0; }
     else {
-        n->sel = (u16)(index + 1);
+        n.sel = (u16)(index + 1);
         // keep it in view
         i32 rows = visible_lines(n);
-        i32 scroll = n->scroll;
+        i32 scroll = n.scroll;
         if (index < scroll) { scroll = index; }
         if (index >= scroll + rows) { scroll = index - rows + 1; }
-        n->scroll = (u16)scroll;
+        n.scroll = (u16)scroll;
     }
     dom.damage_node(id);
     dom.touch();
@@ -770,18 +765,18 @@ export void list_select(i32 id, i32 index) {
  * @return Option containing 0-based row index, or None.
  */
 export Option<i32> list_row_at(i32 id, i32 px, i32 py) {
-    Node *n = dom.node_ptr(id);
-    if (n == 0) { return None; }
+    if (!dom.node_exists(id)) { return None; }
+    borrow mut NodeRow n = dom.row_of(id);
     i32 s = dom.ui_scale();
     i32 pad = 8 * s;
     i32 lh = ui_metrics.text_height(0, s);
-    i32 rel = py - n->y - pad;
+    i32 rel = py - n.y - pad;
     if (rel < 0) { return None; }
-    i32 row = rel / lh + n->scroll;
+    i32 row = rel / lh + n.scroll;
     // A popup menu lays its items out like a List (see open_menu).
-    if (n->kind != NodeKind::LIST && n->kind != NodeKind::MENU) { return None; }
-    i32 count = line_of(n, n->len) + 1;
-    if (n->len == 0) { count = 0; }
+    if (n.kind != NodeKind::LIST && n.kind != NodeKind::MENU) { return None; }
+    i32 count = line_of(n, n.len) + 1;
+    if (n.len == 0) { count = 0; }
     if (row >= count) { return None; }
     return Some(row);
 }
@@ -793,13 +788,13 @@ export Option<i32> list_row_at(i32 id, i32 px, i32 py) {
  * @param py Click Y coordinate.
  */
 export void list_click(i32 id, i32 px, i32 py) {
-    Node *n = dom.node_ptr(id);
-    if (n == 0) { return; }
+    if (!dom.node_exists(id)) { return; }
+    borrow mut NodeRow n = dom.row_of(id);
     i32 row = case list_row_at(id, px, py) of { Some(v) -> v; None -> ({ return; }); };
-    i32 was = n->sel - 1;
+    i32 was = n.sel - 1;
     list_select(id, row);
     if (row == was) {
-        dom.emit(n, UiEventKind::ACTIVATE, n->on_click, 0);
+        dom.emit(n, UiEventKind::ACTIVATE, n.on_click, 0);
     } else {
         dom.fire_change(n);
     }
@@ -812,12 +807,12 @@ export void list_click(i32 id, i32 px, i32 py) {
  * @param code Key code.
  * @return EditResult enum indicating outcome (Moved or Unhandled).
  */
-export EditResult list_handle(Node *n, i32 type, i32 code) {
+export EditResult list_handle(borrow mut NodeRow n, i32 type, i32 code) {
     if (type != KeyEventType::DOWN) { return EditResult::Unhandled; }
-    i32 id = n->id;
-    i32 sel = n->sel - 1;
-    i32 count = line_of(n, n->len) + 1;
-    if (n->len == 0) { count = 0; }
+    i32 id = n.id;
+    i32 sel = n.sel - 1;
+    i32 count = line_of(n, n.len) + 1;
+    if (n.len == 0) { count = 0; }
     if (count == 0) { return EditResult::Unhandled; }
     if (code == KeyCode::UP) {
         if (sel > 0) { list_select(id, sel - 1); } else { list_select(id, 0); }
@@ -833,7 +828,7 @@ export EditResult list_handle(Node *n, i32 type, i32 code) {
     if (code == KeyCode::END) { list_select(id, count - 1); dom.fire_change(n); return EditResult::Moved; }
     if (code == KeyCode::ENTER) {
         if (sel >= 0) {
-            dom.emit(n, UiEventKind::ACTIVATE, n->on_click, 0);
+            dom.emit(n, UiEventKind::ACTIVATE, n.on_click, 0);
         }
         return EditResult::Moved;
     }
@@ -881,7 +876,7 @@ export i32 menu_target() {
  * @param target Associated target Node ID.
  * @return Menu DOM Node ID.
  */
-export Result<i32, UiError> open_menu(i32 x, i32 y, char *items,
+export Result<i32, UiError> open_menu(i32 x, i32 y, str items,
                                       fn(i32 index) -> void handler, i32 target) {
     close_menu();
     i32 s = dom.ui_scale();
@@ -889,8 +884,8 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, char *items,
     i32 i = 0;
     i32 widest = 0;
     i32 line_w = 0;
-    while (items[i] != 0) {
-        if (items[i] == 10) {
+    while (i < items.length) {
+        if (byte_of(items, i) == 10) {
             count++;
             line_w = 0;
         } else {
@@ -907,17 +902,12 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, char *items,
     w = 0;
     i32 start = 0;
     i32 j = 0;
-    while (1) {
-        if (items[j] == 10) {
-            items[j] = (char)0;
-            i32 lw = ui_metrics.text_width(&items[start], 0, s);
-            items[j] = (char)10;
+    while (j <= items.length) {
+        if (j == items.length || byte_of(items, j) == 10) {
+            str line = case items.slice(start, j) of { Some(view) -> view; None -> ""; };
+            i32 lw = ui_metrics.text_width(line, 0, s);
             if (lw > w) { w = lw; }
             start = j + 1;
-        } else if (items[j] == 0) {
-            i32 lw = ui_metrics.text_width(&items[start], 0, s);
-            if (lw > w) { w = lw; }
-            break;
         }
         j++;
     }
@@ -933,25 +923,24 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, char *items,
     NewNode node = NewNode { id: dom.create_node(NodeKind::MENU, "menu")? };
     i32 id = node.id;
     dom.set_role(id, NodeRole::MENU);
-    Node *n = dom.node_ptr(id);
+    borrow mut NodeRow n = dom.row_of(id);
     i32 cap = i + 2;
-    i32 buffer_address = case heap.alloc(cap) of {
-        Ok(pointer) -> pointer;
-        Err(_) -> ({ return Err(UiError::AllocationFailed(cap)); });
+    Blob buf = case blob.blob_new(cap) of {
+        Some(value) -> value;
+        None -> ({ return Err(UiError::AllocationFailed(cap)); });
     };
-    char *buf = (char*)buffer_address;
     i32 k = 0;
-    while (k < i) { buf[k] = items[k]; k++; }
-    buf[i] = (char)0;
-    n->text = buf;
-    n->cap = (u16)cap;
-    n->len = (u16)i;
-    n->x = (u16)x;
-    n->y = (u16)y;
-    n->w = (u16)w;
-    n->h = (u16)h;
-    n->sel = 0;
-    n->on_change = 0;
+    while (k < i) { buf.put(k, byte_of(items, k)); k++; }
+    buf.put(i, (char)0);
+    n.text = buf;
+    n.cap = (u16)cap;
+    n.len = (u16)i;
+    n.x = (u16)x;
+    n.y = (u16)y;
+    n.w = (u16)w;
+    n.h = (u16)h;
+    n.sel = 0;
+    n.on_change = 0;
     dom.set_state_flag(id, NodeState::VISIBLE, 1);
     dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
     // Appended to the desktop like a window, but painted last (see
@@ -970,14 +959,14 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, char *items,
  */
 export void menu_hover(i32 px, i32 py) {
     i32 id = dom.menu_id();
-    Node *n = dom.node_ptr(id);
-    if (n == 0) { return; }
+    if (!dom.node_exists(id)) { return; }
+    borrow mut NodeRow n = dom.row_of(id);
     i32 next = case list_row_at(id, px, py) of {
         Some(r) -> r + 1;
         None -> 0;
     };
-    if (next != n->sel) {
-        n->sel = (u16)next;
+    if (next != n.sel) {
+        n.sel = (u16)next;
         dom.damage_node(id);
     }
 }
@@ -1009,9 +998,9 @@ export void menu_click(i32 px, i32 py) {
  * @param n Pointer to DOM Node.
  * @return True if focusable, false otherwise.
  */
-export bool is_focusable(Node *n) {
-    if (!(n->state & NodeState::VISIBLE)) { return false; }
-    i32 k = n->kind;
+export bool is_focusable(borrow mut NodeRow n) {
+    if (!(n.state & NodeState::VISIBLE)) { return false; }
+    i32 k = n.kind;
     if (k == NodeKind::TEXT_INPUT) { return true; }
     if (k == NodeKind::TEXT_AREA) { return true; }
     if (k == NodeKind::BUTTON) { return true; }
@@ -1029,8 +1018,8 @@ i32 g_focus_ring_count = 0;
  * @param id Root DOM Node ID of subtree.
  */
 export void collect_focusable(i32 id) {
-    Node *n = dom.node_ptr(id);
-    if (n == 0) { return; }
+    if (!dom.node_exists(id)) { return; }
+    borrow mut NodeRow n = dom.row_of(id);
     if (is_focusable(n)) {
         if (g_focus_ring_count < ui_config.FOCUS_MAX) {
             g_focus_ring[g_focus_ring_count] = id;
@@ -1111,19 +1100,19 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
             };
         }
     }
-    Node *n = dom.node_ptr(dom.focus_id());
-    if (n == 0) { return; }
+    if (!dom.node_exists(dom.focus_id())) { return; }
+    borrow mut NodeRow n = dom.row_of(dom.focus_id());
     i32 id = dom.focus_id();
     if (type == KeyEventType::DOWN) {
-        fn(i32 owner, i32 id, i32 arg) -> i32 handler = n->on_key;
+        fn(i32 owner, i32 id, i32 arg) -> i32 handler = n.on_key;
         if (handler != 0) {
             // Runs inline, unlike the queued handlers: it decides whether
             // the key goes on to the widget, which cannot wait.
-            i32 claimed = handler(n->owner, id, code | (mods << 16));
+            i32 claimed = handler(n.owner, id, code | (mods << 16));
             if (claimed) { return; }
         }
     }
-    i32 kind = n->kind;
+    i32 kind = n.kind;
     if (kind == NodeKind::TEXT_INPUT) {
         EditResult r = input_handle(n, type, code);
         case r of {
@@ -1176,19 +1165,19 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
  * @param id DOM Node ID of TextInput.
  * @param s Replacement string.
  */
-export void set_input_text(i32 id, char *s) {
-    Node *n = dom.node_ptr(id);
-    if (n == 0) { return; }
-    if (n->kind != NodeKind::TEXT_INPUT) { return; }
-    char *buf = (char*)n->text;
-    i32 cap = n->cap;
+export void set_input_text(i32 id, str s) {
+    if (!dom.node_exists(id)) { return; }
+    borrow mut NodeRow n = dom.row_of(id);
+    if (n.kind != NodeKind::TEXT_INPUT) { return; }
+    Blob buf = n.text;
+    i32 cap = n.cap;
     i32 i = 0;
-    for (; s[i] != 0 && i + 1 < cap; i++) {
-        buf[i] = s[i];
+    for (; i < s.length && i + 1 < cap; i++) {
+        buf.put(i, byte_of(s, i));
     }
-    buf[i] = (char)0;
-    n->len = (u16)i;
-    n->cursor = (u16)i;
+    buf.put(i, (char)0);
+    n.len = (u16)i;
+    n.cursor = (u16)i;
     dom.damage_node(id);
     dom.touch();
 }
@@ -1205,11 +1194,11 @@ export void tick() {
     i32 i = 0;
     while (i < dom.timer_count()) {
         i32 id = dom.timer_id_at(i);
-        Node *t = dom.node_ptr(id);
-        if (t != 0) {
-            if (now >= t->next_due) {
-                t->next_due = now + t->interval;
-                dom.emit(t, UiEventKind::TIMER, t->on_tick, 0);
+        if (dom.node_exists(id)) {
+            borrow mut NodeRow t = dom.row_of(id);
+            if (now >= t.next_due) {
+                t.next_due = now + t.interval;
+                dom.emit(t, UiEventKind::TIMER, t.on_tick, 0);
             }
         }
         i++;
@@ -1225,10 +1214,10 @@ export void tick() {
 export Result<i32, UiError> create_timer(
     i32 interval, fn(i32 owner, i32 id, i32 arg) -> void handler) {
     NewNode node = NewNode { id: dom.create_node(NodeKind::TIMER, "timer")? };
-    Node *t = dom.node_ptr(node.id);
-    t->interval = interval;
-    t->on_tick = handler;
-    t->next_due = scheduler.ticks() + interval;
+    borrow mut NodeRow t = dom.row_of(node.id);
+    t.interval = interval;
+    t.on_tick = handler;
+    t.next_due = scheduler.ticks() + interval;
     dom.register_timer(node.id)?;
     return Ok(node.keep());
 }

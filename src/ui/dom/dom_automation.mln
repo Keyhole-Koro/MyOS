@@ -3,6 +3,8 @@ import { Option } from "@std/core/option.mln";
 package dom_automation;
 
 import dom from "dom.mln";
+import { NodeRow } from "dom_model.mln";
+import { Blob } from "@std/memory/blob.mln";
 import dom_hit_test from "dom_hit_test.mln";
 import automation_transport from "@os/meta/automation_transport.mln";
 import debug from "@kernel/debug/debug.mln";
@@ -27,7 +29,7 @@ import { NodeRole, NodeState, Children } from "dom.mln";
 void print_indent(i32 depth) {
     i32 i = 0;
     while (i < depth) {
-        debug.print("  ");
+        debug.print_str("  ");
         i++;
     }
 }
@@ -58,16 +60,24 @@ void dump_props(i32 id) {
             }
         }
     }
-    debug.printf(" [role=%i x=%i y=%i w=%i h=%i",
-                 role, x, y, w, h);
-    if (dom.is_visible(id)) { debug.print(" vis"); }
-    if (dom.is_enabled(id)) { debug.print(" en"); }
-    if (dom.is_hovered(id)) { debug.print(" ho"); }
-    if (dom.is_pressed(id)) { debug.print(" pr"); }
-    if (dom.is_focused(id)) { debug.print(" fo"); }
-    if (dom.is_hit_testable(id)) { debug.print(" ht"); }
-    if (dom.is_checked(id)) { debug.print(" ck"); }
-    debug.print("]");
+    debug.print_str(" [role=");
+    debug.print_i32(role);
+    debug.print_str(" x=");
+    debug.print_i32(x);
+    debug.print_str(" y=");
+    debug.print_i32(y);
+    debug.print_str(" w=");
+    debug.print_i32(w);
+    debug.print_str(" h=");
+    debug.print_i32(h);
+    if (dom.is_visible(id)) { debug.print_str(" vis"); }
+    if (dom.is_enabled(id)) { debug.print_str(" en"); }
+    if (dom.is_hovered(id)) { debug.print_str(" ho"); }
+    if (dom.is_pressed(id)) { debug.print_str(" pr"); }
+    if (dom.is_focused(id)) { debug.print_str(" fo"); }
+    if (dom.is_hit_testable(id)) { debug.print_str(" ht"); }
+    if (dom.is_checked(id)) { debug.print_str(" ck"); }
+    debug.print_str("]");
 }
 
 /**
@@ -77,19 +87,21 @@ void dump_props(i32 id) {
  */
 void dump_node(i32 id, i32 depth) {
     print_indent(depth);
-    debug.printf("Node(id=%i) ", id);
+    debug.print_str("Node(id=");
+    debug.print_i32(id);
+    debug.print_str(") ");
     case dom.kind_of(id) of {
-        Some(v) -> debug.printf("kind=%i ", v);
-        None -> debug.print("kind=? ");
+        Some(v) -> ({ debug.print_str("kind="); debug.print_i32(v); debug.print_str(" "); });
+        None -> debug.print_str("kind=? ");
     };
-    char *name = dom.name_of(id);
-    if (name != 0) {
-        debug.print(name);
+    str name = dom.name_of(id);
+    if (!name.is_empty()) {
+        debug.print_str(name);
     } else {
-        debug.print("?");
+        debug.print_str("?");
     }
     dump_props(id);
-    debug.println("");
+    debug.println_str("");
 
     for (i32 child_id in dom.children(id)) {
         dump_node(child_id, depth + 1);
@@ -100,9 +112,9 @@ void dump_node(i32 id, i32 depth) {
  * Dumps the entire kernel DOM node tree to the debug console.
  */
 export void dump() {
-    debug.println("--- Kernel Object Tree ---");
+    debug.println_str("--- Kernel Object Tree ---");
     dump_node(dom.root_node_id(), 0);
-    debug.println("--------------------------");
+    debug.println_str("--------------------------");
 }
 
 // --- automation bridge snapshot -----------------------------------------------------------
@@ -115,13 +127,7 @@ i32 g_automation_first = 1;
  * Transmits a raw string to the automation MMIO transport.
  * @param s Null-terminated string to send.
  */
-void automation_raw(char *s) {
-    if (s == 0) { return; }
-    while (*s != 0) {
-        automation_transport.putc(*s);
-        s++;
-    }
-}
+void automation_raw(str s) { automation_transport.put_view(s); }
 
 /**
  * Transmits an integer as ASCII digits over the automation transport.
@@ -140,20 +146,7 @@ void automation_i32(i32 value) {
  * Transmits an escaped JSON string over the automation transport.
  * @param s String content to escape and write within quotes.
  */
-void automation_json_string(char *s) {
-    automation_transport.putc('"');
-    if (s != 0) {
-        while (*s != 0) {
-            i32 c = *s;
-            if (c == '"') { automation_transport.putc('\\'); automation_transport.putc('"'); }
-            else if (c == '\\') { automation_transport.putc('\\'); automation_transport.putc('\\'); }
-            else if (c == '\n') { automation_transport.putc('\\'); automation_transport.putc('n'); }
-            else { automation_transport.putc(c); }
-            s++;
-        }
-    }
-    automation_transport.putc('"');
-}
+void automation_json_string(str s) { automation_transport.put_json_string(s); }
 
 /**
  * Transmits a boolean as "true" or "false" over the automation transport.

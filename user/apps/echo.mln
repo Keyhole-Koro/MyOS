@@ -1,22 +1,23 @@
 package app;
 
 import ulib from "../lib/ulib.mln";
+import { Line } from "../lib/ulib.mln";
 
 /**
  * User application entry point: echoes terminal input lines until "quit".
  * @return Exit code 0.
  */
 export i32 main() {
-    char line[96];
+    Line line;
     ulib.println("echo: type lines, 'quit' to exit");
     while (1) {
-        i32 n = ulib.readline(&line[0], 96);
-        if (ulib.str_eq(&line[0], "quit")) {
+        ulib.read_line(&mut line);
+        if (ulib.line_is(&line, "quit")) {
             ulib.println("bye");
             return 0;
         }
         ulib.print("> ");
-        ulib.println(&line[0]);
+        ulib.print_line(&line);
     }
     return 0;
 }

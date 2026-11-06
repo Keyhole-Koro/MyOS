@@ -1,13 +1,15 @@
 package dom_elements;
 import debug from "@kernel/debug/debug.mln";
-import heap from "@kernel/mm/heap.mln";
+import blob from "@std/memory/blob.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
 import theme from "@os/ui/theme.mln";
 import ui_metrics from "@os/ui/ui_metrics.mln";
 import { halt_cpu } from "@kernel/arch/halt.masm";
 import dom_widgets from "dom_widgets.mln";
 import dom from "dom.mln";
-import { Node, NodeKind, NodeRole, NodeState, NodeStyle, NewNode } from "dom.mln";
+import { NodeRow } from "dom_model.mln";
+import { Blob } from "@std/memory/blob.mln";
+import { NodeKind, NodeRole, NodeState, NodeStyle, NewNode } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { UiError } from "@contracts/ui/widget.contract.mln";
@@ -30,7 +32,7 @@ import { UiError } from "@contracts/ui/widget.contract.mln";
  * @param h Logical height.
  * @return DOM Node ID.
  */
-export Result<i32, UiError> create_window(char *title, i32 x, i32 y, i32 w, i32 h) {
+export Result<i32, UiError> create_window(str title, i32 x, i32 y, i32 w, i32 h) {
     i32 id = dom.create_node(NodeKind::WINDOW, title)?;
     dom.set_role(id, NodeRole::WINDOW);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
@@ -50,7 +52,7 @@ export Result<i32, UiError> create_window(char *title, i32 x, i32 y, i32 w, i32 
  * @param h Logical height.
  * @return DOM Node ID.
  */
-export Result<i32, UiError> create_button(char *label, i32 x, i32 y, i32 w, i32 h) {
+export Result<i32, UiError> create_button(str label, i32 x, i32 y, i32 w, i32 h) {
     i32 id = dom.create_node(NodeKind::BUTTON, label)?;
     dom.set_role(id, NodeRole::BUTTON);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
@@ -68,7 +70,7 @@ export Result<i32, UiError> create_button(char *label, i32 x, i32 y, i32 w, i32 
  * @param y Logical Y coordinate.
  * @return DOM Node ID.
  */
-export Result<i32, UiError> create_text(char *text, i32 x, i32 y) {
+export Result<i32, UiError> create_text(str text, i32 x, i32 y) {
     i32 id = dom.create_node(NodeKind::TEXT, text)?;
     dom.set_role(id, NodeRole::TEXT);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), 0, 0);
@@ -108,8 +110,8 @@ export Result<i32, UiError> create_box(i32 x, i32 y, i32 w, i32 h,
 export Result<i32, UiError> create_panel(i32 x, i32 y, i32 w, i32 h, i32 radius) {
     i32 id = dom.create_node(NodeKind::PANEL, "panel")?;
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
-    Node *n = dom.node_ptr(id);
-    n->radius = (u16)dom.scale_ui(radius);
+    borrow mut NodeRow n = dom.row_of(id);
+    n.radius = (u16)dom.scale_ui(radius);
     dom.set_state_flag(id, NodeState::VISIBLE, 1);
     return Ok(id);
 }
@@ -162,23 +164,22 @@ export Result<i32, UiError> create_row(i32 x, i32 y, i32 w, i32 h,
  * @param capacity Buffer capacity in bytes.
  * @return DOM Node ID.
  */
-export Result<i32, UiError> create_text_input(char *placeholder, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
+export Result<i32, UiError> create_text_input(str placeholder, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
     if (capacity < 2) { capacity = 2; }
     NewNode node = NewNode { id: dom.create_node(NodeKind::TEXT_INPUT, placeholder)? };
     i32 id = node.id;
     dom.set_role(id, NodeRole::TEXTBOX);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
-    Node *n = dom.node_ptr(id);
-    i32 buffer_address = case heap.alloc(capacity) of {
-        Ok(pointer) -> pointer;
-        Err(_) -> ({ return Err(UiError::AllocationFailed(capacity)); });
+    borrow mut NodeRow n = dom.row_of(id);
+    Blob buf = case blob.blob_new(capacity) of {
+        Some(value) -> value;
+        None -> ({ return Err(UiError::AllocationFailed(capacity)); });
     };
-    char *buf = (char*)buffer_address;
-    buf[0] = (char)0;
-    n->text = buf;
-    n->cap = (u16)capacity;
-    n->len = 0;
-    n->cursor = 0;
+    buf.put(0, (char)0);
+    n.text = buf;
+    n.cap = (u16)capacity;
+    n.len = 0;
+    n.cursor = 0;
     dom.set_state_flag(id, NodeState::VISIBLE, 1);
     dom.set_state_flag(id, NodeState::ENABLED, 1);
     dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
@@ -193,7 +194,7 @@ export Result<i32, UiError> create_text_input(char *placeholder, i32 x, i32 y, i
  * @param checked Initial state (1 for checked, 0 for unchecked).
  * @return DOM Node ID.
  */
-export Result<i32, UiError> create_checkbox(char *label, i32 x, i32 y, i32 checked) {
+export Result<i32, UiError> create_checkbox(str label, i32 x, i32 y, i32 checked) {
     i32 id = dom.create_node(NodeKind::CHECKBOX, label)?;
     dom.set_role(id, NodeRole::CHECKBOX);
     i32 s = dom.ui_scale();
@@ -237,24 +238,23 @@ export Result<i32, UiError> create_separator(i32 x, i32 y, i32 w) {
  * @param readonly Non-zero for read-only / console mode.
  * @return DOM Node ID.
  */
-export Result<i32, UiError> create_text_area(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 readonly) {
+export Result<i32, UiError> create_text_area(str name, i32 x, i32 y, i32 w, i32 h, i32 capacity, i32 readonly) {
     if (capacity < 2) { capacity = 2; }
     NewNode node = NewNode { id: dom.create_node(NodeKind::TEXT_AREA, name)? };
     i32 id = node.id;
     dom.set_role(id, NodeRole::TEXTAREA);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
-    Node *n = dom.node_ptr(id);
-    i32 buffer_address = case heap.alloc(capacity) of {
-        Ok(pointer) -> pointer;
-        Err(_) -> ({ return Err(UiError::AllocationFailed(capacity)); });
+    borrow mut NodeRow n = dom.row_of(id);
+    Blob buf = case blob.blob_new(capacity) of {
+        Some(value) -> value;
+        None -> ({ return Err(UiError::AllocationFailed(capacity)); });
     };
-    char *buf = (char*)buffer_address;
-    buf[0] = (char)0;
-    n->text = buf;
-    n->cap = (u16)capacity;
-    n->len = 0;
-    n->cursor = 0;
-    n->scroll = 0;
+    buf.put(0, (char)0);
+    n.text = buf;
+    n.cap = (u16)capacity;
+    n.len = 0;
+    n.cursor = 0;
+    n.scroll = 0;
     if (readonly) { dom.set_style(id, NodeStyle::READONLY); }
     dom.set_state_flag(id, NodeState::VISIBLE, 1);
     dom.set_state_flag(id, NodeState::ENABLED, 1);
@@ -272,24 +272,23 @@ export Result<i32, UiError> create_text_area(char *name, i32 x, i32 y, i32 w, i3
  * @param capacity Buffer capacity in bytes for row data.
  * @return DOM Node ID.
  */
-export Result<i32, UiError> create_list(char *name, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
+export Result<i32, UiError> create_list(str name, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
     if (capacity < 2) { capacity = 2; }
     NewNode node = NewNode { id: dom.create_node(NodeKind::LIST, name)? };
     i32 id = node.id;
     dom.set_role(id, NodeRole::LIST);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
-    Node *n = dom.node_ptr(id);
-    i32 buffer_address = case heap.alloc(capacity) of {
-        Ok(pointer) -> pointer;
-        Err(_) -> ({ return Err(UiError::AllocationFailed(capacity)); });
+    borrow mut NodeRow n = dom.row_of(id);
+    Blob buf = case blob.blob_new(capacity) of {
+        Some(value) -> value;
+        None -> ({ return Err(UiError::AllocationFailed(capacity)); });
     };
-    char *buf = (char*)buffer_address;
-    buf[0] = (char)0;
-    n->text = buf;
-    n->cap = (u16)capacity;
-    n->len = 0;
-    n->sel = 0;
-    n->scroll = 0;
+    buf.put(0, (char)0);
+    n.text = buf;
+    n.cap = (u16)capacity;
+    n.len = 0;
+    n.sel = 0;
+    n.scroll = 0;
     dom.set_state_flag(id, NodeState::VISIBLE, 1);
     dom.set_state_flag(id, NodeState::ENABLED, 1);
     dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
@@ -301,7 +300,7 @@ export Result<i32, UiError> create_list(char *name, i32 x, i32 y, i32 w, i32 h, 
  * @param role NodeRole value.
  * @return Role name string.
  */
-export char* role_name(NodeRole role) {
+export str role_name(NodeRole role) {
     if (role == NodeRole::TEXTAREA) { return "textarea"; }
     if (role == NodeRole::LIST) { return "list"; }
     if (role == NodeRole::MENU) { return "menu"; }

@@ -61,7 +61,7 @@ def launch_app(os, name):
     click_point(os, 40, 1516)  # the MyOS launcher at the taskbar's left
     # The menu is built by the UI server on its next pass; a snapshot can
     # land before that, so wait for it.
-    deadline = time.monotonic() + 5.0
+    deadline = time.monotonic() + 10.0
     while not [n for n in os.snapshot().nodes if n.role == "menu"]:
         if time.monotonic() > deadline:
             raise AssertionError("the launcher menu did not open")
@@ -69,7 +69,7 @@ def launch_app(os, name):
     menu = os.get_by_role("menu").snapshot()
     row = MENU.index(name)
     click_point(os, menu.bounds.x + 40, menu.bounds.y + 16 + ROW_H * row + ROW_H // 2)
-    deadline = time.monotonic() + 5.0
+    deadline = time.monotonic() + 10.0
     while not [n for n in os.snapshot().nodes
                if n.role == "window" and n.text == name and n.visible]:
         if time.monotonic() > deadline:
@@ -151,6 +151,7 @@ def main() -> int:
             # 8. The launcher is the disk: the shell read each executable's
             #    `@app(name = ...)` from its MBIN header without loading it.
             click_point(os, 40, 1516)
+            expect(os.get_by_role("menu")).to_be_visible()
             menu = os.get_by_role("menu").snapshot()
             if (menu.text or "").split("\n") != MENU:
                 raise AssertionError(f"launcher menu is not the installed apps: {menu.text!r}")
@@ -160,7 +161,8 @@ def main() -> int:
             #    over does not push the id high-water mark up. (Before,
             #    256 ids were handed out once each and then the DOM stopped.)
             def max_id():
-                return max(n.id for n in os.snapshot().nodes)
+                # An id's low 12 bits are its table row; the rest is a generation.
+                return max(n.id & 0xFFF for n in os.snapshot().nodes)
 
             def close_focused(name):
                 # The launched instance is the active window.

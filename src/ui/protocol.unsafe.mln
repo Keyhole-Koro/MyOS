@@ -88,7 +88,7 @@ RequestStatus run_request(Request *m) {
     }
     if (op == UiOp::LIST_ITEM) {
         Result<i32, UiError> *out = (Result<i32, UiError>*)m->result_out;
-        *out = dom_widgets.list_item(id, m->a1, (char*)m->a2, m->a3);
+        *out = list_item_into(id, m->a1, (char*)m->a2, m->a3);
         return RequestStatus::OK;
     }
     if (op == UiOp::FOCUS)          { focus(id); return RequestStatus::OK; }
@@ -130,7 +130,7 @@ RequestStatus run_request(Request *m) {
  * @param id UI node ID.
  * @param s Text string to set.
  */
-void set_text(i32 id, char *s) { dom.set_text_copy(id, s); }
+void set_text(i32 id, char *s) { dom.set_text(id, str.from_c(s)); }
 
 /**
  * Copies a node's text content into the caller's buffer.
@@ -143,9 +143,28 @@ void set_text(i32 id, char *s) { dom.set_text_copy(id, s); }
 Result<i32, UiError> text_copy(i32 id, char *out, i32 cap) {
     if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
     if (cap <= 0) { return Err(UiError::InvalidCapacity(cap)); }
-    char *t = dom.text_of(id);
-    if (t == 0) { out[0] = (char)0; return Ok(0); }
-    return Ok(str.ncopy(out, t, cap));
+    return Ok(copy_view(dom.text_of(id), out, cap));
+}
+
+// Copies a view into a NUL-terminated buffer; a longer view is cut.
+i32 copy_view(str view, char *out, i32 cap) {
+    i32 n = view.length;
+    if (n > cap - 1) { n = cap - 1; }
+    i32 i = 0;
+    while (i < n) { out[i] = view.data[i]; i++; }
+    out[n] = (char)0;
+    return n;
+}
+
+// A list row into the caller's staged buffer.
+Result<i32, UiError> list_item_into(i32 id, i32 index, char *out, i32 cap) {
+    if (cap <= 0) { return Err(UiError::InvalidCapacity(cap)); }
+    out[0] = (char)0;
+    Result<str, UiError> row = dom_widgets.list_item(id, index);
+    return case row of {
+        Ok(view) -> Ok(copy_view(view, out, cap));
+        Err(error) -> Err(error);
+    };
 }
 
 // --- widgets --------------------------------------------------------------------------------
@@ -180,7 +199,7 @@ void set_checked(i32 id, i32 on) { dom.set_checked(id, on); }
  * @param id UI node ID.
  * @param s Input text.
  */
-void input_set(i32 id, char *s) { dom_widgets.set_input_text(id, s); }
+void input_set(i32 id, char *s) { dom_widgets.set_input_text(id, str.from_c(s)); }
 
 /**
  * Appends text to a multi-line text area with IRQ protection.
@@ -194,7 +213,7 @@ void input_set(i32 id, char *s) { dom_widgets.set_input_text(id, s); }
 void area_append(i32 id, char *s) {
     i32 was = irq.save_disable();
     defer irq.restore(was);
-    dom_widgets.append_text(id, s);
+    dom_widgets.append_text(id, str.from_c(s));
 }
 
 /**
@@ -218,7 +237,7 @@ Result<i32, UiError> area_lines(i32 id) { return dom_widgets.text_area_line_coun
  * @param id UI node ID.
  * @param items Newline-separated item string.
  */
-void list_set_items(i32 id, char *items) { dom_widgets.list_set_items(id, items); }
+void list_set_items(i32 id, char *items) { dom_widgets.list_set_items(id, str.from_c(items)); }
 
 /**
  * Returns the number of items in a list widget.
@@ -328,7 +347,7 @@ void show(i32 win) {
  * @param id UI node ID.
  * @param name Test identifier name.
  */
-void test_id(i32 id, char *name) { dom.set_test_id_copy(id, name); }
+void test_id(i32 id, char *name) { dom.set_test_id(id, str.from_c(name)); }
 
 // --- keys ---------------------------------------------------------------------------------------
 

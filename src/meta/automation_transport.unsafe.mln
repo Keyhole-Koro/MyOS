@@ -27,9 +27,47 @@ export i32 read_request() { return mem.read_word(RX_ADDR); }
  * Writes a character byte to the automation MMIO transmit FIFO.
  * @param c Character byte to send.
  */
+@safe
 export void putc(i32 c) { mem.write_word(TX_ADDR, c & 255); }
 
 /**
  * Signals completion of an automation command response to the host test controller.
  */
 export void done() { mem.write_word(DONE_ADDR, 1); }
+
+/**
+ * Sends a string as it is.
+ * @param s Bytes to send.
+ */
+@safe
+export void put_view(str s) {
+    i32 i = 0;
+    while (i < s.length) {
+        mem.write_word(TX_ADDR, s.data[i] & 255);
+        i++;
+    }
+}
+
+/**
+ * Sends a string as a quoted JSON string.
+ * @param s Bytes to escape and send.
+ */
+@safe
+export void put_json_string(str s) {
+    mem.write_word(TX_ADDR, '"');
+    i32 i = 0;
+    while (i < s.length) {
+        i32 c = s.data[i] & 255;
+        if (c == '"' || c == '\\') {
+            mem.write_word(TX_ADDR, '\\');
+            mem.write_word(TX_ADDR, c);
+        } else if (c == '\n') {
+            mem.write_word(TX_ADDR, '\\');
+            mem.write_word(TX_ADDR, 'n');
+        } else {
+            mem.write_word(TX_ADDR, c);
+        }
+        i++;
+    }
+    mem.write_word(TX_ADDR, '"');
+}
