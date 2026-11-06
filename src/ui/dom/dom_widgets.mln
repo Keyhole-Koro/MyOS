@@ -54,14 +54,6 @@ export Option<NodeId> active_window() {
 }
 
 /**
- * Returns the DOM Node ID of the currently focused control.
- * @return Focused Node ID, or 0 if none.
- */
-export Option<NodeId> focused_node() {
-    return dom.focus_id();
-}
-
-/**
  * Takes keyboard focus away from the focused node, if there is one.
  */
 export void clear_focus() {
@@ -196,15 +188,6 @@ export void minimize_window(NodeId win) {
 }
 
 /**
- * Checks whether a window is currently minimized.
- * @param win Window DOM Node ID.
- * @return True if minimized, false otherwise.
- */
-export bool is_minimized(NodeId win) {
-    return dom.get_state_flag(win, NodeState::MINIMIZED);
-}
-
-/**
  * Checks whether a window is currently maximized.
  * @param win Window DOM Node ID.
  * @return True if maximized, false otherwise.
@@ -325,9 +308,8 @@ export EditResult input_handle(borrow NodeRow n, i32 type, i32 code) {
 }
 
 // Route one keyboard event (type = keyboard.EVT_*, code = key code or
-// character) to the focused node. A node's on_key handler, if set, sees DOWN
-// events first and can claim them by returning non-zero; otherwise text
-// inputs get their default editing behaviour.
+// character) to the focused node; text inputs get their default editing
+// behaviour.
 // --- multi-line text (TextArea) ---
 // The buffer holds the whole document with '\n' separators; `cursor` is a
 // byte index, `scroll` the first visible line. Editing shares the insert/
@@ -1092,15 +1074,6 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
     }
     borrow NodeRow n = case dom.row_in(dom.focus_id()) of { Some(row) -> row; None -> ({ return; }); };
     NodeId id = n.id;
-    if (type == KeyEventType::DOWN) {
-        fn(i32 owner, NodeId id, i32 arg) -> i32 handler = n.on_key;
-        if (handler != 0) {
-            // Runs inline, unlike the queued handlers: it decides whether
-            // the key goes on to the widget, which cannot wait.
-            i32 claimed = handler(n.owner, id, code | (mods << 16));
-            if (claimed) { return; }
-        }
-    }
     i32 kind = n.kind;
     if (kind == NodeKind::TEXT_INPUT) {
         EditResult r = input_handle(n, type, code);

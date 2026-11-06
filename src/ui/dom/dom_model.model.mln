@@ -35,7 +35,6 @@ entity Node max 512 {
     i32 background_color; // NODE_BOX fill colour (0 is valid black)
     i32 border_color;     // NODE_BOX border colour
     Option<i32> color;    // foreground/text colour; None = theme default
-    fn(i32 owner, NodeId id, i32 arg) -> i32 on_key; // key filter for DOWN events
     fn(i32 owner, NodeId id, i32 arg) -> void on_change;
     fn(i32 owner, NodeId id, i32 arg) -> void on_tick;
     i32 interval;         // Timer period in scheduler ticks

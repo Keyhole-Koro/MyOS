@@ -212,17 +212,6 @@ Option<i32> owner_slot(i32 owner, i32 make) {
     return Some(slot);
 }
 
-/**
- * Returns the number of DOM nodes currently owned by a process.
- * @param owner Process ID whose nodes are counted.
- * @return Current owned-node count, or 0 if the owner has no tracked nodes.
- */
-export i32 nodes_of(i32 owner) {
-    return case owner_slot(owner, 0) of {
-        Some(s) -> g_owner_nodes[s].count;
-        None -> 0;
-    };
-}
 // Registered timers (ids), scanned by tick().
 export const i32 TIMER_MAX = 16;
 NodeId g_timer_ids[16];
@@ -517,14 +506,6 @@ export void push_event(fn(i32 owner, NodeId id, i32 arg) -> void handler,
 }
 
 /**
- * Checks whether the DOM event queue contains a handler call.
- * @return 1 when an event is pending, otherwise 0.
- */
-export bool has_events() {
-    return g_event_head != g_event_tail;
-}
-
-/**
  * Routes a node event to its owning app or queues a server-side callback.
  * @param n Node that produced the event.
  * @param kind UiEventKind event code.
@@ -625,16 +606,6 @@ export Option<NodeKind> kind_of(NodeId id) {
 }
 
 /**
- * Returns the parent node ID of a node.
- * @param id DOM Node ID.
- * @return Ok(Some(parent)), Ok(None) for root or detached nodes, or Err for an invalid ID.
- */
-export Result<Option<NodeId>, UiError> parent_of(NodeId id) {
-    if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    return Ok(parent_id(id));
-}
-
-/**
  * Returns the absolute X coordinate of a node in screen pixels.
  * @param id DOM node ID.
  * @return Some(X coordinate), or None when the node ID is invalid.
@@ -642,6 +613,7 @@ export Result<Option<NodeId>, UiError> parent_of(NodeId id) {
 export Option<i32> node_x(NodeId id) {
     return case find_row(id) of { Some(n) -> Some(n.x); None -> None; };
 }
+
 /**
  * Returns the absolute Y coordinate of a node in screen pixels.
  * @param id DOM node ID.
@@ -649,22 +621,6 @@ export Option<i32> node_x(NodeId id) {
  */
 export Option<i32> node_y(NodeId id) {
     return case find_row(id) of { Some(n) -> Some(n.y); None -> None; };
-}
-/**
- * Returns the width of a node in screen pixels.
- * @param id DOM node ID.
- * @return Some(width), or None when the node ID is invalid.
- */
-export Option<i32> node_w(NodeId id) {
-    return case find_row(id) of { Some(n) -> Some(n.w); None -> None; };
-}
-/**
- * Returns the height of a node in screen pixels.
- * @param id DOM node ID.
- * @return Some(height), or None when the node ID is invalid.
- */
-export Option<i32> node_h(NodeId id) {
-    return case find_row(id) of { Some(n) -> Some(n.h); None -> None; };
 }
 
 /**
@@ -678,16 +634,6 @@ export str text_of(NodeId id) {
 }
 
 /**
- * Returns the accessibility / automation role of a node.
- * @param id DOM Node ID.
- * @return Ok(NodeRole value), or Err for an invalid ID.
- */
-export Result<NodeRole, UiError> role_of(NodeId id) {
-    borrow NodeRow n = require_row(id)?;
-    return Ok(n.role);
-}
-
-/**
  * Returns the debug / identifier name of a node.
  * @param id DOM Node ID.
  * @return Pointer to name string.
@@ -695,16 +641,6 @@ export Result<NodeRole, UiError> role_of(NodeId id) {
 export str name_of(NodeId id) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return ""; }); };
     return n.name.as_str();
-}
-
-/**
- * Returns the automation test ID of a node.
- * @param id DOM Node ID.
- * @return Pointer to test_id string.
- */
-export str test_id_of(NodeId id) {
-    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return ""; }); };
-    return n.test_id.as_str();
 }
 
 /**
@@ -1180,13 +1116,6 @@ export void set_hovered(NodeId id, i32 on) { set_state_flag(id, NodeState::HOVER
 export void set_pressed(NodeId id, i32 on) { set_state_flag(id, NodeState::PRESSED, on); }
 
 /**
- * Sets or clears the VISIBLE state flag on a node.
- * @param id DOM Node ID.
- * @param on Non-zero to set, 0 to clear.
- */
-export void set_visible(NodeId id, i32 on) { set_state_flag(id, NodeState::VISIBLE, on); }
-
-/**
  * Sets or clears the HIT_TESTABLE state flag on a node.
  * @param id DOM Node ID.
  * @param on Non-zero to set, 0 to clear.
@@ -1208,58 +1137,6 @@ export void set_checked(NodeId id, i32 on) { set_state_flag(id, NodeState::CHECK
 export bool is_checked(NodeId id) { return get_state_flag(id, NodeState::CHECKED); }
 
 /**
- * Checks if a node has the VISIBLE state flag set.
- * @param id DOM Node ID.
- * @return True if visible, false otherwise.
- */
-export bool is_visible(NodeId id) { return get_state_flag(id, NodeState::VISIBLE); }
-
-/**
- * Checks if a node has the ENABLED state flag set.
- * @param id DOM Node ID.
- * @return True if enabled, false otherwise.
- */
-export bool is_enabled(NodeId id) { return get_state_flag(id, NodeState::ENABLED); }
-
-/**
- * Checks if a node has the FOCUSED state flag set.
- * @param id DOM Node ID.
- * @return True if focused, false otherwise.
- */
-export bool is_focused(NodeId id) { return get_state_flag(id, NodeState::FOCUSED); }
-
-/**
- * Checks if a node has the HIT_TESTABLE state flag set.
- * @param id DOM Node ID.
- * @return True if hit-testable, false otherwise.
- */
-export bool is_hit_testable(NodeId id) { return get_state_flag(id, NodeState::HIT_TESTABLE); }
-
-/**
- * Checks if a node has the HOVERED state flag set.
- * @param id DOM Node ID.
- * @return True if hovered, false otherwise.
- */
-export bool is_hovered(NodeId id) { return get_state_flag(id, NodeState::HOVERED); }
-
-/**
- * Checks if a node has the PRESSED state flag set.
- * @param id DOM Node ID.
- * @return True if pressed, false otherwise.
- */
-export bool is_pressed(NodeId id) { return get_state_flag(id, NodeState::PRESSED); }
-
-/**
- * Returns raw state bitmask of a node.
- * @param id DOM Node ID.
- * @return Ok(state flags), or Err for an invalid ID.
- */
-export Result<NodeState, UiError> state_of(NodeId id) {
-    borrow NodeRow n = require_row(id)?;
-    return Ok(n.state);
-}
-
-/**
  * Stores a click handler function pointer on a node and marks it hit-testable.
  * @param id DOM Node ID.
  * @param handler Function pointer to click callback.
@@ -1279,16 +1156,6 @@ export Result<Option<fn(i32 owner, NodeId id, i32 arg) -> void>, UiError> get_on
     borrow NodeRow n = require_row(id)?;
     if (n.on_click == 0) { return Ok(None); }
     return Ok(Some(n.on_click));
-}
-
-/**
- * Stores a keyboard event handler function pointer on a node.
- * @param id DOM Node ID.
- * @param handler Function pointer to key event handler.
- */
-export void set_on_key(NodeId id, fn(i32 owner, NodeId id, i32 arg) -> i32 handler) {
-    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
-    n.on_key = handler;
 }
 
 /**
@@ -1475,32 +1342,6 @@ export void damage_taskbar() {
 }
 
 /**
- * Returns the node ID of the first child of a node.
- * @param id DOM Node ID.
- * @return Ok(Some(child)), Ok(None) if there are no children, or Err for an invalid ID.
- */
-export Result<Option<NodeId>, UiError> first_child(NodeId id) {
-    borrow NodeRow n = require_row(id)?;
-    return case dom_model.node_from_raw((i32)id).children_first() of {
-        Some(child) -> Ok(Some(NodeId(child.raw())));
-        None -> Ok(None);
-    };
-}
-
-/**
- * Returns the node ID of the next sibling of a node.
- * @param id DOM Node ID.
- * @return Ok(Some(sibling)), Ok(None) if this is the last sibling, or Err for an invalid ID.
- */
-export Result<Option<NodeId>, UiError> next_sibling(NodeId id) {
-    borrow NodeRow n = require_row(id)?;
-    return case dom_model.node_from_raw((i32)id).children_next() of {
-        Some(sibling) -> Ok(Some(NodeId(sibling.raw())));
-        None -> Ok(None);
-    };
-}
-
-/**
  * The children of a node, first to last: `for (NodeId child in dom.children(id))`.
  * Each child's next sibling is read when the child is handed out, before the
  * loop body runs, so the body may move or unlink that child but not the one
@@ -1679,8 +1520,3 @@ export bool clips_children(borrow NodeRow n) {
     return false;
 }
 
-/** Checks whether the node with the given ID clips its children. */
-export bool clips_children_id(NodeId id) {
-    borrow NodeRow node = case find_row(id) of { Some(row) -> row; None -> ({ return false; }); };
-    return clips_children(node);
-}

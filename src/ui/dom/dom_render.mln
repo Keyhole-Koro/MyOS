@@ -827,10 +827,3 @@ export void render_scene() {
     dom.clear_damage();
 }
 
-/**
- * Renders the current desktop scene and presents the backbuffer to the physical display.
- */
-export void render_desktop() {
-    render_scene();
-    graphics.present();
-}

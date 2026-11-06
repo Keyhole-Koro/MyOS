@@ -595,3 +595,4 @@ checked/hitTestableを含める。host側は`MyOS` / strict `Locator` / `expect`
 - `sel`（List の選択行、Menu の hover 行）と `color` は `Option<i32>`。`create_node` が None を
   入れる。ゼロのバイトは `Some(0)` と読めるので、`Option` のグローバルは `dom.init()` が入れる。
 - ハンドラの ABI は `void handler(i32 owner, NodeId id, i32 arg)`。
+- `on_key` と `set_on_key` は無くした。キーは `set_key_filter` のフィルタと widget の既定動作だけが受ける。
