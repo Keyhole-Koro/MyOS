@@ -56,7 +56,7 @@ export Result<NodeId, UiError> create(Request *m) {
         return Ok(child);
     }
     if (op == UiOp::CREATE_TIMER) {
-        return dom_widgets.create_timer(m->a0, 0); // ticks become TIMER events (owner != 0)
+        return dom_widgets.create_timer(m->a0, 0); // ticks become TIMER events (the node has an owner)
     }
     // The DOM keeps its own copy of every string it is given.
     str s0 = str.from_c(m->s0);

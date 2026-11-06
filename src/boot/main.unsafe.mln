@@ -15,6 +15,7 @@ import shell from "@os/shell/serial.mln";
 import automation_ui from "@os/meta/automation_ui.mln";
 import compositor from "@os/ui/compositor.mln";
 import { NodeId } from "@contracts/ui/widget.contract.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
 import console from "@os/proc/console.mln";
 import mmu from "@kernel/mm/mmu.mln";
 import { MmuError } from "@contracts/process/loader.contract.mln";
@@ -84,7 +85,7 @@ void enable_kernel_paging() {
  * @param id Timer node ID supplied by the DOM timer dispatcher (unused).
  * @param arg Timer callback argument (unused).
  */
-void on_clock(i32 owner, NodeId id, i32 arg) {
+void on_clock(Option<Pid> owner, NodeId id, i32 arg) {
     dom_render.refresh_taskbar();
 }
 

@@ -16,6 +16,7 @@ import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import user_memory from "@os/syscall/user_memory.mln";
 import { UserAddress } from "@std/core/address.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
 import request_channel from "channel.mln";
 import app_events from "events.mln";
 import { Request, RequestDomain, TransportSignal } from "@contracts/myapp/message.contract.mln";
@@ -70,9 +71,10 @@ GatewaySlot gateway_slots[16];
  * @param pid Process ID (1..16).
  * @return Slot index (0..15), or None for an invalid process ID.
  */
-Option<i32> slot(i32 pid) {
-    if (pid <= 0 || pid > PROCS) { return None; }
-    return Some(pid - 1);
+Option<i32> slot(Pid pid) {
+    i32 number = (i32)pid;
+    if (number <= 0 || number > PROCS) { return None; }
+    return Some(number - 1);
 }
 
 /** Stops the kernel if a typed request result outgrows its staging buffer. */
@@ -179,7 +181,7 @@ void stage_request_outputs(i32 slot_index, Request *request) {
  * @param pid Process ID.
  * @return `true` when the PID has a gateway slot; `false` when it is invalid.
  */
-bool ready(i32 pid) {
+bool ready(Pid pid) {
     i32 i = case slot(pid) of {
         Some(v) -> v;
         None -> ({ return false; });
@@ -218,7 +220,7 @@ bool ready(i32 pid) {
  *         A full channel is transient and may be retried. The PID comes from
  *         the current-process syscall context and must be valid.
  */
-export bool request(i32 pid, UserAddress user_request) {
+export bool request(Pid pid, UserAddress user_request) {
     if (!ready(pid)) { debug.panic("request_gateway: invalid caller PID"); }
     i32 i = case slot(pid) of {
         Some(v) -> v;
@@ -226,7 +228,7 @@ export bool request(i32 pid, UserAddress user_request) {
     };
     Request request;
     read_user_request(user_request, &request);
-    request.owner = pid;
+    request.owner = (i32)pid;
     copy_request_strings(i, &request);
     stage_request_outputs(i, &request);
     if (!request_channel.submit(&request, gateway_slots[i].reply_ch)) {
@@ -247,7 +249,7 @@ export bool request(i32 pid, UserAddress user_request) {
  * @param user_out Destination virtual address in user space for the return scalar.
  * @return True if a reply was received.
  */
-export bool reply(i32 pid, UserAddress user_out) {
+export bool reply(Pid pid, UserAddress user_out) {
     i32 i = case slot(pid) of {
         Some(v) -> v;
         None -> ({ debug.panic("request_gateway: invalid reply PID"); return false; });
@@ -284,7 +286,7 @@ export bool reply(i32 pid, UserAddress user_out) {
  * @param user_event Pointer to an Event with its own inline text storage.
  * @return True if an event was dequeued.
  */
-export bool poll(i32 pid, UserAddress user_event) {
+export bool poll(Pid pid, UserAddress user_event) {
     if (!ready(pid)) { debug.panic("request_gateway: invalid poll PID"); }
     i32 i = case slot(pid) of {
         Some(v) -> v;
@@ -314,7 +316,7 @@ export bool poll(i32 pid, UserAddress user_event) {
  *
  * @param pid Process ID of terminated process.
  */
-export void process_gone(i32 pid) {
+export void process_gone(Pid pid) {
     i32 i = case slot(pid) of { Some(v) -> v; None -> ({ return; }); };
     i32 w[24];
     if (gateway_slots[i].reply_ch != ChannelId(0)) { while (ipc.recv(gateway_slots[i].reply_ch, &w[0])) { } }

@@ -2,7 +2,7 @@ package app;
 
 import process from "@std/hosted/process.mln";
 import thread from "@std/hosted/thread.mln";
-import { ProcessExitStatus } from "@contracts/process/control.contract.mln";
+import { Pid, ProcessExitStatus } from "@contracts/process/control.contract.mln";
 import { Result } from "@std/core/result.mln";
 
 // Starts another program and reports how it ended, which exercises the hosted
@@ -13,7 +13,7 @@ import { Result } from "@std/core/result.mln";
  * @return 40 plus the exit code of `hello`, or a failed step's number.
  */
 export i32 main() {
-    i32 pid = case process.spawn("hello") of {
+    Pid pid = case process.spawn("hello") of {
         Ok(child) -> child;
         Err(_) -> ({ return 1; });
     };

@@ -9,6 +9,7 @@ package ui_protocol;
 
 import str from "@std/text/str.mln";
 import { Option } from "@std/core/option.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
 import { Result } from "@std/core/result.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import dom from "dom/dom.mln";
@@ -60,8 +61,8 @@ Result<i32, UiError> staged(Result<str, UiError> view, char *out, i32 cap) {
  * @return Request dispatch status. Typed operation results use Request.result_out.
  */
 export RequestStatus handle(Request *m) {
-    i32 outer = dom.current_owner();
-    dom.set_current_owner(m->owner);
+    Option<Pid> outer = dom.current_owner();
+    dom.set_current_owner(Some(Pid(m->owner)));
     defer dom.set_current_owner(outer);
     return run_request(m);
 }

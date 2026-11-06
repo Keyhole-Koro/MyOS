@@ -13,6 +13,7 @@ import { Result } from "@std/core/result.mln";
 import user_memory from "user_memory.mln";
 import { copy_in_text } from "user_memory.mln";
 import { UserAddress } from "@std/core/address.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
 import request_gateway from "@os/ipc/gateway.mln";
 import fs_syscall from "@os/fs/syscall.mln";
 import process_syscall from "@os/proc/syscall.mln";
@@ -33,7 +34,7 @@ Text<128> g_log_line;
  * @param args Virtual address of argument struct or scalar argument in caller's memory space.
  * @return Ok(service status/result), or Err(UnknownService).
  */
-Result<i32, OsServiceError> handle(i32 pid, i32 service, UserAddress args) {
+Result<i32, OsServiceError> handle(Pid pid, i32 service, UserAddress args) {
     if (service == OsService::REQUEST) {
         if (request_gateway.request(pid, args)) { return Ok(1); }
         return Ok(0);
@@ -58,7 +59,7 @@ Result<i32, OsServiceError> handle(i32 pid, i32 service, UserAddress args) {
         LogArgs request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
         copy_in_text<128>(UserAddress((i32)request.text), request.length, &g_log_line);
-        debug.printf("[pid %d] ", pid);
+        debug.printf("[pid %d] ", (i32)pid);
         debug.println(g_log_line.as_str());
         return Ok(0);
     }

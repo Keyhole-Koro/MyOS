@@ -13,6 +13,7 @@ import { Option } from "@std/core/option.mln";
 import { Iterator } from "@std/core/iter.mln";
 import { Result } from "@std/core/result.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
 import { Drop } from "@std/core/drop.mln";
 
 // Kernel object tree + UI DOM. See docs/DOM_SPEC.md and MYOS-014.
@@ -91,11 +92,11 @@ export enum NodeStyle {
     READONLY = 8, // TextArea: displays text, no editing (console output)
 }
 
-// Handlers all share one ABI, `void handler(i32 owner, NodeId id, i32 arg)`:
-// `owner` is the app instance the node belongs to (see `owner` below), `id`
+// Handlers all share one ABI, `void handler(Option<Pid> owner, NodeId id, i32 arg)`:
+// `owner` is the app process the node belongs to (see `owner` below), `id`
 // the node, `arg` event data (a key handler gets code | mods << 16).
 // The on_* fields hold server-side functions only -- the taskbar, menus,
-// the shell's window-close hook, the clock. A node an app owns (owner != 0)
+// the shell's window-close hook, the clock. A node an app owns (a Some owner)
 // never carries a function pointer: what happens to it is emitted through
 // the UI event port; the IPC event endpoint turns that into a protocol event,
 // and the app's own runtime calls the handler. Server handlers are not called where the event is detected
@@ -144,8 +145,8 @@ Option<NodeId> g_menu_target;   // the window a window-menu acts on (None for th
 // The app instance whose code is running right now (a handler drained from
 // the event queue, or a view() being mounted); create_node stamps it into
 // each new node's `owner`, so dialogs and timers an app makes on the fly are
-// swept with it by remove_owned(). 0 while the system itself runs.
-i32 g_current_owner = 0;
+// swept with it by remove_owned(). None while the system itself runs.
+Option<Pid> g_current_owner;
 
 // Apps the shell has started whose window has not arrived yet. Reported in
 // the automation snapshot ("starting") so a test harness can tell a
@@ -163,16 +164,16 @@ export void note_app_starting(i32 delta) { g_apps_starting = g_apps_starting + d
  */
 export i32 apps_starting() { return g_apps_starting; }
 
-// Installed by the app framework: i32 filter(owner, code, mods) sees every
+// Installed by the app framework: filter(owner, code, mods) sees every
 // key DOWN before the focused widget and returns 1 to claim it (shortcuts).
-bool no_key_filter(i32 owner, i32 code, i32 mods) { return false; }
-fn(i32 owner, i32 code, i32 mods) -> bool g_key_filter = no_key_filter;
+bool no_key_filter(Option<Pid> owner, i32 code, i32 mods) { return false; }
+fn(Option<Pid> owner, i32 code, i32 mods) -> bool g_key_filter = no_key_filter;
 
 // Pending handler calls.
 export const i32 EVENT_MAX = 64;
 struct PendingEvent {
-    fn(i32 owner, NodeId id, i32 arg) -> void handler;
-    i32 owner;
+    fn(Option<Pid> owner, NodeId id, i32 arg) -> void handler;
+    Option<Pid> owner;
     NodeId id;
     i32 arg;
 };
@@ -185,22 +186,19 @@ i32 g_event_tail = 0;
 // fails past that, and past the table's size.
 export const i32 NODES_PER_OWNER = 96;
 struct OwnerNodes {
-    i32 owner;   // 0 = free slot
+    Option<Pid> owner;   // None = free slot
     i32 count;
 };
 OwnerNodes g_owner_nodes[32];
 
-Option<i32> owner_slot(i32 owner, i32 make) {
+Option<i32> owner_slot(Pid owner, i32 make) {
     Option<i32> free = None;
     i32 i = 0;
     while (i < 32) {
-        if (g_owner_nodes[i].owner == owner) { return Some(i); }
-        if (g_owner_nodes[i].owner == 0) {
-            case free of {
-                None -> ({ free = Some(i); });
-                Some(_) -> _;
-            };
-        }
+        case g_owner_nodes[i].owner of {
+            Some(held) -> ({ if (held == owner) { return Some(i); } });
+            None -> ({ if (free.is_none()) { free = Some(i); } });
+        };
         i++;
     }
     if (make == 0) { return None; }
@@ -208,7 +206,7 @@ Option<i32> owner_slot(i32 owner, i32 make) {
         Some(v) -> v;
         None -> ({ return None; });
     };
-    g_owner_nodes[slot] = OwnerNodes { owner: owner, count: 0 };
+    g_owner_nodes[slot] = OwnerNodes { owner: Some(owner), count: 0 };
     return Some(slot);
 }
 
@@ -396,15 +394,18 @@ export NodeId (borrow NewNode self) keep() {
 export Result<NodeId, UiError> create_node(i32 kind, str name) {
     i32 oslot = 0;
     bool has_owner_slot = false;
-    if (g_current_owner != 0) {
-        oslot = case owner_slot(g_current_owner, 1) of {
-            Some(v) -> ({ has_owner_slot = true; v; });
-            None -> ({ return Err(UiError::OwnerTableFull(g_current_owner)); });
-        };
-        if (g_owner_nodes[oslot].count >= NODES_PER_OWNER) {
-            return Err(UiError::OwnerNodeLimit(g_current_owner));
-        }
-    }
+    case g_current_owner of {
+        Some(owner) -> ({
+            oslot = case owner_slot(owner, 1) of {
+                Some(v) -> ({ has_owner_slot = true; v; });
+                None -> ({ return Err(UiError::OwnerTableFull(owner)); });
+            };
+            if (g_owner_nodes[oslot].count >= NODES_PER_OWNER) {
+                return Err(UiError::OwnerNodeLimit(owner));
+            }
+        });
+        None -> _;
+    };
     Node made = case dom_model.new_node() of {
         Some(value) -> value;
         None -> ({ return Err(UiError::NodeIdLimit); });
@@ -428,9 +429,9 @@ export Result<NodeId, UiError> create_node(i32 kind, str name) {
 /**
  * Returns the process that owns a DOM node.
  * @param id DOM node ID.
- * @return Ok(owner), including owner 0 for system-owned nodes, or Err for an invalid ID.
+ * @return Ok(owner), None for system-owned nodes, or Err for an invalid ID.
  */
-export Result<i32, UiError> owner_of(NodeId id) {
+export Result<Option<Pid>, UiError> owner_of(NodeId id) {
     borrow NodeRow n = require_row(id)?;
     return Ok(n.owner);
 }
@@ -438,11 +439,11 @@ export Result<i32, UiError> owner_of(NodeId id) {
 /**
  * Assigns an owner process ID recursively to a node and its descendants.
  * @param id Root DOM node ID of the subtree.
- * @param owner Process ID to assign, or 0 for system ownership.
+ * @param owner Process ID to assign.
  */
-export void set_owner(NodeId id, i32 owner) {
+export void set_owner(NodeId id, Pid owner) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
-    n.owner = owner;
+    n.owner = Some(owner);
     for (NodeId child in children(id)) {
         set_owner(child, owner);
     }
@@ -452,34 +453,37 @@ export void set_owner(NodeId id, i32 owner) {
  * Installs the key-down filter called before the focused widget receives a key.
  * @param handler Callback (owner, key_code, modifiers) returning true to consume the key.
  */
-export void set_key_filter(fn(i32 owner, i32 code, i32 mods) -> bool handler) { g_key_filter = handler; }
+export void set_key_filter(fn(Option<Pid> owner, i32 code, i32 mods) -> bool handler) { g_key_filter = handler; }
 
 /**
  * Returns the currently installed key-filter callback.
  * @return Callback function, which keeps every key until a filter is installed.
  */
-export fn(i32 owner, i32 code, i32 mods) -> bool key_filter() { return g_key_filter; }
+export fn(Option<Pid> owner, i32 code, i32 mods) -> bool key_filter() { return g_key_filter; }
 
 /**
  * Returns the app process ID whose view or event handler is currently running.
- * @return Current app owner, or 0 while system-owned code is running.
+ * @return Current app owner, or None while system-owned code is running.
  */
-export i32 current_owner() { return g_current_owner; }
+export Option<Pid> current_owner() { return g_current_owner; }
 
 /**
  * Sets the owner stamped onto DOM nodes created by subsequent operations.
- * @param owner Process ID to make current, or 0 for system-owned nodes.
+ * @param owner Process ID to make current, or None for system-owned nodes.
  */
-export void set_current_owner(i32 owner) { g_current_owner = owner; }
+export void set_current_owner(Option<Pid> owner) { g_current_owner = owner; }
+
+bool owned_by(borrow NodeRow n, Pid owner) {
+    return case n.owner of { Some(held) -> held == owner; None -> false; };
+}
 
 /**
  * Removes every DOM node owned by an application process, including its windows, dialogs, and timers.
- * @param owner Process ID whose nodes should be removed; zero is ignored.
+ * @param owner Process ID whose nodes should be removed.
  */
-export void remove_owned(i32 owner) {
-    if (owner == 0) { return; }
+export void remove_owned(Pid owner) {
     for (Node each in dom_model.node_all()) {
-        if (each.is_live() && each.row().owner == owner) { remove_node(NodeId(each.raw())); }
+        if (each.is_live() && owned_by(&each.row(), owner)) { remove_node(NodeId(each.raw())); }
     }
 }
 
@@ -489,12 +493,12 @@ export void remove_owned(i32 owner) {
  * Queues a server-side event handler call for later execution.
  * A full event queue drops the event rather than calling the handler inline.
  * @param handler Callback function pointer to enqueue; zero is ignored.
- * @param owner Process ID associated with the queued handler.
+ * @param owner Process associated with the queued handler, or None for the system.
  * @param id DOM node ID associated with the event.
  * @param arg Event-specific integer argument.
  */
-export void push_event(fn(i32 owner, NodeId id, i32 arg) -> void handler,
-                       i32 owner, NodeId id, i32 arg) {
+export void push_event(fn(Option<Pid> owner, NodeId id, i32 arg) -> void handler,
+                       Option<Pid> owner, NodeId id, i32 arg) {
     if (handler == 0) { return; }
     i32 next = g_event_tail + 1;
     if (next >= EVENT_MAX) { next = 0; }
@@ -512,13 +516,16 @@ export void push_event(fn(i32 owner, NodeId id, i32 arg) -> void handler,
  * @return 1 when an app event or callback was delivered/queued, otherwise 0.
  */
 export bool emit(borrow NodeRow n, i32 kind,
-                 fn(i32 owner, NodeId id, i32 arg) -> void handler, i32 arg) {
-    if (n.owner != 0) {
-        ui_event.emit(n.owner, n.id, kind, arg);
-        return true;
-    }
+                 fn(Option<Pid> owner, NodeId id, i32 arg) -> void handler, i32 arg) {
+    case n.owner of {
+        Some(owner) -> ({
+            ui_event.emit(owner, n.id, kind, arg);
+            return true;
+        });
+        None -> _;
+    };
     if (handler == 0) { return false; }
-    push_event(handler, 0, n.id, arg);
+    push_event(handler, None, n.id, arg);
     return true;
 }
 
@@ -531,10 +538,10 @@ export void drain_events() {
         PendingEvent event = g_events[g_event_head];
         g_event_head = g_event_head + 1;
         if (g_event_head >= EVENT_MAX) { g_event_head = 0; }
-        i32 outer = g_current_owner;
+        Option<Pid> outer = g_current_owner;
         g_current_owner = event.owner;
         defer set_current_owner(outer);
-        fn(i32 owner, NodeId id, i32 arg) -> void handler = event.handler;
+        fn(Option<Pid> owner, NodeId id, i32 arg) -> void handler = event.handler;
         handler(event.owner, event.id, event.arg);
     }
 }
@@ -1139,7 +1146,7 @@ export bool is_checked(NodeId id) { return get_state_flag(id, NodeState::CHECKED
  * @param id DOM Node ID.
  * @param handler Function pointer to click callback.
  */
-export void set_on_click(NodeId id, fn(i32 owner, NodeId id, i32 arg) -> void handler) {
+export void set_on_click(NodeId id, fn(Option<Pid> owner, NodeId id, i32 arg) -> void handler) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     n.on_click = handler;
     set_hit_testable(id, handler != 0);
@@ -1150,7 +1157,7 @@ export void set_on_click(NodeId id, fn(i32 owner, NodeId id, i32 arg) -> void ha
  * @param id DOM Node ID.
  * @param handler Function pointer to change event handler.
  */
-export void set_on_change(NodeId id, fn(i32 owner, NodeId id, i32 arg) -> void handler) {
+export void set_on_change(NodeId id, fn(Option<Pid> owner, NodeId id, i32 arg) -> void handler) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     n.on_change = handler;
 }
@@ -1160,7 +1167,7 @@ export void set_on_change(NodeId id, fn(i32 owner, NodeId id, i32 arg) -> void h
  * @param id DOM Node ID.
  * @param handler Function pointer to close event handler.
  */
-export void set_on_close(NodeId id, fn(i32 owner, NodeId id, i32 arg) -> void handler) {
+export void set_on_close(NodeId id, fn(Option<Pid> owner, NodeId id, i32 arg) -> void handler) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     n.on_close = handler;
 }
@@ -1170,7 +1177,7 @@ export void set_on_close(NodeId id, fn(i32 owner, NodeId id, i32 arg) -> void ha
  * @param id DOM Node ID.
  * @return Ok(Some(handler)) when registered, Ok(None) when absent, or Err for an invalid ID.
  */
-export Result<Option<fn(i32 owner, NodeId id, i32 arg) -> void>, UiError> on_close_of(NodeId id) {
+export Result<Option<fn(Option<Pid> owner, NodeId id, i32 arg) -> void>, UiError> on_close_of(NodeId id) {
     borrow NodeRow n = require_row(id)?;
     if (n.on_close == 0) { return Ok(None); }
     return Ok(Some(n.on_close));
@@ -1283,15 +1290,18 @@ export void free_subtree(NodeId id) {
     n.text.free();
     n.test_id.free();
     if (holds(g_menu_id, id)) { g_menu_id = None; }
-    if (n.owner != 0) {
-        case owner_slot(n.owner, 0) of {
-            Some(oslot) -> ({
-                g_owner_nodes[oslot].count = g_owner_nodes[oslot].count - 1;
-                if (g_owner_nodes[oslot].count <= 0) { g_owner_nodes[oslot].owner = 0; }
-            });
-            None -> _;
-        };
-    }
+    case n.owner of {
+        Some(owner) -> ({
+            case owner_slot(owner, 0) of {
+                Some(oslot) -> ({
+                    g_owner_nodes[oslot].count = g_owner_nodes[oslot].count - 1;
+                    if (g_owner_nodes[oslot].count <= 0) { g_owner_nodes[oslot].owner = None; }
+                });
+                None -> _;
+            };
+        });
+        None -> _;
+    };
     dom_model.node_from_raw((i32)id).delete();
 }
 

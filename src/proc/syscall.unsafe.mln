@@ -16,9 +16,8 @@ import user_memory from "@os/syscall/user_memory.mln";
 import { copy_in_text } from "@os/syscall/user_memory.mln";
 import { UserAddress } from "@std/core/address.mln";
 import { Result } from "@std/core/result.mln";
-import { result_take_ok } from "@std/core/result_take.mln";
 import { SpawnError } from "@contracts/process/spawn.contract.mln";
-import { ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
+import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
 import { Text } from "@std/text/text.mln";
 
 Text<64> g_path;
@@ -33,37 +32,39 @@ Text<128> g_line;
  */
 export Result<_, OsServiceError> handle(i32 service, UserAddress args) {
     if (service == OsService::PROC_SPAWN) {
-        ProcSpawnArgs<Result<i32, SpawnError>> request;
+        ProcSpawnArgs<Result<Pid, SpawnError>> request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
         copy_in_text<64>(UserAddress((i32)request.path), request.path_length, &g_path);
-        Result<i32, SpawnError> result = console.spawn_file(g_path.as_str());
-        i32 pid = 0;
-        if (request.stdout_node != 0 && result_take_ok<i32, SpawnError>(&result, &pid)) {
-            console.bind(pid, request.stdout_node);
+        Result<Pid, SpawnError> result = console.spawn_file(g_path.as_str());
+        if (request.stdout_node != 0) {
+            case result of {
+                Ok(pid) -> ({ console.bind(pid, request.stdout_node); });
+                Err(_) -> _;
+            };
         }
         user_memory.copy_out(
             UserAddress((i32)request.result_out),
             (char*)(&result),
-            sizeof(Result<i32, SpawnError>)
+            sizeof(Result<Pid, SpawnError>)
         );
         return Ok(_);
     }
     if (service == OsService::PROC_BIND) {
         ProcBindArgs request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        console.bind(request.pid, request.output_node);
+        console.bind(Pid(request.pid), request.output_node);
         return Ok(_);
     }
     if (service == OsService::PROC_UNBIND) {
         ProcUnbindArgs request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        console.unbind(request.pid);
+        console.unbind(Pid(request.pid));
         return Ok(_);
     }
     if (service == OsService::PROC_EXITED) {
         ProcExitedArgs<Result<bool, ProcessControlError>> request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        Result<bool, ProcessControlError> result = console.has_exited(request.pid);
+        Result<bool, ProcessControlError> result = console.has_exited(Pid(request.pid));
         user_memory.copy_out(
             UserAddress((i32)request.result_out),
             (char*)(&result),
@@ -74,7 +75,7 @@ export Result<_, OsServiceError> handle(i32 service, UserAddress args) {
     if (service == OsService::PROC_REAP) {
         ProcReapArgs<Result<ProcessExitStatus, ProcessControlError>> request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        Result<ProcessExitStatus, ProcessControlError> result = console.reap(request.pid);
+        Result<ProcessExitStatus, ProcessControlError> result = console.reap(Pid(request.pid));
         user_memory.copy_out(
             UserAddress((i32)request.result_out),
             (char*)(&result),
@@ -86,7 +87,7 @@ export Result<_, OsServiceError> handle(i32 service, UserAddress args) {
         ProcFeedArgs request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
         copy_in_text<128>(UserAddress((i32)request.line), request.line_length, &g_line);
-        console.feed_line(request.pid, g_line.as_str());
+        console.feed_line(Pid(request.pid), g_line.as_str());
         return Ok(_);
     }
     return Err(OsServiceError::UnknownService(service));

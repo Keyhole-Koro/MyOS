@@ -17,7 +17,7 @@ import { result_take_ok } from "@std/core/result_take.mln";
 import { AllocationError } from "@std/memory/allocator.mln";
 import { Option } from "@std/core/option.mln";
 import { SpawnError, SpawnFsOperation, SpawnFilesystemError, SpawnReadMismatch } from "@contracts/process/spawn.contract.mln";
-import { ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
+import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
 import { FsError, SeekWhence } from "@contracts/io/fs.contract.mln";
 import fs from "@os/fs/fs.mln";
 import { FileHandle } from "@os/fs/fs.mln";
@@ -49,7 +49,7 @@ i32 STDIN_CAP = 256;
  * @param output_id DOM node ID of the TextArea for stdout.
  * @return `true` when bound, or `false` if the console table is full.
  */
-export bool bind(i32 pid, i32 output_id) {
+export bool bind(Pid pid, i32 output_id) {
     case consoles.console_by_pid(pid) of {
         Some(bound) -> ({ bound.row().output = output_id; return true; });
         None -> _;
@@ -67,7 +67,7 @@ export bool bind(i32 pid, i32 output_id) {
  * Releases a process's console binding.
  * @param pid Process ID to detach.
  */
-export void unbind(i32 pid) {
+export void unbind(Pid pid) {
     case consoles.console_by_pid(pid) of {
         Some(bound) -> ({ bound.delete(); });
         None -> _;
@@ -79,7 +79,7 @@ export void unbind(i32 pid) {
  * @param pid Process ID.
  * @return `Some(node_id)` when attached, or `None` when unattached.
  */
-export Option<i32> output_of(i32 pid) {
+export Option<i32> output_of(Pid pid) {
     Option<i32> output = None;
     case consoles.console_by_pid(pid) of {
         Some(bound) -> ({ output = Some(bound.row().output); });
@@ -93,7 +93,7 @@ export Option<i32> output_of(i32 pid) {
  * @param pid Target process ID.
  * @param line Text to feed as input; a newline follows it.
  */
-export void feed_line(i32 pid, str line) {
+export void feed_line(Pid pid, str line) {
     Console bound = case consoles.console_by_pid(pid) of {
         Some(v) -> v;
         None -> ({ return; });
@@ -121,7 +121,7 @@ export void feed_line(i32 pid, str line) {
  * @param count Number of bytes to write.
  * @return Number of bytes written.
  */
-i32 on_write(i32 pid, UserAddress buf, i32 count) {
+i32 on_write(Pid pid, UserAddress buf, i32 count) {
     Option<i32> output = output_of(pid);
     i32 out = 0;
     bool has_output = false;
@@ -150,7 +150,7 @@ i32 on_write(i32 pid, UserAddress buf, i32 count) {
  * @param count Maximum number of bytes to read.
  * @return Number of bytes read.
  */
-i32 on_read(i32 pid, UserAddress buf, i32 count) {
+i32 on_read(Pid pid, UserAddress buf, i32 count) {
     Console bound = case consoles.console_by_pid(pid) of {
         Some(v) -> v;
         None -> ({ return 0; });
@@ -214,7 +214,7 @@ SpawnError filesystem_failure(SpawnFsOperation operation, FsError cause) {
  * @param path Path searched as supplied, under bin/, and under apps/.
  * @return Ok(pid) when the process starts, or Err(SpawnError) with the launch failure.
  */
-export Result<i32, SpawnError> spawn_file(str path) {
+export Result<Pid, SpawnError> spawn_file(str path) {
     // The file is closed and the image buffer freed on every path out.
     FileHandle file = FileHandle { fd: open_executable(path)? };
     i32 size = case fs.seek(file.fd, 0, SeekWhence::End) of {
@@ -243,7 +243,7 @@ export Result<i32, SpawnError> spawn_file(str path) {
         }));
     }
     // A loader failure becomes SpawnError::Loader through the contract's From.
-    i32 pid = loader.spawn_from_buffer(image.addr, size)?;
+    Pid pid = loader.spawn_from_buffer(image.addr, size)?;
     return Ok(pid);
 }
 
@@ -252,7 +252,7 @@ export Result<i32, SpawnError> spawn_file(str path) {
  * @param user_path Address of a null-terminated path string in user space.
  * @return The new process ID.
  */
-Result<i32, SpawnError> on_spawn(UserAddress user_path) {
+Result<Pid, SpawnError> on_spawn(UserAddress user_path) {
     Text<32> path = Text<32> {};
     path.clear();
     i32 k = 0;
@@ -262,19 +262,21 @@ Result<i32, SpawnError> on_spawn(UserAddress user_path) {
         path.push((u8)c);
         k++;
     }
-    Result<i32, SpawnError> result = spawn_file(path.as_str());
-    i32 pid = 0;
-    if (result_take_ok<i32, SpawnError>(&result, &pid)) {
-        i32 parent = case thread.current_pid() of {
-            Some(value) -> value;
-            None -> ({ debug.panic("SYS_SPAWN hook called without a current process"); });
-        };
-        Option<i32> output = output_of(parent);
-        case output of {
-            Some(node) -> ({ bind(pid, node); });
-            None -> _;
-        };
-    }
+    Result<Pid, SpawnError> result = spawn_file(path.as_str());
+    case result of {
+        Ok(pid) -> ({
+            Pid parent = case thread.current_pid() of {
+                Some(value) -> value;
+                None -> ({ debug.panic("SYS_SPAWN hook called without a current process"); });
+            };
+            Option<i32> output = output_of(parent);
+            case output of {
+                Some(node) -> ({ bind(pid, node); });
+                None -> _;
+            };
+        });
+        Err(_) -> _;
+    };
     return result;
 }
 
@@ -283,7 +285,7 @@ Result<i32, SpawnError> on_spawn(UserAddress user_path) {
  * @param pid Process ID.
  * @return Ok(true) if exited, Ok(false) if live, or Err(InvalidPid).
  */
-export Result<bool, ProcessControlError> has_exited(i32 pid) {
+export Result<bool, ProcessControlError> has_exited(Pid pid) {
     Option<ProcessState> state = process.get_state(pid);
     Result<bool, ProcessControlError> result;
     case state of {
@@ -301,7 +303,7 @@ export Result<bool, ProcessControlError> has_exited(i32 pid) {
  * @param pid Process ID.
  * @return Ok(exit_status), Err(NotExited), or Err(InvalidPid).
  */
-export Result<ProcessExitStatus, ProcessControlError> reap(i32 pid) {
+export Result<ProcessExitStatus, ProcessControlError> reap(Pid pid) {
     Option<ProcessState> state = process.get_state(pid);
     Result<ProcessExitStatus, ProcessControlError> result;
     case state of {

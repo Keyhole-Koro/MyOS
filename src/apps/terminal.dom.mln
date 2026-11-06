@@ -14,7 +14,7 @@ import { Result } from "@std/core/result.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
 import { SpawnError } from "@contracts/process/spawn.contract.mln";
 import { LoaderError } from "@contracts/process/loader.contract.mln";
-import { ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
+import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
 import { Option } from "@std/core/option.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 
@@ -38,7 +38,7 @@ i32 opened_count = 0; // desktop placement sequence shared by Terminal windows
 struct Terminal {
     NodeId out;      // output TextArea
     NodeId input;    // command TextInput
-    Option<i32> pid; // attached process
+    Option<Pid> pid; // attached process
     Text<96> line_buf; // scratch for one formatted line
 };
 
@@ -166,14 +166,14 @@ void (borrow Terminal t) cmd_run(str path) {
         t.say_line("a process is still running here");
         return;
     }
-    i32 pid = case terminal.spawn_bound(path, t.out) of {
+    Pid pid = case terminal.spawn_bound(path, t.out) of {
         Ok(value) -> value;
         Err(e) -> ({ t.say_error("run", e.describe()); return; });
     };
     t.pid = Some(pid);
     t.line_buf.clear();
     t.line_buf.append("[pid ");
-    Text<12> pid_text = pid.to_string();
+    Text<12> pid_text = ((i32)pid).to_string();
     t.line_buf.append(pid_text.as_str());
     t.line_buf.append("] ");
     t.line_buf.append(path);
@@ -242,7 +242,7 @@ void (borrow Terminal t) submit(NodeId id) {
 @timer(100)
 /** Checks the attached child process and reports/reaps it after exit. */
 void (borrow Terminal t) poll() {
-    i32 pid = case t.pid of { Some(value) -> value; None -> ({ return; }); };
+    Pid pid = case t.pid of { Some(value) -> value; None -> ({ return; }); };
     bool exited = case process.has_exited(pid) of {
         Ok(value) -> value;
         Err(ProcessControlError::InvalidPid(_)) -> true;
@@ -258,7 +258,7 @@ void (borrow Terminal t) poll() {
     t.pid = None;
     t.line_buf.clear();
     t.line_buf.append("[pid ");
-    Text<12> pid_text = pid.to_string();
+    Text<12> pid_text = ((i32)pid).to_string();
     t.line_buf.append(pid_text.as_str());
     if (got_status) {
         case exit_status of {

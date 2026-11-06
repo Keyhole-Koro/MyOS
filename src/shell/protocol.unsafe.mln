@@ -13,6 +13,7 @@ import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { Request, RequestStatus } from "@contracts/myapp/message.contract.mln";
 import { NodeId } from "@contracts/ui/widget.contract.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
 
 /**
  * Dispatches an application host request to the shell subsystem.
@@ -33,10 +34,10 @@ export RequestStatus handle(Request *m) {
     if (m->op == AppOp::CLAIM_KEY) {
         if (m->result_out == 0) { return RequestStatus::MISSING_RESULT; }
         Result<i32, KeyClaimError> *out = (Result<i32, KeyClaimError>*)m->result_out;
-        *out = app.claim_key(m->owner, str.from_c(m->s0));
+        *out = app.claim_key(Pid(m->owner), str.from_c(m->s0));
         return RequestStatus::OK;
     }
-    if (m->op == AppOp::MAIN_WINDOW) { app.window_ready(m->owner, NodeId(m->a0)); return RequestStatus::OK; }
-    if (m->op == AppOp::EXIT)        { app.instance_exited(m->owner); return RequestStatus::OK; }
+    if (m->op == AppOp::MAIN_WINDOW) { app.window_ready(Pid(m->owner), NodeId(m->a0)); return RequestStatus::OK; }
+    if (m->op == AppOp::EXIT)        { app.instance_exited(Pid(m->owner)); return RequestStatus::OK; }
     return RequestStatus::INVALID_OPERATION;
 }

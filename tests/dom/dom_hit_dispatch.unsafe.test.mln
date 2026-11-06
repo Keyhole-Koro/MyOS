@@ -13,6 +13,7 @@ import allocator from "@std/memory/allocator.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
 
 // Pins the interaction contract the compositor relies on: it holds no node ids
 // and starts every interaction from a hit test, so what must hold is that
@@ -38,23 +39,23 @@ i32 required_node_value(Option<i32> value) {
 }
 i32 g_changes = 0;
 
-void on_a(i32 owner, NodeId id, i32 arg) {
+void on_a(Option<Pid> owner, NodeId id, i32 arg) {
     g_hits_a = g_hits_a + 1;
 }
 
-void on_b(i32 owner, NodeId id, i32 arg) {
+void on_b(Option<Pid> owner, NodeId id, i32 arg) {
     g_hits_b = g_hits_b + 1;
 }
 
-void on_c(i32 owner, NodeId id, i32 arg) {
+void on_c(Option<Pid> owner, NodeId id, i32 arg) {
     g_hits_c = g_hits_c + 1;
 }
 
-void on_d(i32 owner, NodeId id, i32 arg) {
+void on_d(Option<Pid> owner, NodeId id, i32 arg) {
     g_hits_d = g_hits_d + 1;
 }
 
-void on_change(i32 owner, NodeId id, i32 arg) {
+void on_change(Option<Pid> owner, NodeId id, i32 arg) {
     g_changes = g_changes + 1;
 }
 

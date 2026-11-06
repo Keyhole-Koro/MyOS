@@ -16,7 +16,7 @@ import { Annotations, AnnotationError } from "@std/meta/annotations.mln";
 import fs from "@os/fs/fs.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
 import { SpawnError } from "@contracts/process/spawn.contract.mln";
-import { ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
+import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
 import { AppError, KeyClaimError } from "@contracts/myapp/lifecycle.contract.mln";
 import console from "@os/proc/console.mln";
 import mbin from "@std/format/mbin.mln";
@@ -79,25 +79,25 @@ i32 registry_count = 0;
 
 // Outbound ports installed by boundary endpoints. The shell owns lifecycle
 // policy but does not depend on the transport that delivers it.
-void no_event_sink(i32 owner, i32 id, i32 kind, i32 arg, i32 token, str text) { }
-void no_process_gone_sink(i32 pid) { }
+void no_event_sink(Pid owner, i32 id, i32 kind, i32 arg, i32 token, str text) { }
+void no_process_gone_sink(Pid pid) { }
 
-fn(i32 owner, i32 id, i32 kind, i32 arg, i32 token, str text) -> void event_sink = no_event_sink;
-fn(i32 pid) -> void process_gone_sink = no_process_gone_sink;
+fn(Pid owner, i32 id, i32 kind, i32 arg, i32 token, str text) -> void event_sink = no_event_sink;
+fn(Pid pid) -> void process_gone_sink = no_process_gone_sink;
 
 /**
  * Installs the callback used to deliver application lifecycle and shortcut events.
  * @param sink Callback with signature (owner, node_id, kind, arg, token, text), or 0 to disable.
  */
 export void set_event_sink(
-    fn(i32 owner, i32 id, i32 kind, i32 arg, i32 token, str text) -> void sink
+    fn(Pid owner, i32 id, i32 kind, i32 arg, i32 token, str text) -> void sink
 ) { event_sink = sink; }
 
 /**
  * Installs the callback invoked after an exited child process is reaped.
  * @param sink Callback accepting the process ID, or 0 when no callback is needed.
  */
-export void set_process_gone_sink(fn(i32 pid) -> void sink) { process_gone_sink = sink; }
+export void set_process_gone_sink(fn(Pid pid) -> void sink) { process_gone_sink = sink; }
 
 /**
  * Forwards an application event through the configured event endpoint.
@@ -108,7 +108,7 @@ export void set_process_gone_sink(fn(i32 pid) -> void sink) { process_gone_sink 
  * @param token Correlation token or event-specific secondary value.
  * @param text Text payload, such as an opened path, or "".
  */
-void push_app_event(i32 owner, NodeId id, i32 kind, i32 arg, i32 token, str text) {
+void push_app_event(Pid owner, NodeId id, i32 kind, i32 arg, i32 token, str text) {
     event_sink(owner, (i32)id, kind, arg, token, text);
 }
 
@@ -236,8 +236,8 @@ Result<Instance, AppError> mount(i32 a) {
         });
     };
     AppRecord *record = &registry[a];
-    Result<i32, SpawnError> spawned = console.spawn_file(record->path.as_str());
-    i32 pid = case spawned of {
+    Result<Pid, SpawnError> spawned = console.spawn_file(record->path.as_str());
+    Pid pid = case spawned of {
         Ok(value) -> value;
         Err(_) -> ({
             debug.print("app: cannot start ");
@@ -264,7 +264,7 @@ Result<Instance, AppError> mount(i32 a) {
  * @param owner Process ID of the application instance.
  * @param win DOM node ID of the window created by that process.
  */
-export void window_ready(i32 owner, NodeId win) {
+export void window_ready(Pid owner, NodeId win) {
     Instance instance = case instances.instance_by_pid(owner) of {
         Some(value) -> value;
         None -> ({ return; });
@@ -295,14 +295,18 @@ export void window_ready(i32 owner, NodeId win) {
  * @param win DOM node ID of the closed window.
  * @param arg Event argument supplied by the DOM callback (unused).
  */
-void window_closed(i32 owner, NodeId win, i32 arg) {
-    case instances.instance_by_pid(owner) of {
-        Some(_) -> ({ push_app_event(owner, win, ShellEventKind::CLOSE, 0, 0, ""); });
-        None -> ({
-            dom.remove_node(win);
-            dom_widgets.activate_topmost();
+void window_closed(Option<Pid> owner, NodeId win, i32 arg) {
+    case owner of {
+        Some(pid) -> ({
+            case instances.instance_by_pid(pid) of {
+                Some(_) -> ({ push_app_event(pid, win, ShellEventKind::CLOSE, 0, 0, ""); return; });
+                None -> _;
+            };
         });
+        None -> _;
     };
+    dom.remove_node(win);
+    dom_widgets.activate_topmost();
 }
 
 // The instance is done (EXIT): remove everything it owns -- its window,
@@ -313,7 +317,7 @@ void window_closed(i32 owner, NodeId win, i32 arg) {
  * The process itself is collected later by the periodic reaper.
  * @param owner Process ID of the exiting application.
  */
-export void instance_exited(i32 owner) {
+export void instance_exited(Pid owner) {
     Instance instance = case instances.instance_by_pid(owner) of {
         Some(value) -> value;
         None -> ({ return; });
@@ -333,9 +337,9 @@ export void instance_exited(i32 owner) {
  * @param id Timer node ID (unused).
  * @param arg Timer callback argument (unused).
  */
-void reap_exited(i32 owner, NodeId id, i32 arg) {
+void reap_exited(Option<Pid> owner, NodeId id, i32 arg) {
     for (Instance instance in instances.instance_all()) {
-        i32 pid = instance.pid();
+        Pid pid = instance.pid();
         Result<bool, ProcessControlError> status = console.has_exited(pid);
         bool exited = case status of {
             Ok(value) -> value;
@@ -600,15 +604,19 @@ bool key_spec_matches(str spec, i32 code, i32 mods) {
 i32 CLAIMS_MAX = 64;
 /**
  * One process-owned keyboard shortcut registered with the shell.
- * @property owner Process ID that registered this shortcut; 0 marks an unused slot.
+ * @property owner Process ID that registered this shortcut; None marks an unused slot.
  * @property spec Bounded copy of the textual key combination, such as "Ctrl+Shift+F12".
  */
 struct KeyClaim {
-    i32 owner;              // 0 = free
+    Option<Pid> owner;
     Text<16> spec; // copied because the request's string is transient
 };
 KeyClaim claims[64];
 i32 claim_count = 0;
+
+bool claimed_by(KeyClaim claim, Pid owner) {
+    return case claim.owner of { Some(held) -> held == owner; None -> false; };
+}
 
 /**
  * Registers a process keyboard shortcut and returns its event correlation token.
@@ -617,11 +625,12 @@ i32 claim_count = 0;
  * @return Ok(one-based shortcut token), or Err when the specification is too long
  *         or the fixed claim table is full.
  */
-export Result<i32, KeyClaimError> claim_key(i32 owner, str spec) {
+export Result<i32, KeyClaimError> claim_key(Pid owner, str spec) {
     if (spec.length > 15) { return Err(KeyClaimError::KeySpecTooLong(spec.length)); }
     i32 i = 0;
     while (i < claim_count) {
-        if (claims[i].owner == 0) { break; }
+        bool free = case claims[i].owner of { Some(_) -> false; None -> true; };
+        if (free) { break; }
         i++;
     }
     if (i == claim_count) {
@@ -629,16 +638,16 @@ export Result<i32, KeyClaimError> claim_key(i32 owner, str spec) {
         claim_count++;
     }
     KeyClaim *claim = &claims[i];
-    claim->owner = owner;
+    claim->owner = Some(owner);
     claim->spec.clear();
     claim->spec.append(spec);
     return Ok(i + 1);
 }
 
-void release_claims(i32 owner) {
+void release_claims(Pid owner) {
     i32 i = 0;
     while (i < claim_count) {
-        if (claims[i].owner == owner) { claims[i].owner = 0; }
+        if (claimed_by(claims[i], owner)) { claims[i].owner = None; }
         i++;
     }
 }
@@ -647,13 +656,13 @@ void release_claims(i32 owner) {
 // active window's instance becomes a KEY event to it and is taken.
 /**
  * Tests a key-down event against one process's registered shortcuts.
- * @param owner Process ID of the active window's owner.
+ * @param active_owner Process owning the active window; None for a system window.
  * @param code Encoded key code from the keyboard driver.
  * @param mods KeyModifier bitmask from the shared keyboard contract.
  * @return True when a matching shortcut event was sent.
  */
-export bool dispatch_key(i32 owner, i32 code, i32 mods) {
-    if (owner == 0) { return false; }
+export bool dispatch_key(Option<Pid> active_owner, i32 code, i32 mods) {
+    Pid owner = case active_owner of { Some(value) -> value; None -> ({ return false; }); };
     Instance instance = case instances.instance_by_pid(owner) of {
         Some(value) -> value;
         None -> ({ return false; });
@@ -661,7 +670,7 @@ export bool dispatch_key(i32 owner, i32 code, i32 mods) {
     i32 i = 0;
     while (i < claim_count) {
         KeyClaim *claim = &claims[i];
-        if (claim->owner == owner) {
+        if (claimed_by(*claim, owner)) {
             if (key_spec_matches(claim->spec.as_str(), code, mods)) {
                 borrow InstanceRow row = instance.row();
                 NodeId window = case row.win of {
