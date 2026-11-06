@@ -83,6 +83,15 @@ def main() -> int:
             # The terminal notices the exit on its @timer, a tick or two later.
             wait_text_contains(term_out, "exited with 7")
 
+            # Threads and sync primitives in a real process, and a program
+            # starting another one; each reports through its exit code.
+            os._type("threads")
+            os._press("enter")
+            wait_text_contains(term_out, "exited with 42")
+            os._type("spawner")
+            os._press("enter")
+            wait_text_contains(term_out, "exited with 47")
+
             # `ls` is a terminal built-in reading the MFS disk.
             os._type("ls")
             os._press("enter")

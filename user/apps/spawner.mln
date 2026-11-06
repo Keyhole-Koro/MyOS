@@ -1,0 +1,32 @@
+package app;
+
+import process from "@std/hosted/process.mln";
+import thread from "@std/hosted/thread.mln";
+import { ProcessExitStatus } from "@contracts/process/control.contract.mln";
+import { Result } from "@std/core/result.mln";
+
+// Starts another program and reports how it ended, which exercises the hosted
+// process API from a console program.
+
+/**
+ * User application entry point.
+ * @return 40 plus the exit code of `hello`, or a failed step's number.
+ */
+export i32 main() {
+    i32 pid = case process.spawn("hello") of {
+        Ok(child) -> child;
+        Err(_) -> ({ return 1; });
+    };
+    bool done = false;
+    while (!done) {
+        done = case process.has_exited(pid) of { Ok(exited) -> exited; Err(_) -> true; };
+        thread.yield_now();
+    }
+    return case process.reap(pid) of {
+        Ok(status) -> case status of {
+            ProcessExitStatus::Code(code) -> 40 + code;
+            _ -> 2;
+        };
+        Err(_) -> 3;
+    };
+}

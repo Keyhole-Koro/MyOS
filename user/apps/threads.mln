@@ -1,0 +1,78 @@
+package app;
+
+import thread from "@std/hosted/thread.mln";
+import { Thread } from "@std/hosted/thread.mln";
+import { Mutex } from "@std/sync/mutex.mln";
+import { Condvar } from "@std/sync/condvar.mln";
+import { Result } from "@std/core/result.mln";
+import { ThreadError } from "@contracts/process/thread.contract.mln";
+
+// Exercises the hosted thread and sync API in a real process: workers take
+// turns under a mutex and a condition variable, and the main thread joins them.
+// The exit code is the result; apps_e2e_test.py reads it from the terminal.
+
+Mutex g_lock;
+Condvar g_changed;
+i32 g_turn = 0;
+i32 g_order = 0;
+
+// Waits for its number to come up, records it and passes the turn on.
+i32 worker(i32 number) {
+    g_lock.lock();
+    while (g_turn != number) { g_changed.wait(&g_lock); }
+    g_order = g_order * 10 + number;
+    g_turn = number + 1;
+    g_changed.notify_all();
+    g_lock.unlock();
+    thread.yield_now();
+    if (number == 2) { thread.exit(number * 11); }
+    return number * 11;
+}
+
+Thread started(i32 number) {
+    return case thread.spawn(worker, number) of {
+        Ok(handle) -> handle;
+        Err(_) -> Thread { tid: 0 };
+    };
+}
+
+i32 joined(borrow Thread handle) {
+    return case handle.join() of { Ok(code) -> code; Err(_) -> 0 - 1; };
+}
+
+/**
+ * User application entry point.
+ * @return 42 when every check passed, otherwise the failed check's number.
+ */
+export i32 main() {
+    g_lock.init();
+    g_changed.init();
+
+    if (!g_lock.try_lock()) { return 1; }
+    if (g_lock.try_lock()) { return 2; }
+    g_lock.unlock();
+
+    i32 me = case thread.self() of { Ok(tid) -> tid; Err(_) -> 0; };
+    if (me <= 0) { return 3; }
+
+    // Nothing notifies, so the wait ends on its timeout with the lock held.
+    g_lock.lock();
+    bool timed_out = case g_changed.wait_ticks(&g_lock, 2) of { Ok(_) -> false; Err(_) -> true; };
+    g_lock.unlock();
+    if (!timed_out) { return 4; }
+
+    Thread first = started(1);
+    Thread second = started(2);
+    if (first.tid == 0 || second.tid == 0) { return 5; }
+
+    g_lock.lock();
+    g_turn = 1;
+    g_changed.notify_one();
+    g_changed.notify_all();
+    g_lock.unlock();
+
+    if (joined(&first) != 11) { return 6; }
+    if (joined(&second) != 22) { return 7; }
+    if (g_order != 12) { return 8; }
+    return 42;
+}

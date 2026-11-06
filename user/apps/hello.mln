@@ -4,11 +4,12 @@ import ulib from "../lib/ulib.mln";
 
 /**
  * User application entry point: prints a greeting string and exits with code 7.
- * @return Process exit code (7).
+ * @return Never: ulib.exit ends the process with code 7.
  */
 export i32 main() {
     ulib.println("Hello from user space!");
     ulib.print("This process runs at 0x40000000 with its own page tables");
     ulib.println(" and exits with code 7.");
-    return 7;
+    ulib.exit(7);
+    return 0;
 }
