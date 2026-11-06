@@ -1,70 +1,70 @@
 package files;
 
+import app from "@app/app.mln";
+import { App, View } from "@app/app.mln";
 import elements from "@app/elements.mln";
 import ui from "@app/ui.mln";
 import { app } from "@app/annotations.mln";
 import fs from "@std/hosted/fs.mln";
 import { DirEntry } from "@std/hosted/fs.mln";
 import str from "@std/text/str.mln";
-import { list_item } from "@app/ui_text.mln";
 import { Text } from "@std/text/text.mln";
 import { Result } from "@std/core/result.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
-import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
+import { NodeId } from "@contracts/ui/widget.contract.mln";
 import { Option } from "@std/core/option.mln";
 
 // File manager: lists the MFS disk, opens a file in the editor (activate a
 // row, or the Open button), deletes after a confirmation dialog, and creates
 // new files through the editor. It does not know the editor: ui.open(path)
-// goes to whichever app declares @open.
+// goes to whichever app declares `opens`.
 //
-// The confirmation dialog is a second window the instance builds on demand.
-// Nodes created from a handler belong to the instance that ran it, so if the
-// user closes Files while the dialog is up, the dialog goes with it.
+// The list and the dialog are values: `rows` and `selected` are what the list
+// shows, `asking` whether the dialog is up.
 
 /**
- * Per-window file-manager state, including its list and transient dialog buffers.
- * @property list DOM node ID of the directory-entry list.
- * @property status DOM node ID of the status label.
- * @property dialog DOM node ID of the active confirmation dialog, if one is open.
- * @property items Newline-separated display rows backing the list widget.
- * @property selected Name of the currently selected entry.
- * @property question Text shown in the delete-confirmation dialog.
+ * The file manager's state.
+ * @property rows Newline-separated display rows of the directory shown.
+ * @property selected The selected row, if any.
+ * @property name Name of the selected entry.
  * @property dir Current directory path; an empty string denotes the root.
  * @property path Scratch buffer used to assemble child paths.
+ * @property status What the status line says.
+ * @property asking Whether the delete confirmation is up.
  */
+@app(single)
 struct Files {
-    NodeId list;
-    NodeId status;
-    Option<NodeId> dialog; // open confirmation window
-    Text<1024> items;   // "\n"-joined list rows
-    Text<16> selected;  // name of the selected row
-    Text<64> question;  // dialog text
-    Text<64> dir;       // the directory shown ("" = root)
-    Text<80> path;      // dir + "/" + a name
+    Text<1024> rows;
+    Option<i32> selected;
+    Text<16> name;
+    Text<64> dir;
+    Text<80> path;
+    Text<96> status;
+    bool asking;
 };
 
-@app(single)
-/**
- * Builds the file-manager window, loads the root directory, and focuses its list.
- * @return DOM node ID of the file-manager window.
- */
-NodeId (borrow Files f) view() {
-    f.dialog = None; // the instance starts as zero bytes, which read as Some(0)
-    NodeId win = <Window title="Files" x={60} y={60} w={440} h={400}>
-        <List ref={f.list} name="files" x={12} y={12} w={416} h={270} capacity={1024}
-              onChange={f.select} onActivate={f.open} testId="file-list" />
-        <Row x={12} y={294} w={416} h={34} gap={8}>
-            <PrimaryButton text="Open" w={90} h={34} onClick={f.open} />
-            <Button text="New" w={80} h={34} onClick={f.create} />
-            <Button text="Delete" w={90} h={34} onClick={f.delete} />
-            <Button text="Refresh" w={96} h={34} onClick={f.refresh} />
-        </Row>
-        <Label ref={f.status} text="" x={12} y={340} color={ui.TEXT_SECONDARY} testId="files-status" />
-    </Window>;
-    f.refresh();
-    ui.focus(f.list);
-    return win;
+impl App for Files {
+    Self start() {
+        Files f = Files {};
+        f.reload();
+        return f;
+    }
+
+    View (Self f) view() {
+        return <Window title="Files" x={60} y={60} w={440} h={400}>
+            <List name="files" items={f.rows} selected={f.selected} x={12} y={12} w={416} h={270} capacity={1024}
+                  focus={true} onChange={f.select} onActivate={f.open_selected} testId="file-list" />
+            <Row x={12} y={294} w={416} h={34} gap={8}>
+                <PrimaryButton text="Open" w={90} h={34} onClick={f.open_selected} />
+                <Button text="New" w={80} h={34} onClick={f.create} />
+                <Button text="Delete" w={90} h={34} onClick={f.ask} />
+                <Button text="Refresh" w={96} h={34} onClick={f.reload} />
+            </Row>
+            <Label text={f.status} x={12} y={340} color={ui.TEXT_SECONDARY} testId="files-status" />
+            <Dialog when={f.asking} title="Delete file?" text={"Delete \"%s\" permanently?", f.name}
+                    confirm="Delete" onConfirm={f.delete} onCancel={f.cancel} />
+        </Window>;
+    }
 }
 
 // `name` inside the directory shown, as a path.
@@ -83,79 +83,124 @@ str (borrow Files f) path_of(str name) {
     return f.path.as_str();
 }
 
-// Rebuild the list from the directory shown: ".." first unless at the
-// root, then one row per entry -- "name/" for a directory, "name  (N
-// bytes)" for a file.
-/** Refreshes the list widget and status label from the current directory. */
-void (borrow Files f) refresh() {
-    f.items.clear();
+/**
+ * Says a failure on the status line, as `what: <message>`.
+ * @param what What failed.
+ * @param message Why, typically an error's `describe()`.
+ */
+void (borrow Files f) failed(str what, str message) {
+    f.status.clear();
+    f.status.append(what);
+    f.status.append(": ");
+    f.status.append(message);
+}
+
+/**
+ * Replaces the status line.
+ * @param text The new status.
+ */
+void (borrow Files f) say(str text) {
+    f.status.clear();
+    f.status.append(text);
+}
+
+/**
+ * Says how many entries the directory shown has.
+ * @param count Number of entries.
+ */
+void (borrow Files f) say_count(i32 count) {
+    f.status.clear();
+    Text<12> number = count.to_string();
+    if (f.dir.is_empty()) {
+        f.status.append(number.as_str());
+        f.status.append(" entries on disk");
+        return;
+    }
+    f.status.append("/");
+    f.status.append(f.dir.as_str());
+    f.status.append(": ");
+    f.status.append(number.as_str());
+    f.status.append(" entries");
+}
+
+// Rebuild the rows from the directory shown: ".." first unless at the root,
+// then one row per entry -- "name/" for a directory, "name  (N bytes)" for a
+// file.
+/** Reads the current directory into the state. */
+void (borrow Files f) reload() {
+    f.rows.clear();
+    f.selected = None;
     i32 start = 0;
     i32 count = 0;
     if (!f.dir.is_empty()) {
-        f.items.append("..");
+        f.rows.append("..");
         count++;
     }
     while (1) {
         // None ends enumeration; Err reports a disk failure.
         DirEntry entry = case fs.next_entry(f.dir.as_str(), start) of {
             Ok(v) -> case v of { Some(found) -> found; None -> ({ break; }); };
-            Err(e) -> ({ ui.set_error(f.status, "cannot list", e.describe()); return; });
+            Err(e) -> ({ f.failed("cannot list", e.describe()); return; });
         };
         i32 idx = entry.index;
-        if (count > 0) { f.items.append("\n"); }
-        f.items.append(entry.name.as_str());
+        if (count > 0) { f.rows.append("\n"); }
+        f.rows.append(entry.name.as_str());
         bool is_directory = case fs.is_dir(idx) of {
             Ok(value) -> value;
-            Err(e) -> ({ ui.set_error(f.status, "cannot list", e.describe()); return; });
+            Err(e) -> ({ f.failed("cannot list", e.describe()); return; });
         };
         if (is_directory) {
-            f.items.append("/");
+            f.rows.append("/");
         } else {
             i32 size = case fs.entry_size(idx) of {
                 Ok(value) -> value;
-                Err(e) -> ({ ui.set_error(f.status, "cannot list", e.describe()); return; });
+                Err(e) -> ({ f.failed("cannot list", e.describe()); return; });
             };
-            f.items.append("   (");
+            f.rows.append("   (");
             Text<12> size_text = size.to_string();
-            f.items.append(size_text.as_str());
-            f.items.append(" bytes)");
+            f.rows.append(size_text.as_str());
+            f.rows.append(" bytes)");
         }
         count++;
         start = idx + 1;
     }
-    ui.list_set_items(f.list, f.items.as_str());
-    if (!f.dir.is_empty()) {
-        str shown = f.dir.as_str();
-        ui.set_text_fmt(f.status, "/%s: %d entries", shown, count - 1);
-    } else {
-        ui.set_text_fmt(f.status, "%d entries on disk", "", count);
-    }
-    f.selected.clear();
+    f.say_count(f.dir.is_empty() ? count : count - 1);
 }
 
-// Whether the selected row is a directory ("name/" or "..").
 /**
- * Tests whether the selected row represents a directory or the parent entry.
- * @return Ok(true) for a directory or parent row, Ok(false) for a file or no selection,
- *         or Err when the list query fails.
+ * The text of a row.
+ * @param row Zero-based row number.
+ * @return View of the row, empty past the end.
  */
-Result<bool, UiError> (borrow Files f) selected_is_dir() {
-    Option<i32> selected = ui.list_selected(f.list)?;
-    i32 row = case selected of {
-        Some(n) -> n;
-        None -> ({ return Ok(false); });
-    };
-    Text<48> item = Text<48> {};
-    item.clear();
-    list_item<48>(f.list, row, &item)?;
-    if (item.len() == 2 && item.data[0] == '.' && item.data[1] == '.') { return Ok(true); }
-    if (!item.is_empty() && item.data[item.len() - 1] == '/') { return Ok(true); }
-    return Ok(false);
+str (Files f) row_text(i32 row) {
+    str rows = f.rows.as_str();
+    i32 start = 0;
+    i32 line = 0;
+    while (line < row) {
+        while (start < rows.length && rows.byte(start) != '\n') { start++; }
+        start++;
+        line++;
+    }
+    i32 end = start;
+    while (end < rows.length && rows.byte(end) != '\n') { end++; }
+    return case rows.slice(start, end) of { Some(view) -> view; None -> ""; };
+}
+
+// Whether a row is a directory ("name/" or "..").
+/**
+ * Tests whether a row represents a directory or the parent entry.
+ * @param row Zero-based row number.
+ * @return True for a directory or parent row.
+ */
+bool (Files f) row_is_dir(i32 row) {
+    str item = f.row_text(row);
+    if (item == "..") { return true; }
+    return !item.is_empty() && item.byte(item.length - 1) == '/';
 }
 
 // Enter the selected directory (".." goes up), and show it.
 /**
- * Changes the displayed directory and refreshes its contents.
+ * Changes the displayed directory and reads its contents.
  * @param name Directory name to enter, or ".." to move to the parent.
  */
 void (borrow Files f) enter(str name) {
@@ -168,133 +213,66 @@ void (borrow Files f) enter(str name) {
         if (!f.dir.is_empty()) { f.dir.append("/"); }
         f.dir.append(name);
     }
-    f.refresh();
+    f.reload();
 }
 
-// Copy the selected row's file name (the part before the size) into
-// f.selected. False when no row is selected.
 /**
- * Copies the selected entry's name out of its display row.
- * @return True when f.selected now holds a name, false if no row is selected.
+ * Keeps the selected row, and the name in it: the part before the size.
+ * @param row The row the user selected.
  */
-bool (borrow Files f) load_selected() {
-    i32 row = case ui.list_selected(f.list) of {
-        Ok(Some(n)) -> n;
-        Ok(None) -> ({ return false; });
-        Err(_) -> ({ return false; });
-    };
-    Text<48> item = Text<48> {};
-    item.clear();
-    case list_item<48>(f.list, row, &item) of {
-        Ok(_) -> _;
-        Err(_) -> ({ return false; });
-    };
-    f.selected.clear();
+void (borrow Files f) select(i32 row) {
+    f.selected = Some(row);
+    str item = f.row_text(row);
+    f.name.clear();
     i32 i = 0;
-    while (i < item.len()) {
-        if (item.data[i] == ' ') { break; }
-        if (item.data[i] == '/') { break; }
-        f.selected.push((u8)item.data[i]);
+    while (i < item.length && i < fs.NAME_MAX - 1) {
+        i32 c = item.byte(i);
+        if (c == ' ' || c == '/') { break; }
+        f.name.push((u8)c);
         i++;
-        if (i >= fs.NAME_MAX - 1) { break; }
     }
-    return true;
+    f.status.clear();
+    f.status.append("selected ");
+    f.status.append(f.name.as_str());
 }
 
-/**
- * Updates the status label when the selected row changes.
- * @param id DOM node ID supplied by the list change event.
- */
-void (borrow Files f) select(NodeId id) {
-    if (!f.load_selected()) { return; }
-    str shown = f.selected.as_str();
-    ui.set_text_fmt(f.status, "selected %s", shown, 0);
-}
-
-/**
- * Enters the selected directory or routes the selected file to an @open application.
- * @param id DOM node ID supplied by the open/activate event.
- */
-void (borrow Files f) open(NodeId id) {
-    if (!f.load_selected()) { ui.set_text(f.status, "select a file first"); return; }
-    Text<16> name = f.selected;
-    bool directory = case f.selected_is_dir() of {
-        Ok(value) -> value;
-        Err(_) -> ({ ui.set_text(f.status, "could not read selected item"); return; });
+/** Enters the selected directory or opens the selected file. */
+void (borrow Files f) open_selected() {
+    i32 row = case f.selected of {
+        Some(value) -> value;
+        None -> ({ f.say("select a file first"); return; });
     };
-    if (directory) { f.enter(name.as_str()); return; }
+    Text<16> name = f.name;
+    if (f.row_is_dir(row)) { f.enter(name.as_str()); return; }
     ui.open(f.path_of(name.as_str()));
 }
 
-/**
- * Opens the editor on the default new-file path.
- * @param id DOM node ID supplied by the New-button event (unused).
- */
-void (borrow Files f) create(NodeId id) {
+/** Opens the editor on the default new-file path. */
+void (borrow Files f) create() {
     ui.open(f.path_of("untitled.txt"));
 }
 
 // --- delete confirmation dialog ---
 
-/** Closes the active confirmation dialog, if one exists. */
-void (borrow Files f) close_dialog() {
-    case f.dialog of {
-        Some(dialog) -> ({ ui.close(dialog); f.dialog = None; });
-        None -> _;
-    };
+/** Asks to confirm deleting the selected entry. */
+void (borrow Files f) ask() {
+    if (f.selected.is_none()) { f.say("select a file first"); return; }
+    f.asking = true;
 }
 
-/**
- * Removes the selected file after confirmation and refreshes the list.
- * @param id DOM node ID supplied by the confirmation button (unused).
- */
-void (borrow Files f) confirm_delete(NodeId id) {
-    f.close_dialog();
-    if (!f.load_selected()) { return; }
-    Text<16> name = f.selected;
+/** Dismisses the delete confirmation without changing the filesystem. */
+void (borrow Files f) cancel() {
+    f.asking = false;
+}
+
+/** Removes the selected file after confirmation and reads the list again. */
+void (borrow Files f) delete() {
+    f.asking = false;
+    Text<16> name = f.name;
     case fs.remove(f.path_of(name.as_str())) of {
-        Ok(_) -> ({ f.refresh(); ui.set_text(f.status, "deleted"); });
-        Err(e) -> ({ ui.set_error(f.status, "delete failed", e.describe()); });
+        Ok(_) -> ({ f.reload(); f.say("deleted"); });
+        Err(e) -> ({ f.failed("delete failed", e.describe()); });
     };
 }
 
-/**
- * Dismisses the delete confirmation without changing the filesystem.
- * @param id DOM node ID supplied by the cancel button (unused).
- */
-void (borrow Files f) cancel_delete(NodeId id) {
-    f.close_dialog();
-}
-
-/**
- * Opens a confirmation dialog for deleting the selected entry.
- * @param id DOM node ID supplied by the Delete-button event (unused).
- */
-void (borrow Files f) delete(NodeId id) {
-    if (!f.load_selected()) { ui.set_text(f.status, "select a file first"); return; }
-    f.close_dialog();
-    f.question.clear();
-    f.question.append("Delete \"");
-    f.question.append(f.selected.as_str());
-    f.question.append("\" permanently?");
-    Option<NodeId> enclosing = case ui.window_of(f.list) of {
-        Ok(value) -> value;
-        Err(_) -> ({ ui.set_text(f.status, "window lookup failed"); return; });
-    };
-    NodeId win = case enclosing of {
-        Some(value) -> value;
-        None -> ({ ui.set_text(f.status, "window not found"); return; });
-    };
-    i32 wx = case ui.window_x(win) of { Ok(value) -> value + 60; Err(_) -> ({ return; }); };
-    i32 wy = case ui.window_y(win) of { Ok(value) -> value + 90; Err(_) -> ({ return; }); };
-    str question = f.question.as_str();
-    NodeId dialog = <Window title="Delete file?" x={wx} y={wy} w={340} h={140}>
-        <Label text={question} x={20} y={16} />
-        <Row x={20} y={60} w={300} h={34} gap={10}>
-            <PrimaryButton text="Delete" w={110} h={34} onClick={f.confirm_delete} />
-            <Button text="Cancel" w={110} h={34} onClick={f.cancel_delete} />
-        </Row>
-    </Window>;
-    f.dialog = Some(dialog);
-    ui.show(dialog);
-}
+i32 main() { return app.run<Files>(); }

@@ -7,6 +7,7 @@ import ascii from "@std/text/ascii.mln";
 import { ParseIntError } from "@std/text/str.mln";
 import { Text } from "@std/text/text.mln";
 import dom from "@os/ui/dom/dom.mln";
+import { NodeRow } from "@os/ui/dom/dom_model.mln";
 import dom_widgets from "@os/ui/dom/dom_widgets.mln";
 import dom_render from "@os/ui/dom/dom_render.mln";
 import compositor from "@os/ui/compositor.mln";
@@ -58,6 +59,8 @@ import { KeyModifier, KeyCode } from "@contracts/input/keyboard.contract.mln";
 // --- registry --------------------------------------------------------------------------------
 
 i32 APPS_MAX = 16;
+i32 DIALOG_OFFSET_X = 60;
+i32 DIALOG_OFFSET_Y = 90;
 
 /**
  * Metadata read from an installed executable's @app annotation.
@@ -284,6 +287,51 @@ export void window_ready(i32 owner, NodeId win) {
         str opened = row.open_path.as_str();
         push_app_event(owner, win, ShellEventKind::OPEN, 0, 0, opened);
     }
+}
+
+bool owns(i32 owner, NodeId win) {
+    return case dom.owner_of(win) of { Ok(value) -> value == owner; Err(_) -> false; };
+}
+
+// A dialog sits over the instance's window, and closing it comes back as a
+// CLOSE naming it, so the instance can tell it from its window.
+/**
+ * Puts a window an instance built on the desktop, over its main window.
+ * @param owner Process ID of the application instance.
+ * @param win DOM node ID of the dialog.
+ */
+export void show_dialog(i32 owner, NodeId win) {
+    Instance instance = case instances.instance_by_pid(owner) of {
+        Some(value) -> value;
+        None -> ({ return; });
+    };
+    if (!owns(owner, win)) { return; }
+    borrow InstanceRow row = instance.row();
+    NodeId main_window = case row.win of { Some(value) -> value; None -> ({ return; }); };
+    borrow NodeRow over = case dom.find_row(main_window) of { Some(found) -> found; None -> ({ return; }); };
+    borrow NodeRow dialog = case dom.find_row(win) of { Some(found) -> found; None -> ({ return; }); };
+    i32 s = dom.ui_scale();
+    dom.move_node(win, over.x + DIALOG_OFFSET_X * s - dialog.x, over.y + DIALOG_OFFSET_Y * s - dialog.y);
+    dom.set_on_close(win, window_closed);
+    case dom.append_child(dom.desktop_id(), win) of {
+        Ok(_) -> _;
+        Err(_) -> ({ return; });
+    };
+    dom_widgets.focus_window(win);
+}
+
+/**
+ * Takes a dialog off the desktop. Its nodes stay, so it can come back as it was.
+ * @param owner Process ID of the application instance.
+ * @param win DOM node ID of the dialog.
+ */
+export void hide_dialog(i32 owner, NodeId win) {
+    if (!owns(owner, win)) { return; }
+    borrow NodeRow dialog = case dom.find_row(win) of { Some(found) -> found; None -> ({ return; }); };
+    dom.damage_row(&dialog);
+    dom.unlink(&dialog);
+    dom.touch();
+    dom_widgets.activate_topmost();
 }
 
 // The on_close handler every app window carries: tell the instance its

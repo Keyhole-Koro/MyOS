@@ -38,5 +38,7 @@ export RequestStatus handle(Request *m) {
     }
     if (m->op == AppOp::MAIN_WINDOW) { app.window_ready(m->owner, NodeId(m->a0)); return RequestStatus::OK; }
     if (m->op == AppOp::EXIT)        { app.instance_exited(m->owner); return RequestStatus::OK; }
+    if (m->op == AppOp::SHOW_DIALOG) { app.show_dialog(m->owner, NodeId(m->a0)); return RequestStatus::OK; }
+    if (m->op == AppOp::HIDE_DIALOG) { app.hide_dialog(m->owner, NodeId(m->a0)); return RequestStatus::OK; }
     return RequestStatus::INVALID_OPERATION;
 }
