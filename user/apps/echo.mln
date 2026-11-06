@@ -11,13 +11,13 @@ export i32 main() {
     Line line;
     ulib.println("echo: type lines, 'quit' to exit");
     while (1) {
-        ulib.read_line(&mut line);
-        if (ulib.line_is(&line, "quit")) {
+        ulib.read_line(&line);
+        if (ulib.line_is(line, "quit")) {
             ulib.println("bye");
             return 0;
         }
         ulib.print("> ");
-        ulib.print_line(&line);
+        ulib.print_line(line);
     }
     return 0;
 }

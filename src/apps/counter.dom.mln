@@ -15,7 +15,7 @@ import { UiError } from "@contracts/ui/widget.contract.mln";
 // launch is independent -- and `ref=` stores node ids into them so handlers
 // never walk the tree.
 //
-// The methods take `borrow mut Counter`: the framework calls them with the
+// The methods take `borrow Counter`: the framework calls them with the
 // instance's address, and a reference is that address underneath. `Counter *c`
 // with `c->` would be the same thing spelled as a raw pointer.
 //
@@ -39,7 +39,7 @@ struct Counter {
 /** Builds the counter window and initializes its per-instance increment step.
  * @return DOM node ID of the newly created window.
  */
-i32 (borrow mut Counter c) view() {
+i32 (borrow Counter c) view() {
     c.step = 1;
     return <Window title="Counter" x={96} y={72} w={400} h={272}>
         <Panel x={20} y={20} w={360} h={140} radius={10}>
@@ -57,7 +57,7 @@ i32 (borrow mut Counter c) view() {
 }
 
 /** Refreshes the count label from the current counter state. */
-void (borrow mut Counter c) refresh() {
+void (borrow Counter c) refresh() {
     ui.set_text_fmt(c.label, "clicks: %d", "", c.clicks);
 }
 
@@ -65,7 +65,7 @@ void (borrow mut Counter c) refresh() {
  * Adds the configured step and refreshes the count label.
  * @param id DOM node ID supplied by the click event.
  */
-void (borrow mut Counter c) click(i32 id) {
+void (borrow Counter c) click(i32 id) {
     c.clicks = c.clicks + c.step;
     c.refresh();
 }
@@ -74,7 +74,7 @@ void (borrow mut Counter c) click(i32 id) {
  * Resets the count to zero and refreshes the display.
  * @param id DOM node ID supplied by the reset-button event.
  */
-void (borrow mut Counter c) reset(i32 id) {
+void (borrow Counter c) reset(i32 id) {
     c.clicks = 0;
     c.refresh();
 }
@@ -85,7 +85,7 @@ void (borrow mut Counter c) reset(i32 id) {
  * Selects an increment step of one or two from the checkbox state.
  * @param id Checkbox DOM node ID whose checked state has just changed.
  */
-void (borrow mut Counter c) step_changed(i32 id) {
+void (borrow Counter c) step_changed(i32 id) {
     c.step = 1;
     if (ui.is_checked(id).unwrap_or(false)) { c.step = 2; }
 }

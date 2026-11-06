@@ -29,7 +29,7 @@ import { Text } from "@std/text/text.mln";
  * @param fallback Default RGB color if node color is 0.
  * @return Resolved RGB color.
  */
-export i32 node_fg(borrow mut NodeRow n, i32 fallback) {
+export i32 node_fg(borrow NodeRow n, i32 fallback) {
     i32 c = n.color;
     if (c != 0) { return c; }
     return fallback;
@@ -39,7 +39,7 @@ export i32 node_fg(borrow mut NodeRow n, i32 fallback) {
  * Renders a WINDOW node including drop shadow, title bar, chrome buttons, resize grip, and border.
  * @param n Pointer to Window Node.
  */
-export void draw_window(borrow mut NodeRow n) {
+export void draw_window(borrow NodeRow n) {
     i32 s = dom.ui_scale();
     i32 x = n.x;
     i32 y = n.y;
@@ -162,7 +162,7 @@ export void draw_window(borrow mut NodeRow n) {
  * Renders a BUTTON node with hover, press, focus ring, and primary styling.
  * @param n Pointer to Button Node.
  */
-export void draw_button(borrow mut NodeRow n) {
+export void draw_button(borrow NodeRow n) {
     i32 s = dom.ui_scale();
     i32 x = n.x;
     i32 y = n.y;
@@ -230,7 +230,7 @@ export Text<160> copy_line(Blob buf, i32 start, i32 llen) {
  * @param n Pointer to DOM Node.
  * @param focused Non-zero if control has keyboard focus.
  */
-export void draw_rows_box(borrow mut NodeRow n, i32 focused) {
+export void draw_rows_box(borrow NodeRow n, i32 focused) {
     i32 s = dom.ui_scale();
     i32 r = theme.INPUT_RADIUS * s;
     i32 bg = theme.INPUT_BG;
@@ -248,7 +248,7 @@ export void draw_rows_box(borrow mut NodeRow n, i32 focused) {
  * Renders a multi-line TEXT_AREA node, including text lines and cursor caret.
  * @param n Pointer to TextArea Node.
  */
-export void draw_text_area(borrow mut NodeRow n) {
+export void draw_text_area(borrow NodeRow n) {
     i32 s = dom.ui_scale();
     i32 state = n.state;
     i32 focused = state & NodeState::FOCUSED;
@@ -320,7 +320,7 @@ export void draw_text_area(borrow mut NodeRow n) {
  * @param hl_color Background RGB color for highlight.
  * @param hl_fg Foreground text RGB color for highlight.
  */
-export void draw_rows(borrow mut NodeRow n, Option<i32> hl, i32 hl_color, i32 hl_fg) {
+export void draw_rows(borrow NodeRow n, Option<i32> hl, i32 hl_color, i32 hl_fg) {
     i32 s = dom.ui_scale();
     i32 x = n.x;
     i32 y = n.y;
@@ -364,7 +364,7 @@ export void draw_rows(borrow mut NodeRow n, Option<i32> hl, i32 hl_color, i32 hl
  * Renders a LIST control showing item rows and selected item highlight.
  * @param n Pointer to List Node.
  */
-export void draw_list(borrow mut NodeRow n) {
+export void draw_list(borrow NodeRow n) {
     i32 state = n.state;
     i32 focused = state & NodeState::FOCUSED;
     draw_rows_box(n, focused);
@@ -383,7 +383,7 @@ export void draw_list(borrow mut NodeRow n) {
  * Renders a floating popup MENU control with drop shadow and hovered item highlight.
  * @param n Pointer to Menu Node.
  */
-export void draw_menu(borrow mut NodeRow n) {
+export void draw_menu(borrow NodeRow n) {
     i32 s = dom.ui_scale();
     i32 r = theme.BUTTON_RADIUS * s;
     graphics.draw_shadow(n.x, n.y, n.w, n.h, r, 8 * s, 3 * s, 70);
@@ -402,7 +402,7 @@ export void draw_menu(borrow mut NodeRow n) {
  * Renders a static TEXT node with left or centered alignment.
  * @param n Pointer to Text Node.
  */
-export void draw_text_node(borrow mut NodeRow n) {
+export void draw_text_node(borrow NodeRow n) {
     if (!n.text.is_live()) { return; }
     i32 s = dom.ui_scale();
     i32 color = theme.TEXT_PRIMARY;
@@ -423,7 +423,7 @@ export void draw_text_node(borrow mut NodeRow n) {
  * Renders a single-line TEXT_INPUT control with placeholder or text and blinking caret.
  * @param n Pointer to TextInput Node.
  */
-export void draw_text_input(borrow mut NodeRow n) {
+export void draw_text_input(borrow NodeRow n) {
     i32 s = dom.ui_scale();
     i32 x = n.x;
     i32 y = n.y;
@@ -473,7 +473,7 @@ export void draw_text_input(borrow mut NodeRow n) {
  * Renders a CHECKBOX control with box, checkmark, and label text.
  * @param n Pointer to Checkbox Node.
  */
-export void draw_checkbox(borrow mut NodeRow n) {
+export void draw_checkbox(borrow NodeRow n) {
     i32 s = dom.ui_scale();
     i32 x = n.x;
     i32 y = n.y;
@@ -530,7 +530,7 @@ export void draw_checkbox(borrow mut NodeRow n) {
  * Renders a rounded card PANEL container.
  * @param n Pointer to Panel Node.
  */
-export void draw_panel(borrow mut NodeRow n) {
+export void draw_panel(borrow NodeRow n) {
     i32 s = dom.ui_scale();
     i32 bg = theme.PANEL_BG;
     i32 border = theme.PANEL_BORDER;
@@ -554,7 +554,7 @@ export i32 next_window_after(i32 after) {
     i32 best = 0;
     for (i32 child_id in dom.children(dom.desktop_id())) {
         if (!dom.node_exists(child_id)) { break; }
-        borrow mut NodeRow c = dom.row_of(child_id);
+        borrow NodeRow c = dom.row_of(child_id);
         if (c.kind == NodeKind::WINDOW) {
             if (child_id > after) {
                 if (best == 0) { best = child_id; }
@@ -604,7 +604,7 @@ export Text<16> format_clock() {
  * Renders the desktop taskbar, launcher button, window list entries, and clock.
  * @param n Pointer to Taskbar Node.
  */
-export void draw_taskbar(borrow mut NodeRow n) {
+export void draw_taskbar(borrow NodeRow n) {
     i32 s = dom.ui_scale();
     i32 x = n.x;
     i32 y = n.y;
@@ -637,7 +637,7 @@ export void draw_taskbar(borrow mut NodeRow n) {
     i32 index = 0;
     i32 win = next_window_after(0);
     while (win != 0) {
-        borrow mut NodeRow c = dom.row_of(win);
+        borrow NodeRow c = dom.row_of(win);
         i32 ex = x + taskbar_entry_x(index);
         i32 ebg = entry_bg;
         i32 fg = dim;
@@ -679,7 +679,7 @@ export enum TaskbarTarget {
  */
 export TaskbarTarget taskbar_target_at(i32 px, i32 py) {
     if (!dom.node_exists(dom.taskbar_id())) { return TaskbarTarget::Miss; }
-    borrow mut NodeRow n = dom.row_of(dom.taskbar_id());
+    borrow NodeRow n = dom.row_of(dom.taskbar_id());
     i32 s = dom.ui_scale();
     i32 x = n.x;
     i32 lx = x + 8 * s;
@@ -720,7 +720,7 @@ export void refresh_taskbar() {
  * Dispatches node drawing to the kind-specific drawing routine.
  * @param n Pointer to DOM Node to render.
  */
-export void draw_node(borrow mut NodeRow n) {
+export void draw_node(borrow NodeRow n) {
     i32 kind = n.kind;
     i32 x = n.x;
     i32 y = n.y;
@@ -763,7 +763,7 @@ export void draw_node(borrow mut NodeRow n) {
  * @param n Pointer to DOM Node.
  * @return True if node overlaps damage area or full repaint active, false otherwise.
  */
-export bool node_in_damage(borrow mut NodeRow n) {
+export bool node_in_damage(borrow NodeRow n) {
     return dom.node_intersects_paint(n);
 }
 
@@ -773,7 +773,7 @@ export bool node_in_damage(borrow mut NodeRow n) {
  */
 export void render(i32 node_id) {
     if (!dom.node_exists(node_id)) { return; }
-    borrow mut NodeRow n = dom.row_of(node_id);
+    borrow NodeRow n = dom.row_of(node_id);
     if (!(n.state & NodeState::VISIBLE)) { return; }
 
     bool in_damage = node_in_damage(n);

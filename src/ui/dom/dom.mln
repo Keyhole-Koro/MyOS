@@ -275,7 +275,7 @@ export bool node_exists(i32 id) {
  * @param id DOM Node ID.
  * @return The node's row.
  */
-export borrow mut NodeRow row_of(i32 id) {
+export borrow NodeRow row_of(i32 id) {
     return dom_model.node_row_id(id);
 }
 
@@ -293,7 +293,7 @@ export i32 parent_id(i32 id) {
 void relayout_parent(i32 id) {
     i32 parent = parent_id(id);
     if (parent != 0) {
-        borrow mut NodeRow row = row_of(parent);
+        borrow NodeRow row = row_of(parent);
         relayout_container(row);
     }
 }
@@ -322,14 +322,14 @@ export struct NewNode {
 };
 
 export impl Drop for NewNode {
-    void (borrow mut Self self) drop() {
+    void (borrow Self self) drop() {
         if (self.id != 0) { remove_node(self.id); }
         self.id = 0;
     }
 }
 
 /** Gives up the guard and returns the node ID. */
-export i32 (borrow mut NewNode self) keep() {
+export i32 (borrow NewNode self) keep() {
     i32 id = self.id;
     self.id = 0;
     return id;
@@ -359,7 +359,7 @@ export Result<i32, UiError> create_node(i32 kind, str name) {
     };
     i32 id = made.raw();
     if (has_owner_slot) { g_owner_nodes_count[oslot] = g_owner_nodes_count[oslot] + 1; }
-    borrow mut NodeRow n = made.row();
+    borrow NodeRow n = made.row();
     n.id = id;
     n.kind = (u16)kind;
     n.name = replaced_text(n.name, name);
@@ -377,7 +377,7 @@ export Result<i32, UiError> create_node(i32 kind, str name) {
  */
 export Result<i32, UiError> owner_of(i32 id) {
     if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     return Ok(n.owner);
 }
 
@@ -388,7 +388,7 @@ export Result<i32, UiError> owner_of(i32 id) {
  */
 export void set_owner(i32 id, i32 owner) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     n.owner = owner;
     for (i32 child in children(id)) {
         set_owner(child, owner);
@@ -472,7 +472,7 @@ export bool has_events() {
  * @param arg Event-specific integer argument.
  * @return 1 when an app event or callback was delivered/queued, otherwise 0.
  */
-export bool emit(borrow mut NodeRow n, i32 kind,
+export bool emit(borrow NodeRow n, i32 kind,
                  fn(i32 owner, i32 id, i32 arg) -> void handler, i32 arg) {
     if (n.owner != 0) {
         ui_event.emit(n.owner, n.id, kind, arg);
@@ -563,7 +563,7 @@ export void unlock() {
  */
 export Option<NodeKind> kind_of(i32 id) {
     if (!node_exists(id)) { return None; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     return Some(n.kind);
 }
 
@@ -574,7 +574,7 @@ export Option<NodeKind> kind_of(i32 id) {
  */
 export Result<Option<i32>, UiError> parent_of(i32 id) {
     if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     i32 parent = parent_id(id);
     if (parent == 0) { return Ok(None); }
     return Ok(Some(parent));
@@ -585,25 +585,25 @@ export Result<Option<i32>, UiError> parent_of(i32 id) {
  * @param id DOM node ID.
  * @return Some(X coordinate), or None when the node ID is invalid.
  */
-export Option<i32> node_x(i32 id) { if (!node_exists(id)) { return None; } borrow mut NodeRow n = row_of(id); return Some(n.x); }
+export Option<i32> node_x(i32 id) { if (!node_exists(id)) { return None; } borrow NodeRow n = row_of(id); return Some(n.x); }
 /**
  * Returns the absolute Y coordinate of a node in screen pixels.
  * @param id DOM node ID.
  * @return Some(Y coordinate), or None when the node ID is invalid.
  */
-export Option<i32> node_y(i32 id) { if (!node_exists(id)) { return None; } borrow mut NodeRow n = row_of(id); return Some(n.y); }
+export Option<i32> node_y(i32 id) { if (!node_exists(id)) { return None; } borrow NodeRow n = row_of(id); return Some(n.y); }
 /**
  * Returns the width of a node in screen pixels.
  * @param id DOM node ID.
  * @return Some(width), or None when the node ID is invalid.
  */
-export Option<i32> node_w(i32 id) { if (!node_exists(id)) { return None; } borrow mut NodeRow n = row_of(id); return Some(n.w); }
+export Option<i32> node_w(i32 id) { if (!node_exists(id)) { return None; } borrow NodeRow n = row_of(id); return Some(n.w); }
 /**
  * Returns the height of a node in screen pixels.
  * @param id DOM node ID.
  * @return Some(height), or None when the node ID is invalid.
  */
-export Option<i32> node_h(i32 id) { if (!node_exists(id)) { return None; } borrow mut NodeRow n = row_of(id); return Some(n.h); }
+export Option<i32> node_h(i32 id) { if (!node_exists(id)) { return None; } borrow NodeRow n = row_of(id); return Some(n.h); }
 
 /**
  * Returns the text content of a node, or null.
@@ -612,7 +612,7 @@ export Option<i32> node_h(i32 id) { if (!node_exists(id)) { return None; } borro
  */
 export str text_of(i32 id) {
     if (!node_exists(id)) { return ""; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     return n.text.as_str();
 }
 
@@ -623,7 +623,7 @@ export str text_of(i32 id) {
  */
 export Result<NodeRole, UiError> role_of(i32 id) {
     if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     return Ok(n.role);
 }
 
@@ -634,7 +634,7 @@ export Result<NodeRole, UiError> role_of(i32 id) {
  */
 export str name_of(i32 id) {
     if (!node_exists(id)) { return ""; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     return n.name.as_str();
 }
 
@@ -645,7 +645,7 @@ export str name_of(i32 id) {
  */
 export str test_id_of(i32 id) {
     if (!node_exists(id)) { return ""; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     return n.test_id.as_str();
 }
 
@@ -662,7 +662,7 @@ export i32 root_node_id() { return g_root_node_id; }
  */
 export str automation_value_of(i32 id) {
     if (!node_exists(id)) { return ""; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     i32 role = n.role;
     if (role == NodeRole::TEXTBOX) { return n.text.as_str(); }
     if (role == NodeRole::TEXTAREA) { return n.text.as_str(); }
@@ -753,7 +753,7 @@ export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
  * Results are stored in g_ext_x, g_ext_y, g_ext_w, g_ext_h.
  * @param n Pointer to DOM Node.
  */
-export void node_extent(borrow mut NodeRow n) {
+export void node_extent(borrow NodeRow n) {
     i32 x = n.x;
     i32 y = n.y;
     i32 w = n.w;
@@ -779,7 +779,7 @@ export void node_extent(borrow mut NodeRow n) {
  */
 export void damage_node(i32 id) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     node_extent(n);
     damage_rect(g_ext_x, g_ext_y, g_ext_w, g_ext_h);
 }
@@ -806,7 +806,7 @@ export void clear_damage() {
  * @param n Pointer to DOM Node.
  * @return True if bold, false otherwise.
  */
-export bool text_bold(borrow mut NodeRow n) {
+export bool text_bold(borrow NodeRow n) {
     return (n.style & NodeStyle::BOLD) != 0;
 }
 
@@ -815,7 +815,7 @@ export bool text_bold(borrow mut NodeRow n) {
  * @param n Pointer to DOM Node.
  * @return Rendered text width in pixels.
  */
-export i32 text_width_of(borrow mut NodeRow n) {
+export i32 text_width_of(borrow NodeRow n) {
     if (!n.text.is_live()) { return 0; }
     i32 bold = 0;
     if (text_bold(n)) { bold = 1; }
@@ -828,7 +828,7 @@ export i32 text_width_of(borrow mut NodeRow n) {
  * @param n Pointer to DOM Node.
  * @return Rendered text height in pixels.
  */
-export i32 text_height_of(borrow mut NodeRow n) {
+export i32 text_height_of(borrow NodeRow n) {
     i32 bold = 0;
     if (text_bold(n)) { bold = 1; }
     i32 s = ui_scale();
@@ -845,7 +845,7 @@ export i32 text_height_of(borrow mut NodeRow n) {
  */
 export void offset_subtree(i32 id, i32 dx, i32 dy) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     n.x = (u16)(n.x + dx);
     n.y = (u16)(n.y + dy);
     for (i32 child_id in children(id)) {
@@ -861,7 +861,7 @@ export void offset_subtree(i32 id, i32 dx, i32 dy) {
  */
 export void place_child(i32 child_id, i32 x, i32 y) {
     if (!node_exists(child_id)) { return; }
-    borrow mut NodeRow child = row_of(child_id);
+    borrow NodeRow child = row_of(child_id);
     i32 dx = x - child.x;
     i32 dy = y - child.y;
     if (dx == 0) {
@@ -876,20 +876,20 @@ export void place_child(i32 child_id, i32 x, i32 y) {
  * Recursively updates layout for container nodes (COLUMN or ROW).
  * @param n Pointer to container Node.
  */
-export void relayout_container(borrow mut NodeRow n);
+export void relayout_container(borrow NodeRow n);
 
 /**
  * Lays out direct children of a column container top-to-bottom.
  * @param column Pointer to Column Node.
  */
-export void relayout_column(borrow mut NodeRow column) {
+export void relayout_column(borrow NodeRow column) {
     i32 child_x = column.x + column.padding;
     i32 cursor_y = column.y + column.padding;
     i32 gap = column.gap;
 
     for (i32 child_id in children(column.id)) {
         if (!node_exists(child_id)) { break; }
-        borrow mut NodeRow child = row_of(child_id);
+        borrow NodeRow child = row_of(child_id);
         i32 child_h = child.h;
         place_child(child_id, child_x, cursor_y);
         relayout_container(child);
@@ -901,14 +901,14 @@ export void relayout_column(borrow mut NodeRow column) {
  * Lays out direct children of a row container left-to-right, top-aligned.
  * @param row Pointer to Row Node.
  */
-export void relayout_row(borrow mut NodeRow row) {
+export void relayout_row(borrow NodeRow row) {
     i32 cursor_x = row.x + row.padding;
     i32 child_y = row.y + row.padding;
     i32 gap = row.gap;
 
     for (i32 child_id in children(row.id)) {
         if (!node_exists(child_id)) { break; }
-        borrow mut NodeRow child = row_of(child_id);
+        borrow NodeRow child = row_of(child_id);
         i32 child_w = child.w;
         place_child(child_id, cursor_x, child_y);
         relayout_container(child);
@@ -920,7 +920,7 @@ export void relayout_row(borrow mut NodeRow row) {
  * Dispatches layout calculation for a container node to relayout_column or relayout_row.
  * @param n Pointer to container Node.
  */
-export void relayout_container(borrow mut NodeRow n) {
+export void relayout_container(borrow NodeRow n) {
     i32 k = n.kind;
     if (k == NodeKind::COLUMN) { relayout_column(n); }
     if (k == NodeKind::ROW) { relayout_row(n); }
@@ -938,7 +938,7 @@ export void relayout_container(borrow mut NodeRow n) {
  */
 export void set_bounds(i32 id, i32 x, i32 y, i32 w, i32 h) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     // Damage the old area as well as the new one, so vacating a region repaints
     // the background that was underneath.
     damage_node(id);
@@ -960,7 +960,7 @@ export void set_bounds(i32 id, i32 x, i32 y, i32 w, i32 h) {
  */
 export void move_node(i32 id, i32 dx, i32 dy) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     damage_node(id);
     offset_subtree(id, dx, dy);
     damage_node(id);
@@ -974,7 +974,7 @@ export void move_node(i32 id, i32 dx, i32 dy) {
  */
 export void set_text(i32 id, str text) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     damage_node(id);   // old string's extent
     n.text = replaced_text(n.text, text);
     // Text keeps physical bounds equal to its measured size so damage,
@@ -997,7 +997,7 @@ export void set_text(i32 id, str text) {
  */
 export void set_role(i32 id, i32 role) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     n.role = (u16)role;
     touch();
 }
@@ -1009,7 +1009,7 @@ export void set_role(i32 id, i32 role) {
  */
 export void set_test_id(i32 id, str test_id) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     n.test_id = replaced_text(n.test_id, test_id);
     touch();
 }
@@ -1022,7 +1022,7 @@ export void set_test_id(i32 id, str test_id) {
  */
 export void set_colors(i32 id, i32 background, i32 border) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     damage_node(id);
     n.background_color = background;
     n.border_color = border;
@@ -1035,7 +1035,7 @@ export void set_colors(i32 id, i32 background, i32 border) {
  */
 export void set_color(i32 id, i32 color) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     n.color = color;
     damage_node(id);
 }
@@ -1047,7 +1047,7 @@ export void set_color(i32 id, i32 color) {
  */
 export void set_style(i32 id, i32 style) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     n.style = (u16)style;
     if (n.kind == NodeKind::TEXT) {
         n.w = (u16)text_width_of(n);
@@ -1064,7 +1064,7 @@ export void set_style(i32 id, i32 style) {
  */
 export void set_column_layout(i32 id, i32 padding, i32 gap) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     n.padding = (u16)padding;
     n.gap = (u16)gap;
     relayout_container(n);
@@ -1076,7 +1076,7 @@ export void set_column_layout(i32 id, i32 padding, i32 gap) {
  * @param flag NodeState flag.
  * @return True if visible appearance changes, false otherwise.
  */
-export bool state_is_visible(borrow mut NodeRow n, i32 flag) {
+export bool state_is_visible(borrow NodeRow n, i32 flag) {
     i32 kind = n.kind;
     if (flag == NodeState::HOVERED) {
         if (kind == NodeKind::BUTTON) { return true; }
@@ -1111,7 +1111,7 @@ export bool state_is_visible(borrow mut NodeRow n, i32 flag) {
  */
 export void set_state_flag(i32 id, i32 flag, i32 on) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     i32 state = n.state;
     i32 next = state & (~flag);
     if (on != 0) { next = state | flag; }
@@ -1135,7 +1135,7 @@ export void set_state_flag(i32 id, i32 flag, i32 on) {
  */
 export bool get_state_flag(i32 id, i32 flag) {
     if (!node_exists(id)) { return false; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     i32 state = n.state;
     if (state & flag) { return true; }
     return false;
@@ -1232,7 +1232,7 @@ export bool is_pressed(i32 id) { return get_state_flag(id, NodeState::PRESSED); 
  */
 export Result<NodeState, UiError> state_of(i32 id) {
     if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     return Ok(n.state);
 }
 
@@ -1243,7 +1243,7 @@ export Result<NodeState, UiError> state_of(i32 id) {
  */
 export void set_on_click(i32 id, fn(i32 owner, i32 id, i32 arg) -> void handler) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     n.on_click = handler;
     set_hit_testable(id, handler != 0);
 }
@@ -1255,7 +1255,7 @@ export void set_on_click(i32 id, fn(i32 owner, i32 id, i32 arg) -> void handler)
  */
 export Result<Option<fn(i32 owner, i32 id, i32 arg) -> void>, UiError> get_on_click(i32 id) {
     if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     if (n.on_click == 0) { return Ok(None); }
     return Ok(Some(n.on_click));
 }
@@ -1267,7 +1267,7 @@ export Result<Option<fn(i32 owner, i32 id, i32 arg) -> void>, UiError> get_on_cl
  */
 export void set_on_key(i32 id, fn(i32 owner, i32 id, i32 arg) -> i32 handler) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     n.on_key = handler;
 }
 
@@ -1278,7 +1278,7 @@ export void set_on_key(i32 id, fn(i32 owner, i32 id, i32 arg) -> i32 handler) {
  */
 export void set_on_change(i32 id, fn(i32 owner, i32 id, i32 arg) -> void handler) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     n.on_change = handler;
 }
 
@@ -1289,7 +1289,7 @@ export void set_on_change(i32 id, fn(i32 owner, i32 id, i32 arg) -> void handler
  */
 export void set_on_close(i32 id, fn(i32 owner, i32 id, i32 arg) -> void handler) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     n.on_close = handler;
 }
 
@@ -1300,7 +1300,7 @@ export void set_on_close(i32 id, fn(i32 owner, i32 id, i32 arg) -> void handler)
  */
 export Result<Option<fn(i32 owner, i32 id, i32 arg) -> void>, UiError> on_close_of(i32 id) {
     if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     if (n.on_close == 0) { return Ok(None); }
     return Ok(Some(n.on_close));
 }
@@ -1310,7 +1310,7 @@ export Result<Option<fn(i32 owner, i32 id, i32 arg) -> void>, UiError> on_close_
  * (owner, id, arg) event queue -- not a direct call.
  * @param n Pointer to DOM Node.
  */
-export void fire_change(borrow mut NodeRow n) {
+export void fire_change(borrow NodeRow n) {
     emit(n, UiEventKind::CHANGE, n.on_change, 0);
 }
 
@@ -1322,7 +1322,7 @@ export void fire_change(borrow mut NodeRow n) {
  */
 export bool dispatch_click(i32 id) {
     if (!node_exists(id)) { return false; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     if (n.kind == NodeKind::CHECKBOX) {
         i32 now = n.state & NodeState::CHECKED;
         set_state_flag(id, NodeState::CHECKED, !now);
@@ -1338,7 +1338,7 @@ export bool dispatch_click(i32 id) {
  * Results are stored in g_ext_x and g_ext_y.
  * @param parent Pointer to parent Node.
  */
-export void content_origin(borrow mut NodeRow parent) {
+export void content_origin(borrow NodeRow parent) {
     g_ext_x = parent.x;
     g_ext_y = parent.y;
     if (parent.kind == NodeKind::WINDOW) {
@@ -1355,7 +1355,7 @@ export void content_origin(borrow mut NodeRow parent) {
 export Result<_, UiError> append_child(i32 parent_id, i32 child_id) {
     if (!node_exists(parent_id)) { return Err(UiError::NodeNotFound(parent_id)); }
     if (!node_exists(child_id)) { return Err(UiError::NodeNotFound(child_id)); }
-    borrow mut NodeRow parent = row_of(parent_id);
+    borrow NodeRow parent = row_of(parent_id);
     dom_model.node_from_raw(parent_id).children_add(dom_model.node_from_raw(child_id));
 
     // Authored coordinates are relative to the parent's content origin;
@@ -1375,7 +1375,7 @@ export Result<_, UiError> append_child(i32 parent_id, i32 child_id) {
  * Unlinks a node from its parent's sibling linked-list without freeing or damaging.
  * @param n Pointer to DOM Node.
  */
-export void unlink(borrow mut NodeRow n) {
+export void unlink(borrow NodeRow n) {
     dom_model.node_from_raw(n.id).children_detach();
 }
 
@@ -1399,7 +1399,7 @@ export void bring_to_front(i32 id) {
 export void free_subtree(i32 id) {
     if (!node_exists(id)) { return; }
     for (i32 child_id in children(id)) { free_subtree(child_id); }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     if (g_focus_id == id) { g_focus_id = 0; }
     if (g_active_window == id) { g_active_window = 0; }
     // Drop it from the timer list.
@@ -1434,7 +1434,7 @@ export void free_subtree(i32 id) {
  */
 export void remove_node(i32 id) {
     if (!node_exists(id)) { return; }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     damage_node(id);
     unlink(n);
     free_subtree(id);
@@ -1464,7 +1464,7 @@ export i32 taskbar_id() {
  */
 export Result<Option<i32>, UiError> first_child(i32 id) {
     if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     return case dom_model.node_from_raw(id).children_first() of {
         Some(child) -> Ok(Some(child.raw()));
         None -> Ok(None);
@@ -1478,7 +1478,7 @@ export Result<Option<i32>, UiError> first_child(i32 id) {
  */
 export Result<Option<i32>, UiError> next_sibling(i32 id) {
     if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow mut NodeRow n = row_of(id);
+    borrow NodeRow n = row_of(id);
     return case dom_model.node_from_raw(id).children_next() of {
         Some(sibling) -> Ok(Some(sibling.raw()));
         None -> Ok(None);
@@ -1497,7 +1497,7 @@ export struct Children {
 };
 
 export impl Iterator<i32> for Children {
-    Option<i32> (borrow mut Self self) next() {
+    Option<i32> (borrow Self self) next() {
         if (self.next == 0) { return None; }
         i32 id = self.next;
         self.next = node_exists(id) ? dom_model.node_children_next_id(id) : 0;
@@ -1525,7 +1525,7 @@ export Result<Option<i32>, UiError> window_of(i32 id) {
     i32 cur = id;
     while (cur != 0) {
         if (!node_exists(cur)) { return Err(UiError::NodeNotFound(cur)); }
-        borrow mut NodeRow n = row_of(cur);
+        borrow NodeRow n = row_of(cur);
         if (n.kind == NodeKind::WINDOW) { return Ok(Some(cur)); }
         cur = parent_id(cur);
     }
@@ -1615,7 +1615,7 @@ export void select_damage(i32 index) {
 export void select_full_paint() { g_painting_all = 1; }
 
 /** Returns true when a node overlaps the selected paint region. */
-export bool node_intersects_paint(borrow mut NodeRow node) {
+export bool node_intersects_paint(borrow NodeRow node) {
     if (g_painting_all) { return true; }
     node_extent(node);
     if (g_ext_x + g_ext_w <= g_paint_x0) { return false; }
@@ -1636,7 +1636,7 @@ export i32 paint_height() { return g_paint_y1 - g_paint_y0; }
  * @param n Pointer to DOM Node.
  * @return True if container clips children, false otherwise.
  */
-export bool clips_children(borrow mut NodeRow n) {
+export bool clips_children(borrow NodeRow n) {
     i32 k = n.kind;
     if (k == NodeKind::WINDOW) { return true; }
     if (k == NodeKind::PANEL) { return true; }
@@ -1646,6 +1646,6 @@ export bool clips_children(borrow mut NodeRow n) {
 /** Checks whether the node with the given ID clips its children. */
 export bool clips_children_id(i32 id) {
     if (!node_exists(id)) { return false; }
-    borrow mut NodeRow node = row_of(id);
+    borrow NodeRow node = row_of(id);
     return clips_children(node);
 }

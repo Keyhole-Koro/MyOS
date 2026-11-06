@@ -110,7 +110,7 @@ export Result<i32, UiError> create_box(i32 x, i32 y, i32 w, i32 h,
 export Result<i32, UiError> create_panel(i32 x, i32 y, i32 w, i32 h, i32 radius) {
     i32 id = dom.create_node(NodeKind::PANEL, "panel")?;
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
-    borrow mut NodeRow n = dom.row_of(id);
+    borrow NodeRow n = dom.row_of(id);
     n.radius = (u16)dom.scale_ui(radius);
     dom.set_state_flag(id, NodeState::VISIBLE, 1);
     return Ok(id);
@@ -170,7 +170,7 @@ export Result<i32, UiError> create_text_input(str placeholder, i32 x, i32 y, i32
     i32 id = node.id;
     dom.set_role(id, NodeRole::TEXTBOX);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
-    borrow mut NodeRow n = dom.row_of(id);
+    borrow NodeRow n = dom.row_of(id);
     Blob buf = case blob.blob_new(capacity) of {
         Some(value) -> value;
         None -> ({ return Err(UiError::AllocationFailed(capacity)); });
@@ -244,7 +244,7 @@ export Result<i32, UiError> create_text_area(str name, i32 x, i32 y, i32 w, i32 
     i32 id = node.id;
     dom.set_role(id, NodeRole::TEXTAREA);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
-    borrow mut NodeRow n = dom.row_of(id);
+    borrow NodeRow n = dom.row_of(id);
     Blob buf = case blob.blob_new(capacity) of {
         Some(value) -> value;
         None -> ({ return Err(UiError::AllocationFailed(capacity)); });
@@ -278,7 +278,7 @@ export Result<i32, UiError> create_list(str name, i32 x, i32 y, i32 w, i32 h, i3
     i32 id = node.id;
     dom.set_role(id, NodeRole::LIST);
     dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
-    borrow mut NodeRow n = dom.row_of(id);
+    borrow NodeRow n = dom.row_of(id);
     Blob buf = case blob.blob_new(capacity) of {
         Some(value) -> value;
         None -> ({ return Err(UiError::AllocationFailed(capacity)); });

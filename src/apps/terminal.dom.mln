@@ -47,7 +47,7 @@ struct Terminal {
  * Builds the terminal window and focuses its command input.
  * @return DOM node ID of the terminal window.
  */
-i32 (borrow mut Terminal t) view() {
+i32 (borrow Terminal t) view() {
     i32 off = 24 * opened_count;
     opened_count++;
     i32 win = <Window title="Terminal" x={220 + off} y={40 + off} w={560} h={400}>
@@ -66,7 +66,7 @@ i32 (borrow mut Terminal t) view() {
  * Appends text to the terminal output area.
  * @param s NUL-terminated text to append.
  */
-void (borrow Terminal t) say(str s) {
+void (Terminal t) say(str s) {
     ui.area_append(t.out, s);
 }
 
@@ -74,7 +74,7 @@ void (borrow Terminal t) say(str s) {
  * Appends a line of text and a newline to the terminal output area.
  * @param s NUL-terminated line to append.
  */
-void (borrow Terminal t) say_line(str s) {
+void (Terminal t) say_line(str s) {
     t.say(s);
     t.say("\n");
 }
@@ -84,7 +84,7 @@ void (borrow Terminal t) say_line(str s) {
  * @param what The command, as the line's prefix.
  * @param message Why, typically an error's `describe()`.
  */
-void (borrow Terminal t) say_error(str what, str message) {
+void (Terminal t) say_error(str what, str message) {
     t.say(what);
     t.say(": ");
     t.say_line(message);
@@ -95,7 +95,7 @@ void (borrow Terminal t) say_error(str what, str message) {
  * Lists entries in a directory in the terminal output.
  * @param dir NUL-terminated directory path; empty string selects the root.
  */
-void (borrow mut Terminal t) cmd_ls(str dir) {
+void (borrow Terminal t) cmd_ls(str dir) {
     i32 n = 0;
     i32 start = 0;
     while (1) {
@@ -138,7 +138,7 @@ void (borrow mut Terminal t) cmd_ls(str dir) {
  * Reads a file and writes its contents to the terminal output.
  * @param path NUL-terminated file path to display.
  */
-void (borrow mut Terminal t) cmd_cat(str path) {
+void (borrow Terminal t) cmd_cat(str path) {
     i32 fd = case fs.open(path) of {
         Ok(v) -> v;
         Err(e) -> ({ t.say_error("cat", e.describe()); return; });
@@ -163,7 +163,7 @@ void (borrow mut Terminal t) cmd_cat(str path) {
  * Starts an executable in a child process and routes its output to this terminal.
  * @param path NUL-terminated executable path or app name to launch.
  */
-void (borrow mut Terminal t) cmd_run(str path) {
+void (borrow Terminal t) cmd_run(str path) {
     if (t.pid != 0) {
         t.say_line("a process is still running here");
         return;
@@ -193,7 +193,7 @@ str part(str line, i32 start, i32 end) {
  * Echoes and dispatches a command line, forwarding it to an attached process when present.
  * @param line Command line.
  */
-void (borrow mut Terminal t) run_line(str line) {
+void (borrow Terminal t) run_line(str line) {
     // Echo the command line into the transcript.
     t.say("$ ");
     t.say_line(line);
@@ -230,8 +230,8 @@ void (borrow mut Terminal t) run_line(str line) {
  * Submits the current input text as a terminal command.
  * @param id DOM node ID supplied by the key/button event.
  */
-void (borrow mut Terminal t) submit(i32 id) {
-    Result<i32, UiError> copied = text_copy<96>(t.input, &mut t.line_buf);
+void (borrow Terminal t) submit(i32 id) {
+    Result<i32, UiError> copied = text_copy<96>(t.input, &t.line_buf);
     case copied of {
         Ok(_) -> _;
         Err(_) -> ({ t.say_line("cannot read command input"); return; });
@@ -245,7 +245,7 @@ void (borrow mut Terminal t) submit(i32 id) {
 // Poll the attached process; report and reap it once it exits.
 @timer(100)
 /** Checks the attached child process and reports/reaps it after exit. */
-void (borrow mut Terminal t) poll() {
+void (borrow Terminal t) poll() {
     if (t.pid == 0) { return; }
     i32 pid = t.pid;
     Result<bool, ProcessControlError> status = process.has_exited(pid);
@@ -295,6 +295,6 @@ void (borrow mut Terminal t) poll() {
 // to a TextArea that no longer exists.
 @on_close
 /** Unbinds the child process from this terminal's output node before close. */
-void (borrow mut Terminal t) closing() {
+void (borrow Terminal t) closing() {
     if (t.pid != 0) { terminal.unbind(t.pid); }
 }

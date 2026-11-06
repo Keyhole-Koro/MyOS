@@ -42,7 +42,7 @@ struct Editor {
 /** Builds the editor window and opens a scratch document for a plain launch.
  * @return DOM node ID of the editor window.
  */
-i32 (borrow mut Editor e) view() {
+i32 (borrow Editor e) view() {
     i32 win = <Window title="Editor" x={300} y={120} w={520} h={420}>
         <Row x={12} y={12} w={496} h={34} gap={8}>
             <TextInput ref={e.name} placeholder="file name" w={300} h={34} capacity={16} testId="editor-name" />
@@ -54,7 +54,7 @@ i32 (borrow mut Editor e) view() {
     // A plain launch starts on a scratch file; ui.open() replaces it.
     Text<64> scratch = Text<64> {};
     scratch.append("untitled.txt");
-    e.open(&scratch);
+    e.open(scratch);
     return win;
 }
 
@@ -64,7 +64,7 @@ i32 (borrow mut Editor e) view() {
  * Opens a file into the editor, or leaves an empty document for a new path.
  * @param path File path to load.
  */
-void (borrow mut Editor e) open(borrow Text<64> path) {
+void (borrow Editor e) open(Text<64> path) {
     ui.input_set(e.name, path.as_str());
     ui.area_clear(e.area);
     ui.focus(e.area);
@@ -96,15 +96,15 @@ void (borrow mut Editor e) open(borrow Text<64> path) {
 /** Saves the editor contents under the filename currently in the name field.
  * @param id DOM node ID supplied by the key event.
  */
-void (borrow mut Editor e) save(i32 id) {
-    Result<i32, UiError> name_copy = text_copy<32>(e.name, &mut e.save_name);
+void (borrow Editor e) save(i32 id) {
+    Result<i32, UiError> name_copy = text_copy<32>(e.name, &e.save_name);
     case name_copy of {
         Ok(_) -> _;
         Err(error) -> ({ ui.set_error(e.status, "save failed", error.describe()); return; });
     };
     str path = e.save_name.as_str();
     if (path.is_empty()) { ui.set_text(e.status, "enter a file name first"); return; }
-    Result<i32, UiError> text_result = text_copy<4096>(e.area, &mut e.save_text);
+    Result<i32, UiError> text_result = text_copy<4096>(e.area, &e.save_text);
     i32 len = case text_result of {
         Ok(value) -> value;
         Err(error) -> ({ ui.set_error(e.status, "save failed", error.describe()); return; });

@@ -34,7 +34,7 @@ struct Notes {
 /** Builds a Notes window with per-instance title and body fields.
  * @return DOM node ID of the new Notes window.
  */
-i32 (borrow mut Notes n) view() {
+i32 (borrow Notes n) view() {
     i32 offset = 28 * opened_count;
     opened_count++;
     return <Window title="Notes" x={540 + offset} y={96 + offset} w={380} h={330}>
@@ -56,8 +56,8 @@ i32 (borrow mut Notes n) view() {
  * Copies a changed input's text and mirrors it in the echo label.
  * @param id DOM node ID of the input that changed.
  */
-void (borrow mut Notes n) changed(i32 id) {
-    Result<i32, UiError> copied = text_copy<128>(id, &mut n.typed);
+void (borrow Notes n) changed(i32 id) {
+    Result<i32, UiError> copied = text_copy<128>(id, &n.typed);
     case copied of {
         Ok(_) -> _;
         Err(_) -> ({ return; });
@@ -70,7 +70,7 @@ void (borrow mut Notes n) changed(i32 id) {
  * Clears the title and body fields and refreshes the echo label.
  * @param id DOM node ID supplied by the clear-button event.
  */
-void (borrow mut Notes n) clear(i32 id) {
+void (borrow Notes n) clear(i32 id) {
     ui.input_set(n.title, "");
     ui.input_set(n.body, "");
     n.changed(n.title);

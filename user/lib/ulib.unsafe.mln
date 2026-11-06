@@ -24,7 +24,7 @@ export struct Line {
  * @return True if they hold the same bytes.
  */
 @safe
-export bool line_is(borrow Line line, str s) {
+export bool line_is(Line line, str s) {
     if (line.length != s.length) { return false; }
     i32 i = 0;
     while (i < s.length) {
@@ -39,7 +39,7 @@ export bool line_is(borrow Line line, str s) {
  * @param line Line to write.
  */
 @safe
-export void print_line(borrow Line line) {
+export void print_line(Line line) {
     i32 written = 0;
     sys_write(1, &line.data[0], line.length, &written);
     sys_write(1, "\n", 1, &written);
@@ -100,7 +100,7 @@ export void print_i32(i32 v) {
  * @param out Destination line.
  */
 @safe
-export void read_line(borrow mut Line out) {
+export void read_line(borrow Line out) {
     out.length = 0;
     while (1) {
         char c[1];
