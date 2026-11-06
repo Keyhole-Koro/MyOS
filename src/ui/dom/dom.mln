@@ -133,9 +133,11 @@ i32 g_taskbar_id = 0;      // the desktop's taskbar node, drawn above windows
 
 i32 g_active_window = 0;   // window with STATE_FOCUSED (front-most, gets keys)
 i32 g_focus_id = 0;        // node with keyboard focus (a TextInput), or 0
-fn() -> void g_launcher = 0; // taskbar launcher button
+void no_launcher() { }
+fn() -> void g_launcher = no_launcher; // taskbar launcher button
 i32 g_menu_id = 0;         // the open popup menu, or 0
-fn(i32 index) -> void g_menu_handler = 0;
+void no_menu_action(i32 index) { }
+fn(i32 index) -> void g_menu_handler = no_menu_action;
 i32 g_menu_target = 0;     // the window a window-menu acts on (0 for the desktop menu)
 
 // The app instance whose code is running right now (a handler drained from
@@ -162,7 +164,8 @@ export i32 apps_starting() { return g_apps_starting; }
 
 // Installed by the app framework: i32 filter(owner, code, mods) sees every
 // key DOWN before the focused widget and returns 1 to claim it (shortcuts).
-fn(i32 owner, i32 code, i32 mods) -> bool g_key_filter = 0;
+bool no_key_filter(i32 owner, i32 code, i32 mods) { return false; }
+fn(i32 owner, i32 code, i32 mods) -> bool g_key_filter = no_key_filter;
 
 // Pending handler calls, stored in parallel arrays so callback types survive.
 export const i32 EVENT_MAX = 64;
@@ -397,18 +400,15 @@ export void set_owner(i32 id, i32 owner) {
 
 /**
  * Installs the key-down filter called before the focused widget receives a key.
- * @param handler Callback (owner, key_code, modifiers) returning nonzero to consume the key; 0 disables it.
+ * @param handler Callback (owner, key_code, modifiers) returning true to consume the key.
  */
 export void set_key_filter(fn(i32 owner, i32 code, i32 mods) -> bool handler) { g_key_filter = handler; }
 
 /**
  * Returns the currently installed key-filter callback.
- * @return Callback function pointer, or None if no filter is installed.
+ * @return Callback function, which keeps every key until a filter is installed.
  */
-export Option<fn(i32 owner, i32 code, i32 mods) -> bool> key_filter() {
-    if (g_key_filter == 0) { return None; }
-    return Some(g_key_filter);
-}
+export fn(i32 owner, i32 code, i32 mods) -> bool key_filter() { return g_key_filter; }
 
 /**
  * Returns the app process ID whose view or event handler is currently running.
@@ -1581,7 +1581,7 @@ export void set_menu_state(i32 id, fn(i32 index) -> void handler, i32 target) {
 /** Clears popup state before its node is removed. */
 export void clear_menu_state() {
     g_menu_id = 0;
-    g_menu_handler = 0;
+    g_menu_handler = no_menu_action;
     g_menu_target = 0;
 }
 

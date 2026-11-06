@@ -76,8 +76,11 @@ i32 registry_count = 0;
 
 // Outbound ports installed by boundary endpoints. The shell owns lifecycle
 // policy but does not depend on the transport that delivers it.
-fn(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) -> void event_sink = 0;
-fn(i32 pid) -> void process_gone_sink = 0;
+void no_event_sink(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) { }
+void no_process_gone_sink(i32 pid) { }
+
+fn(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) -> void event_sink = no_event_sink;
+fn(i32 pid) -> void process_gone_sink = no_process_gone_sink;
 
 /**
  * Installs the callback used to deliver application lifecycle and shortcut events.
@@ -103,7 +106,7 @@ export void set_process_gone_sink(fn(i32 pid) -> void sink) { process_gone_sink 
  * @param text Optional NUL-terminated text payload, such as an opened path.
  */
 void push_app_event(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) {
-    if (event_sink != 0) { event_sink(owner, id, kind, arg, token, text); }
+    event_sink(owner, id, kind, arg, token, text);
 }
 
 // Names, types and paths read out of images on disk are copied here: the
@@ -477,7 +480,7 @@ void reap_exited(i32 owner, i32 id, i32 arg) {
                         release_claims(pid);
                         dom_widgets.activate_topmost();
                     }
-                    if (process_gone_sink != 0) { process_gone_sink(pid); }
+                    process_gone_sink(pid);
                     instances[i] = None;
                 }
             }

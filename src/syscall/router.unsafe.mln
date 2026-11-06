@@ -11,6 +11,7 @@ import debug from "@kernel/debug/debug.mln";
 import { OsService, OsServiceError } from "@contracts/myos/services.contract.mln";
 import { Result } from "@std/core/result.mln";
 import user_memory from "user_memory.mln";
+import { UserAddress } from "@std/core/address.mln";
 import request_gateway from "@os/ipc/gateway.mln";
 import fs_syscall from "@os/fs/syscall.mln";
 import process_syscall from "@os/proc/syscall.mln";
@@ -31,7 +32,7 @@ Text<128> g_log_line;
  * @param args Virtual address of argument struct or scalar argument in caller's memory space.
  * @return Ok(service status/result), or Err(UnknownService).
  */
-Result<i32, OsServiceError> handle(i32 pid, i32 service, i32 args) {
+Result<i32, OsServiceError> handle(i32 pid, i32 service, UserAddress args) {
     if (service == OsService::REQUEST) {
         if (request_gateway.request(pid, args)) { return Ok(1); }
         return Ok(0);
@@ -62,25 +63,13 @@ Result<i32, OsServiceError> handle(i32 pid, i32 service, i32 args) {
 }
 
 /**
- * Writes the typed router result into kernel-owned storage.
- * @param pid Process ID of the caller.
- * @param service Requested OsService wire value.
- * @param args User address of the service arguments.
- * @param result_out Kernel address receiving Result<i32, OsServiceError>.
- */
-void handle_result(i32 pid, i32 service, i32 args, i32 result_out) {
-    Result<i32, OsServiceError> *out = (Result<i32, OsServiceError>*)result_out;
-    *out = handle(pid, service, args);
-}
-
-/**
  * Initializes the OS service router.
  *
- * Sets up shell event and process cleanup sinks, and registers `handle_result` as
+ * Sets up shell event and process cleanup sinks, and registers `handle` as
  * the OS_CALL handler with the kernel syscall subsystem.
  */
 export void init() {
     app.set_event_sink(app_events.push_shell);
     app.set_process_gone_sink(request_gateway.process_gone);
-    syscall.set_os_handler(handle_result);
+    syscall.set_os_handler(handle);
 }

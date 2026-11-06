@@ -5,6 +5,8 @@ import heap from "@kernel/mm/heap.mln";
 import { HeapBlock } from "@kernel/mm/heap.mln";
 import mem from "@kernel/mm/mem.mln";
 import syscall from "@kernel/kernel/syscall.mln";
+import user_memory from "@os/syscall/user_memory.mln";
+import { UserAddress } from "@std/core/address.mln";
 import debug from "@kernel/debug/debug.mln";
 import loader from "@kernel/kernel/loader.mln";
 import process from "@kernel/kernel/process.mln";
@@ -168,7 +170,7 @@ export void feed_line(i32 pid, char *line) {
  * @param count Number of bytes to write.
  * @return Number of bytes written.
  */
-i32 on_write(i32 pid, i32 buf, i32 count) {
+i32 on_write(i32 pid, UserAddress buf, i32 count) {
     Option<i32> output = output_of(pid);
     i32 out = 0;
     bool has_output = false;
@@ -180,13 +182,13 @@ i32 on_write(i32 pid, i32 buf, i32 count) {
         // No console: fall back to the serial log so nothing is lost.
         i32 k = 0;
         while (k < count) {
-            i32 c = mem.read_byte(buf + k);
+            i32 c = user_memory.read_byte(buf.plus(k));
             serial.putc(c);
             k++;
         }
         return count;
     }
-    str bytes = str { data: (char*)buf, length: count };
+    str bytes = str { data: (char*)(i32)buf, length: count };
     dom_widgets.append_bytes(out, bytes);
     return count;
 }
@@ -198,7 +200,7 @@ i32 on_write(i32 pid, i32 buf, i32 count) {
  * @param count Maximum number of bytes to read.
  * @return Number of bytes read.
  */
-i32 on_read(i32 pid, i32 buf, i32 count) {
+i32 on_read(i32 pid, UserAddress buf, i32 count) {
     i32 i = case slot_of(pid) of {
         Some(v) -> v;
         None -> ({ return 0; });
@@ -209,7 +211,7 @@ i32 on_read(i32 pid, i32 buf, i32 count) {
         if (consoles[i].in_head == consoles[i].in_tail) { break; }
         i32 c = mem.read_byte(base + consoles[i].in_head);
         consoles[i].in_head = (consoles[i].in_head + 1) % STDIN_CAP;
-        mem.write_byte(buf + got, c);
+        user_memory.write_byte(buf.plus(got), c);
         got++;
     }
     return got;
@@ -304,16 +306,16 @@ export Result<i32, SpawnError> spawn_file(char *path) {
 }
 
 /**
- * SYS_SPAWN hook: writes a typed launch result and binds successful children to the parent console.
- * @param user_path Virtual memory address of null-terminated path string in user space.
- * @param result_out Kernel address of Result<i32, SpawnError> output.
+ * SYS_SPAWN hook: launches the program and binds a successful child to the parent's console.
+ * @param user_path Address of a null-terminated path string in user space.
+ * @return The new process ID.
  */
-void on_spawn(i32 user_path, Result<i32, SpawnError> *result_out) {
+Result<i32, SpawnError> on_spawn(UserAddress user_path) {
     Text<32> path = Text<32> {};
     path.clear();
     i32 k = 0;
     while (k < path.capacity()) {
-        i32 c = mem.read_byte(user_path + k);
+        i32 c = user_memory.read_byte(user_path.plus(k));
         if (c == 0) { break; }
         path.push((u8)c);
         k++;
@@ -331,7 +333,7 @@ void on_spawn(i32 user_path, Result<i32, SpawnError> *result_out) {
             None -> _;
         };
     }
-    *result_out = result;
+    return result;
 }
 
 /**

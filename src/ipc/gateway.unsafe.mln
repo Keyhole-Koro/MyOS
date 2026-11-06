@@ -15,6 +15,7 @@ import heap from "@kernel/mm/heap.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import user_memory from "@os/syscall/user_memory.mln";
+import { UserAddress } from "@std/core/address.mln";
 import request_channel from "channel.mln";
 import app_events from "events.mln";
 import { Request, RequestDomain, TransportSignal } from "@contracts/myapp/message.contract.mln";
@@ -54,10 +55,10 @@ struct GatewaySlot {
     i32 s0;
     i32 s1;
     i32 out;
-    i32 out_user;
+    UserAddress out_user;
     i32 out_cap;
     i32 result;
-    i32 result_user;
+    UserAddress result_user;
     i32 result_size;
 };
 
@@ -99,11 +100,11 @@ i32 alloc_or_panic(i32 n) {
  * @param user_request User-space address of a 15-word Request.
  * @param request Destination Request structure.
  */
-void read_user_request(i32 user_request, Request *request) {
+void read_user_request(UserAddress user_request, Request *request) {
     i32 words[15];
     i32 word = 0;
     while (word < request_channel.REQUEST_WORD_COUNT) {
-        words[word] = mem.read_word(user_request + word * 4);
+        words[word] = user_memory.read_word(user_request.plus(word * 4));
         word++;
     }
     request_channel.decode_request_words(&words[0], request);
@@ -117,8 +118,8 @@ void read_user_request(i32 user_request, Request *request) {
 void copy_request_strings(i32 slot_index, Request *request) {
     char *s0 = (char*)gateway_slots[slot_index].s0;
     char *s1 = (char*)gateway_slots[slot_index].s1;
-    user_memory.copy_in_view((i32)request->s0, request->s0_len, s0, S0_CAP);
-    user_memory.copy_in_view((i32)request->s1, request->s1_len, s1, S1_CAP);
+    user_memory.copy_in_view(UserAddress((i32)request->s0), request->s0_len, s0, S0_CAP);
+    user_memory.copy_in_view(UserAddress((i32)request->s1), request->s1_len, s1, S1_CAP);
     request->s0 = s0;
     request->s1 = s1;
 }
@@ -130,11 +131,11 @@ void copy_request_strings(i32 slot_index, Request *request) {
  * @param request Request to update before it crosses into the server task.
  */
 void stage_request_outputs(i32 slot_index, Request *request) {
-    gateway_slots[slot_index].out_user = 0;
-    gateway_slots[slot_index].result_user = 0;
+    gateway_slots[slot_index].out_user = UserAddress(0);
+    gateway_slots[slot_index].result_user = UserAddress(0);
 
     if (request->domain == RequestDomain::UI && request->op == UiOp::TEXT_COPY) {
-        gateway_slots[slot_index].out_user = request->a1;
+        gateway_slots[slot_index].out_user = UserAddress(request->a1);
         gateway_slots[slot_index].out_cap = request->a2;
         if (gateway_slots[slot_index].out_cap > OUT_CAP) {
             gateway_slots[slot_index].out_cap = OUT_CAP;
@@ -142,7 +143,7 @@ void stage_request_outputs(i32 slot_index, Request *request) {
         request->a1 = gateway_slots[slot_index].out;
         request->a2 = gateway_slots[slot_index].out_cap;
     } else if (request->domain == RequestDomain::UI && request->op == UiOp::LIST_ITEM) {
-        gateway_slots[slot_index].out_user = request->a2;
+        gateway_slots[slot_index].out_user = UserAddress(request->a2);
         gateway_slots[slot_index].out_cap = request->a3;
         if (gateway_slots[slot_index].out_cap < 0) {
             gateway_slots[slot_index].out_cap = 0;
@@ -157,7 +158,7 @@ void stage_request_outputs(i32 slot_index, Request *request) {
     }
 
     if (request->result_out != 0 && request->result_size > 0) {
-        gateway_slots[slot_index].result_user = request->result_out;
+        gateway_slots[slot_index].result_user = UserAddress(request->result_out);
         gateway_slots[slot_index].result_size = request->result_size;
         if (gateway_slots[slot_index].result_size < 0) {
             gateway_slots[slot_index].result_size = 0;
@@ -217,7 +218,7 @@ bool ready(i32 pid) {
  *         A full channel is transient and may be retried. The PID comes from
  *         the current-process syscall context and must be valid.
  */
-export bool request(i32 pid, i32 user_request) {
+export bool request(i32 pid, UserAddress user_request) {
     if (!ready(pid)) { debug.panic("request_gateway: invalid caller PID"); }
     i32 i = case slot(pid) of {
         Some(v) -> v;
@@ -246,7 +247,7 @@ export bool request(i32 pid, i32 user_request) {
  * @param user_out Destination virtual address in user space for the return scalar.
  * @return 1 if a reply was received, 0 if no reply is available.
  */
-export bool reply(i32 pid, i32 user_out) {
+export bool reply(i32 pid, UserAddress user_out) {
     i32 i = case slot(pid) of {
         Some(v) -> v;
         None -> ({ debug.panic("request_gateway: invalid reply PID"); return false; });
@@ -258,18 +259,18 @@ export bool reply(i32 pid, i32 user_out) {
         return false;
     }
     scheduler.disarm_notification(TransportSignal::REPLY);
-    if (gateway_slots[i].out_user != 0) {
+    if ((i32)gateway_slots[i].out_user != 0) {
         i32 n = str.len((char*)gateway_slots[i].out) + 1;
         if (n > gateway_slots[i].out_cap) { n = gateway_slots[i].out_cap; }
         user_memory.copy_out(gateway_slots[i].out_user, (char*)gateway_slots[i].out, n);
-        gateway_slots[i].out_user = 0;
+        gateway_slots[i].out_user = UserAddress(0);
     }
-    if (gateway_slots[i].result_user != 0 && gateway_slots[i].result_size > 0) {
+    if ((i32)gateway_slots[i].result_user != 0 && gateway_slots[i].result_size > 0) {
         user_memory.copy_out(gateway_slots[i].result_user, (char*)gateway_slots[i].result, gateway_slots[i].result_size);
     }
-    gateway_slots[i].result_user = 0;
+    gateway_slots[i].result_user = UserAddress(0);
     gateway_slots[i].result_size = 0;
-    mem.write_word(user_out, r[0]);
+    user_memory.write_word(user_out, r[0]);
     return true;
 }
 
@@ -283,7 +284,7 @@ export bool reply(i32 pid, i32 user_out) {
  * @param user_event Pointer to an Event with its own inline text storage.
  * @return 1 if an event was dequeued, 0 if no events are pending.
  */
-export bool poll(i32 pid, i32 user_event) {
+export bool poll(i32 pid, UserAddress user_event) {
     if (!ready(pid)) { debug.panic("request_gateway: invalid poll PID"); }
     i32 i = case slot(pid) of {
         Some(v) -> v;
@@ -295,14 +296,14 @@ export bool poll(i32 pid, i32 user_event) {
         return false;
     }
     scheduler.disarm_notification(TransportSignal::EVENT);
-    mem.write_word(user_event, w[0]);
-    mem.write_word(user_event + 4, w[1]);
-    mem.write_word(user_event + 8, w[2]);
-    mem.write_word(user_event + 12, w[3]);
-    mem.write_word(user_event + 16, w[4]);
+    user_memory.write_word(user_event, w[0]);
+    user_memory.write_word(user_event.plus(4), w[1]);
+    user_memory.write_word(user_event.plus(8), w[2]);
+    user_memory.write_word(user_event.plus(12), w[3]);
+    user_memory.write_word(user_event.plus(16), w[4]);
     // Words 5..20 contain the event-owned, NUL-terminated 64-byte payload.
-    user_memory.copy_out(user_event + 20, (char*)(&w[5]), 64);
-    mem.write_byte(user_event + 83, 0);
+    user_memory.copy_out(user_event.plus(20), (char*)(&w[5]), 64);
+    user_memory.write_byte(user_event.plus(83), 0);
     return true;
 }
 
@@ -318,7 +319,7 @@ export void process_gone(i32 pid) {
     i32 w[24];
     if (gateway_slots[i].reply_ch != ChannelId(0)) { while (ipc.recv(gateway_slots[i].reply_ch, &w[0])) { } }
     if (gateway_slots[i].event_ch != ChannelId(0)) { while (ipc.recv(gateway_slots[i].event_ch, &w[0])) { } }
-    gateway_slots[i].out_user = 0;
-    gateway_slots[i].result_user = 0;
+    gateway_slots[i].out_user = UserAddress(0);
+    gateway_slots[i].result_user = UserAddress(0);
     gateway_slots[i].result_size = 0;
 }

@@ -983,9 +983,7 @@ export void menu_click(i32 px, i32 py) {
     fn(i32 index) -> void handler = dom.menu_handler();
     close_menu();
     case row of {
-        Some(r) -> ({
-            if (handler != 0) { handler(r); }
-        });
+        Some(r) -> handler(r);
         None -> _;
     };
 }
@@ -1091,14 +1089,12 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
             return;
         }
         // App shortcuts (@key) for the active window's app go first.
-        fn(i32 owner, i32 code, i32 mods) -> bool filter = dom.key_filter().unwrap_or(0);
-        if (filter != 0) {
-            Result<i32, UiError> owner = dom.owner_of(dom.active_window_id());
-            case owner of {
-                Ok(value) -> ({ if (filter(value, code, mods)) { return; } });
-                Err(_) -> _;
-            };
-        }
+        fn(i32 owner, i32 code, i32 mods) -> bool filter = dom.key_filter();
+        Result<i32, UiError> owner = dom.owner_of(dom.active_window_id());
+        case owner of {
+            Ok(value) -> ({ if (filter(value, code, mods)) { return; } });
+            Err(_) -> _;
+        };
     }
     if (!dom.node_exists(dom.focus_id())) { return; }
     borrow NodeRow n = dom.row_of(dom.focus_id());

@@ -30,10 +30,12 @@ i32 compositor_window_id_or_zero(i32 id) {
 
 // Work owned by outer boundary endpoints that must run on this task. Boot wires
 // the callback; the compositor does not depend on request transport.
-fn() -> bool g_request_pump = 0;
+bool no_requests() { return false; }
+
+fn() -> bool g_request_pump = no_requests;
 /**
  * Registers the callback that drains work owned by an outer request endpoint.
- * @param pump Callback function pointer, or 0 when no request pump is installed.
+ * @param pump Callback that reports whether it served anything.
  */
 export void set_request_pump(fn() -> bool pump) { g_request_pump = pump; }
 
@@ -81,7 +83,9 @@ i32 g_hot_id = 0;
 
 // Desktop context menu (right-click on the wallpaper), registered by main.
 char *g_desktop_menu_items = (char*)0;
-fn(i32 index) -> void g_desktop_menu_handler = 0;
+void no_desktop_menu(i32 index) { }
+
+fn(i32 index) -> void g_desktop_menu_handler = no_desktop_menu;
 
 /**
  * Registers the desktop wallpaper context menu items and click handler.
@@ -150,7 +154,7 @@ void on_press(i32 ex, i32 ey) {
             TaskbarTarget::Window(target) -> dom_widgets.focus_window(target);
             TaskbarTarget::Launcher -> ({
                 fn() -> void handler = dom.launcher_handler();
-                if (handler != 0) { handler(); }
+                handler();
             });
             TaskbarTarget::Miss -> 0;
         };
@@ -389,8 +393,7 @@ export void run() {
             // Application service work is answered here, on this task. The app
             // task sleeps on each request until its reply; its handlers run over
             // there, on events the DOM emitted above.
-            i32 served = 0;
-            if (g_request_pump != 0) { served = g_request_pump(); }
+            i32 served = g_request_pump();
 
             // The server's own queued handlers (taskbar, menus, the shell's
             // window-close hook) run here, between input and paint.

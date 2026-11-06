@@ -13,6 +13,7 @@ import {
 } from "@contracts/myos/process-args.contract.mln";
 import console from "console.mln";
 import user_memory from "@os/syscall/user_memory.mln";
+import { UserAddress } from "@std/core/address.mln";
 import { Result } from "@std/core/result.mln";
 import { result_take_ok } from "@std/core/result_take.mln";
 import { SpawnError } from "@contracts/process/spawn.contract.mln";
@@ -29,11 +30,11 @@ Text<128> g_line;
  * @param args Virtual address of argument structure in caller's memory.
  * @return Ok(_) when the request was handled, or Err(UnknownService).
  */
-export Result<_, OsServiceError> handle(i32 service, i32 args) {
+export Result<_, OsServiceError> handle(i32 service, UserAddress args) {
     if (service == OsService::PROC_SPAWN) {
         ProcSpawnArgs<Result<i32, SpawnError>> request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        user_memory.copy_in_string((i32)request.path, g_path.as_ptr(), g_path.data.length);
+        user_memory.copy_in_string(UserAddress((i32)request.path), g_path.as_ptr(), g_path.data.length);
         g_path.sync_from_ptr();
         Result<i32, SpawnError> result = console.spawn_file(g_path.as_ptr());
         i32 pid = 0;
@@ -41,7 +42,7 @@ export Result<_, OsServiceError> handle(i32 service, i32 args) {
             console.bind(pid, request.stdout_node);
         }
         user_memory.copy_out(
-            (i32)request.result_out,
+            UserAddress((i32)request.result_out),
             (char*)(&result),
             sizeof(Result<i32, SpawnError>)
         );
@@ -64,7 +65,7 @@ export Result<_, OsServiceError> handle(i32 service, i32 args) {
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
         Result<bool, ProcessControlError> result = console.has_exited(request.pid);
         user_memory.copy_out(
-            (i32)request.result_out,
+            UserAddress((i32)request.result_out),
             (char*)(&result),
             sizeof(Result<bool, ProcessControlError>)
         );
@@ -75,7 +76,7 @@ export Result<_, OsServiceError> handle(i32 service, i32 args) {
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
         Result<ProcessExitStatus, ProcessControlError> result = console.reap(request.pid);
         user_memory.copy_out(
-            (i32)request.result_out,
+            UserAddress((i32)request.result_out),
             (char*)(&result),
             sizeof(Result<ProcessExitStatus, ProcessControlError>)
         );
@@ -84,7 +85,7 @@ export Result<_, OsServiceError> handle(i32 service, i32 args) {
     if (service == OsService::PROC_FEED) {
         ProcFeedArgs request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        user_memory.copy_in_string((i32)request.line, g_line.as_ptr(), g_line.data.length);
+        user_memory.copy_in_string(UserAddress((i32)request.line), g_line.as_ptr(), g_line.data.length);
         g_line.sync_from_ptr();
         console.feed_line(request.pid, g_line.as_ptr());
         return Ok(_);

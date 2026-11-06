@@ -22,6 +22,7 @@ import {
 } from "@contracts/myos/fs-args.contract.mln";
 import fs from "fs.mln";
 import user_memory from "@os/syscall/user_memory.mln";
+import { UserAddress } from "@std/core/address.mln";
 import { Text } from "@std/text/text.mln";
 import debug from "@kernel/debug/debug.mln";
 import error_trace from "@std/debug/error_trace.mln";
@@ -52,7 +53,7 @@ void log_error_trace(bool failed) {
  * @param out Kernel copy of the record.
  * @return Whether service selects A; out is filled only then.
  */
-bool accept<A: OsCall>(i32 service, i32 user_args, A *out) {
+bool accept<A: OsCall>(i32 service, UserAddress user_args, A *out) {
     if (service != A::service()) { return false; }
     user_memory.copy_in(user_args, (char*)out, sizeof(A));
     return true;
@@ -64,7 +65,7 @@ bool accept<A: OsCall>(i32 service, i32 user_args, A *out) {
  * @param value Kernel copy of the result.
  */
 void reply<T>(T *user_out, T *value) {
-    user_memory.copy_out((i32)user_out, (char*)value, sizeof(T));
+    user_memory.copy_out(UserAddress((i32)user_out), (char*)value, sizeof(T));
 }
 
 /**
@@ -77,7 +78,7 @@ void reply<T>(T *user_out, T *value) {
  */
 void read_user(FsReadArgs *args) {
     i32 fd = args->fd;
-    i32 user_buf = (i32)args->buffer;
+    UserAddress user_buf = UserAddress((i32)args->buffer);
     i32 size = args->size;
     i32 total = 0;
     while (total < size) {
@@ -96,7 +97,7 @@ void read_user(FsReadArgs *args) {
             });
         };
         if (got == 0) { break; }
-        user_memory.copy_out(user_buf + total, &g_io[0], got);
+        user_memory.copy_out(user_buf.plus(total), &g_io[0], got);
         total = total + got;
         if (got < want) { break; }
     }
@@ -114,14 +115,14 @@ void read_user(FsReadArgs *args) {
  */
 void write_user(FsWriteArgs *args) {
     i32 fd = args->fd;
-    i32 user_buf = (i32)args->buffer;
+    UserAddress user_buf = UserAddress((i32)args->buffer);
     i32 size = args->size;
     i32 total = 0;
     while (total < size) {
         i32 n = size - total;
         if (n > 512) { n = 512; }
         i32 k = 0;
-        while (k < n) { g_io[k] = (char)mem.read_byte(user_buf + total + k); k++; }
+        while (k < n) { g_io[k] = (char)user_memory.read_byte(user_buf.plus(total + k)); k++; }
         Result<i32, FsError> r = fs.write(fd, (i32)(&g_io[0]), n);
         i32 put = 0;
         case r of {
@@ -147,10 +148,10 @@ void write_user(FsWriteArgs *args) {
  * Completes the enumeration and writes its typed result to user memory.
  */
 void dir_next_user(FsDirNextArgs *args) {
-    user_memory.copy_in_string((i32)args->path, g_path.as_ptr(), g_path.data.length);
+    user_memory.copy_in_string(UserAddress((i32)args->path), g_path.as_ptr(), g_path.data.length);
     g_path.sync_from_ptr();
     i32 start = args->start;
-    i32 user_out = (i32)args->name_out;
+    UserAddress user_out = UserAddress((i32)args->name_out);
     i32 cap = args->name_cap;
     if (cap < 0) { cap = 0; }
     if (cap > 16) { cap = 16; }
@@ -164,7 +165,7 @@ void dir_next_user(FsDirNextArgs *args) {
                         i32 n = g_name.len() + 1;
                         if (n > cap) { n = cap; }
                         user_memory.copy_out(user_out, g_name.as_ptr(), n);
-                        mem.write_byte(user_out + cap - 1, 0);
+                        user_memory.write_byte(user_out.plus(cap - 1), 0);
                     }
                 });
                 None -> _;
@@ -180,7 +181,7 @@ void dir_next_user(FsDirNextArgs *args) {
  * @param user_path User address of a NUL-terminated path.
  */
 void copy_in_path(char *user_path) {
-    user_memory.copy_in_string((i32)user_path, g_path.as_ptr(), g_path.data.length);
+    user_memory.copy_in_string(UserAddress((i32)user_path), g_path.as_ptr(), g_path.data.length);
     g_path.sync_from_ptr();
 }
 
@@ -194,7 +195,7 @@ void copy_in_path(char *user_path) {
  * @param args Virtual address of argument structure in caller's memory.
  * @return Ok(_) when the request was handled, or Err(UnknownService).
  */
-export Result<_, OsServiceError> handle(i32 service, i32 args) {
+export Result<_, OsServiceError> handle(i32 service, UserAddress args) {
     FsReadArgs read;
     if (accept<FsReadArgs>(service, args, &read)) { read_user(&read); return Ok(_); }
     FsWriteArgs write;
