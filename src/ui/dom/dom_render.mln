@@ -80,27 +80,14 @@ export void draw_window(borrow NodeRow n) {
 
     // Title-bar buttons: close, minimize, maximize discs; their glyphs
     // (x, -, +) appear while the pointer is over the window.
-    Option<i32> close_x_result = dom_window_chrome.close_button_cx(n.id);
-    i32 cx = case close_x_result of {
-        Some(value) -> value;
-        None -> ({ return; });
-    };
-    Option<i32> button_y_result = dom_window_chrome.button_cy(n.id);
-    i32 cy = case button_y_result of {
-        Some(value) -> value;
-        None -> ({ return; });
-    };
+    i32 cy = dom_window_chrome.button_cy(n);
     i32 cr = dom_window_chrome.button_radius();
     i32 ring = theme.CLOSE_BUTTON_RING;
     i32 g = theme.CLOSE_GLYPH;
     i32 k = cr / 2;
     i32 which = 1;
     while (which <= 3) {
-        Option<i32> button_x_result = dom_window_chrome.button_cx(n.id, which);
-        i32 bx = case button_x_result of {
-            Some(value) -> value;
-            None -> ({ return; });
-        };
+        i32 bx = dom_window_chrome.button_cx(n, which);
         i32 face = theme.CLOSE_BUTTON;
         if (which == 2) { face = theme.MINIMIZE_BUTTON; }
         if (which == 3) { face = theme.MAXIMIZE_BUTTON; }
@@ -140,12 +127,7 @@ export void draw_window(borrow NodeRow n) {
         i32 title_color = theme.TEXT_PRIMARY;
         if (!active) { title_color = theme.TEXT_SECONDARY; }
         i32 th = graphics.text_height(1, s);
-        Option<i32> third_button_result = dom_window_chrome.button_cx(n.id, 3);
-        i32 third_button_x = case third_button_result of {
-            Some(value) -> value;
-            None -> ({ return; });
-        };
-        i32 inset = 2 * (third_button_x - x);
+        i32 inset = 2 * (dom_window_chrome.button_cx(n, 3) - x);
         graphics.push_clip(x + inset, y, w - 2 * inset, tb);
         str label_1 = n.text.as_str();
         graphics.draw_label_centered(x, y + (tb - th) / 2, w, label_1, title_color, 1, s);
@@ -553,7 +535,6 @@ export void draw_panel(borrow NodeRow n) {
 export i32 next_window_after(i32 after) {
     i32 best = 0;
     for (i32 child_id in dom.children(dom.desktop_id())) {
-        if (!dom.node_exists(child_id)) { break; }
         borrow NodeRow c = dom.row_of(child_id);
         if (c.kind == NodeKind::WINDOW) {
             if (child_id > after) {
@@ -678,8 +659,7 @@ export enum TaskbarTarget {
  * @return TaskbarTarget (Miss, Launcher, or Window(id)).
  */
 export TaskbarTarget taskbar_target_at(i32 px, i32 py) {
-    if (!dom.node_exists(dom.taskbar_id())) { return TaskbarTarget::Miss; }
-    borrow NodeRow n = dom.row_of(dom.taskbar_id());
+    borrow NodeRow n = case dom.find_row(dom.taskbar_id()) of { Some(row) -> row; None -> ({ return TaskbarTarget::Miss; }); };
     i32 s = dom.ui_scale();
     i32 x = n.x;
     i32 lx = x + 8 * s;
@@ -768,12 +748,10 @@ export bool node_in_damage(borrow NodeRow n) {
 }
 
 /**
- * Recursively renders a DOM node and its descendants respecting damage clipping.
- * @param node_id DOM Node ID to render.
+ * Recursively renders a DOM row and its descendants respecting damage clipping.
+ * @param n DOM Node row to render.
  */
-export void render(i32 node_id) {
-    if (!dom.node_exists(node_id)) { return; }
-    borrow NodeRow n = dom.row_of(node_id);
+export void render(borrow NodeRow n) {
     if (!(n.state & NodeState::VISIBLE)) { return; }
 
     bool in_damage = node_in_damage(n);
@@ -789,8 +767,8 @@ export void render(i32 node_id) {
         if (!in_damage) { return; }
         graphics.push_clip(n.x, n.y, n.w, n.h);
     }
-    for (i32 child_id in dom.children(node_id)) {
-        render(child_id);
+    for (i32 child_id in dom.children(n.id)) {
+        render(dom.row_of(child_id));
     }
     if (clip) { graphics.pop_clip(); }
 }
@@ -807,11 +785,11 @@ export void paint_desktop() {
 
     for (i32 child_id in dom.children(dom.desktop_id())) {
         if (child_id != dom.taskbar_id()) {
-            if (child_id != dom.menu_id()) { render(child_id); }
+            if (child_id != dom.menu_id()) { render(dom.row_of(child_id)); }
         }
     }
-    if (dom.taskbar_id() != 0) { render(dom.taskbar_id()); }
-    if (dom.menu_id() != 0) { render(dom.menu_id()); }
+    case dom.find_row(dom.taskbar_id()) of { Some(taskbar) -> render(taskbar); None -> _; };
+    case dom.find_row(dom.menu_id()) of { Some(menu) -> render(menu); None -> _; };
 }
 
 /**

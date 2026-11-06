@@ -51,9 +51,7 @@ export enum EditResult {
  * @return Taskbar height in pixels.
  */
 export i32 taskbar_height() {
-    if (!dom.node_exists(dom.taskbar_id())) { return 0; }
-    borrow NodeRow n = dom.row_of(dom.taskbar_id());
-    return n.h;
+    return case dom.find_row(dom.taskbar_id()) of { Some(n) -> n.h; None -> 0; };
 }
 
 /**
@@ -83,7 +81,6 @@ export void set_focus(i32 id) {
     if (dom.focus_id() != 0) { dom.set_state_flag(dom.focus_id(), NodeState::FOCUSED, 0); }
     dom.set_focus_id(0);
     if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
     dom.set_focus_id(id);
     dom.set_state_flag(id, NodeState::FOCUSED, 1);
 }
@@ -93,8 +90,7 @@ export void set_focus(i32 id) {
  * @param win Window DOM Node ID.
  */
 export void focus_window(i32 win) {
-    if (!dom.node_exists(win)) { return; }
-    borrow NodeRow n = dom.row_of(win);
+    borrow NodeRow n = case dom.find_row(win) of { Some(row) -> row; None -> ({ return; }); };
     if (n.kind != NodeKind::WINDOW) { return; }
     if (n.state & NodeState::MINIMIZED) {
         dom.set_state_flag(win, NodeState::MINIMIZED, 0);
@@ -121,7 +117,6 @@ i32 byte_of(str s, i32 index) {
 export void activate_topmost() {
     i32 top = 0;
     for (i32 child_id in dom.children(dom.desktop_id())) {
-        if (!dom.node_exists(child_id)) { break; }
         borrow NodeRow c = dom.row_of(child_id);
         if (c.kind == NodeKind::WINDOW) {
             if (!(c.state & NodeState::MINIMIZED)) { top = child_id; }
@@ -156,17 +151,16 @@ export void close_window(i32 win) {
  * @param h Target height in pixels.
  */
 export void resize_window(i32 win, i32 w, i32 h) {
-    if (!dom.node_exists(win)) { return; }
-    borrow NodeRow n = dom.row_of(win);
+    borrow NodeRow n = case dom.find_row(win) of { Some(row) -> row; None -> ({ return; }); };
     i32 s = dom.ui_scale();
     i32 min_w = 200 * s;
     i32 min_h = 120 * s;
     if (w < min_w) { w = min_w; }
     if (h < min_h) { h = min_h; }
-    dom.damage_node(win);
+    dom.damage_row(n);
     n.w = (u16)w;
     n.h = (u16)h;
-    dom.damage_node(win);
+    dom.damage_row(n);
     dom.touch();
 }
 
@@ -176,7 +170,6 @@ export void resize_window(i32 win, i32 w, i32 h) {
  */
 export void minimize_window(i32 win) {
     if (!dom.node_exists(win)) { return; }
-    borrow NodeRow n = dom.row_of(win);
     dom.set_state_flag(win, NodeState::MINIMIZED, 1);
     dom.set_state_flag(win, NodeState::VISIBLE, 0);
     if (widgets_window_id_or_zero(dom.focus_id()) == win) { set_focus(0); }
@@ -212,8 +205,7 @@ export bool is_maximized(i32 win) {
  * @param win Window DOM Node ID.
  */
 export void maximize_window(i32 win) {
-    if (!dom.node_exists(win)) { return; }
-    borrow NodeRow n = dom.row_of(win);
+    borrow NodeRow n = case dom.find_row(win) of { Some(row) -> row; None -> ({ return; }); };
     if (n.state & NodeState::MAXIMIZED) {
         i32 rx = n.sx;
         i32 ry = n.sy;
@@ -397,8 +389,7 @@ export i32 line_len_at(borrow NodeRow n, i32 start) {
  * @return Ok(line count), or Err when the node is missing or is not a TextArea.
  */
 export Result<i32, UiError> text_area_line_count(i32 id) {
-    if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow NodeRow n = dom.row_of(id);
+    borrow NodeRow n = dom.require_row(id)?;
     if (n.kind != NodeKind::TEXT_AREA) { return Err(UiError::WrongNodeKind(id)); }
     return Ok(line_of(n, n.len) + 1);
 }
@@ -541,8 +532,7 @@ export EditResult text_area_handle(borrow NodeRow n, i32 type, i32 code, i32 mod
  * @param s Null-terminated string to append.
  */
 export void append_text(i32 id, str s) {
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     if (n.kind != NodeKind::TEXT_AREA) { return; }
     Blob buf = n.text;
     i32 cap = n.cap;
@@ -577,7 +567,7 @@ export void append_text(i32 id, str s) {
     n.len = (u16)len;
     n.cursor = (u16)len;
     text_area_reveal_cursor(n);
-    dom.damage_node(id);
+    dom.damage_row(n);
     dom.touch();
 }
 
@@ -610,8 +600,7 @@ export void append_bytes(i32 id, str bytes) {
  * @param id DOM Node ID of TextArea.
  */
 export void clear_text_area(i32 id) {
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     if (!n.text.is_live()) { return; }
     Blob buf = n.text;
     buf.put(0, (char)0);
@@ -619,7 +608,7 @@ export void clear_text_area(i32 id) {
     n.cursor = 0;
     n.scroll = 0;
     n.sel = 0;
-    dom.damage_node(id);
+    dom.damage_row(n);
     dom.touch();
 }
 
@@ -629,8 +618,7 @@ export void clear_text_area(i32 id) {
  * @param lines Line delta (negative = scroll up, positive = scroll down).
  */
 export void scroll_by(i32 id, i32 lines) {
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     if (n.kind != NodeKind::TEXT_AREA) { if (n.kind != NodeKind::LIST) { return; } }
     i32 total = line_of(n, n.len) + 1;
     i32 rows = visible_lines(n);
@@ -641,7 +629,7 @@ export void scroll_by(i32 id, i32 lines) {
     if (scroll > max_scroll) { scroll = max_scroll; }
     if (scroll != n.scroll) {
         n.scroll = (u16)scroll;
-        dom.damage_node(id);
+        dom.damage_row(n);
     }
 }
 
@@ -666,8 +654,7 @@ export void dispatch_wheel(i32 id, i32 steps) {
  * @param items Newline-separated list of items.
  */
 export void list_set_items(i32 id, str items) {
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     if (n.kind != NodeKind::LIST) { return; }
     Blob buf = n.text;
     i32 cap = n.cap;
@@ -679,7 +666,7 @@ export void list_set_items(i32 id, str items) {
     n.len = (u16)i;
     n.sel = 0;
     n.scroll = 0;
-    dom.damage_node(id);
+    dom.damage_row(n);
     dom.touch();
 }
 
@@ -690,8 +677,7 @@ export void list_set_items(i32 id, str items) {
  * @return Result containing an optional 0-based row index.
  */
 export Result<Option<i32>, UiError> list_selected(i32 id) {
-    if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow NodeRow n = dom.row_of(id);
+    borrow NodeRow n = dom.require_row(id)?;
     if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
     if (n.sel == 0) { return Ok(None); }
     return Ok(Some(n.sel - 1));
@@ -703,8 +689,7 @@ export Result<Option<i32>, UiError> list_selected(i32 id) {
  * @return Ok(row count), or Err when the node is missing or is not a List.
  */
 export Result<i32, UiError> list_count(i32 id) {
-    if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow NodeRow n = dom.row_of(id);
+    borrow NodeRow n = dom.require_row(id)?;
     if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
     if (n.len == 0) { return Ok(0); }
     return Ok(line_of(n, n.len) + 1);
@@ -717,8 +702,7 @@ export Result<i32, UiError> list_count(i32 id) {
  * @return A view of the row, valid until the list next changes.
  */
 export Result<str, UiError> list_item(i32 id, i32 index) {
-    if (!dom.node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    borrow NodeRow n = dom.row_of(id);
+    borrow NodeRow n = dom.require_row(id)?;
     if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
     Result<i32, UiError> count_result = list_count(id);
     i32 count = count_result?;
@@ -738,8 +722,7 @@ export Result<str, UiError> list_item(i32 id, i32 index) {
  * @param index 0-based item index to select.
  */
 export void list_select(i32 id, i32 index) {
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     i32 count = line_of(n, n.len) + 1;
     if (n.len == 0) { count = 0; }
     if (index < 0) { n.sel = 0; }
@@ -753,7 +736,7 @@ export void list_select(i32 id, i32 index) {
         if (index >= scroll + rows) { scroll = index - rows + 1; }
         n.scroll = (u16)scroll;
     }
-    dom.damage_node(id);
+    dom.damage_row(n);
     dom.touch();
 }
 
@@ -765,8 +748,7 @@ export void list_select(i32 id, i32 index) {
  * @return Option containing 0-based row index, or None.
  */
 export Option<i32> list_row_at(i32 id, i32 px, i32 py) {
-    if (!dom.node_exists(id)) { return None; }
-    borrow NodeRow n = dom.row_of(id);
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return None; }); };
     i32 s = dom.ui_scale();
     i32 pad = 8 * s;
     i32 lh = ui_metrics.text_height(0, s);
@@ -788,8 +770,7 @@ export Option<i32> list_row_at(i32 id, i32 px, i32 py) {
  * @param py Click Y coordinate.
  */
 export void list_click(i32 id, i32 px, i32 py) {
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     i32 row = case list_row_at(id, px, py) of { Some(v) -> v; None -> ({ return; }); };
     i32 was = n.sel - 1;
     list_select(id, row);
@@ -959,15 +940,14 @@ export Result<i32, UiError> open_menu(i32 x, i32 y, str items,
  */
 export void menu_hover(i32 px, i32 py) {
     i32 id = dom.menu_id();
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     i32 next = case list_row_at(id, px, py) of {
         Some(r) -> r + 1;
         None -> 0;
     };
     if (next != n.sel) {
         n.sel = (u16)next;
-        dom.damage_node(id);
+        dom.damage_row(n);
     }
 }
 
@@ -1016,8 +996,7 @@ i32 g_focus_ring_count = 0;
  * @param id Root DOM Node ID of subtree.
  */
 export void collect_focusable(i32 id) {
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     if (is_focusable(n)) {
         if (g_focus_ring_count < ui_config.FOCUS_MAX) {
             g_focus_ring[g_focus_ring_count] = id;
@@ -1096,9 +1075,8 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
             Err(_) -> _;
         };
     }
-    if (!dom.node_exists(dom.focus_id())) { return; }
-    borrow NodeRow n = dom.row_of(dom.focus_id());
     i32 id = dom.focus_id();
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     if (type == KeyEventType::DOWN) {
         fn(i32 owner, i32 id, i32 arg) -> i32 handler = n.on_key;
         if (handler != 0) {
@@ -1113,12 +1091,12 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
         EditResult r = input_handle(n, type, code);
         case r of {
             EditResult::Changed -> ({
-                dom.damage_node(id);
+                dom.damage_row(n);
                 dom.touch();
                 dom.fire_change(n);
             });
             EditResult::Moved -> ({
-                dom.damage_node(id);
+                dom.damage_row(n);
                 dom.touch();
             });
             EditResult::Unhandled -> _;
@@ -1129,12 +1107,12 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
         EditResult r = text_area_handle(n, type, code, mods);
         case r of {
             EditResult::Changed -> ({
-                dom.damage_node(id);
+                dom.damage_row(n);
                 dom.touch();
                 dom.fire_change(n);
             });
             EditResult::Moved -> ({
-                dom.damage_node(id);
+                dom.damage_row(n);
                 dom.touch();
             });
             EditResult::Unhandled -> _;
@@ -1162,8 +1140,7 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
  * @param s Replacement string.
  */
 export void set_input_text(i32 id, str s) {
-    if (!dom.node_exists(id)) { return; }
-    borrow NodeRow n = dom.row_of(id);
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     if (n.kind != NodeKind::TEXT_INPUT) { return; }
     Blob buf = n.text;
     i32 cap = n.cap;
@@ -1174,7 +1151,7 @@ export void set_input_text(i32 id, str s) {
     buf.put(i, (char)0);
     n.len = (u16)i;
     n.cursor = (u16)i;
-    dom.damage_node(id);
+    dom.damage_row(n);
     dom.touch();
 }
 
@@ -1190,13 +1167,15 @@ export void tick() {
     i32 i = 0;
     while (i < dom.timer_count()) {
         i32 id = dom.timer_id_at(i);
-        if (dom.node_exists(id)) {
-            borrow NodeRow t = dom.row_of(id);
-            if (now >= t.next_due) {
-                t.next_due = now + t.interval;
-                dom.emit(t, UiEventKind::TIMER, t.on_tick, 0);
-            }
-        }
+        case dom.find_row(id) of {
+            Some(t) -> ({
+                if (now >= t.next_due) {
+                    t.next_due = now + t.interval;
+                    dom.emit(t, UiEventKind::TIMER, t.on_tick, 0);
+                }
+            });
+            None -> _;
+        };
         i++;
     }
 }

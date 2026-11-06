@@ -15,7 +15,8 @@ import dom from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
 import irq from "@kernel/arch/irq.mln";
 import protocol_elements from "protocol_elements.mln";
-import { NodeKind } from "dom/dom.mln";
+import { NodeRow } from "dom/dom_model.mln";
+import { NodeKind, NodeState } from "dom/dom.mln";
 import { Request, RequestStatus } from "@contracts/myapp/message.contract.mln";
 import { UiOp } from "@contracts/myapp/ui.contract.mln";
 
@@ -176,13 +177,9 @@ Result<i32, UiError> list_item_into(i32 id, i32 index, char *out, i32 cap) {
  * @return Ok(true/false) for a Checkbox, or Err for an invalid ID or wrong node kind.
  */
 Result<bool, UiError> is_checked(i32 id) {
-    Option<NodeKind> kind = dom.kind_of(id);
-    NodeKind value = case kind of {
-        Some(v) -> v;
-        None -> ({ return Err(UiError::NodeNotFound(id)); });
-    };
-    if (value != NodeKind::CHECKBOX) { return Err(UiError::WrongNodeKind(id)); }
-    return Ok(dom.is_checked(id));
+    borrow NodeRow n = dom.require_row(id)?;
+    if (n.kind != NodeKind::CHECKBOX) { return Err(UiError::WrongNodeKind(id)); }
+    return Ok((n.state & NodeState::CHECKED) != 0);
 }
 
 /**
@@ -285,6 +282,13 @@ Result<Option<i32>, UiError> window_of(i32 id) {
     return dom.window_of(id);
 }
 
+// The row of a node that must be a window.
+Result<borrow NodeRow, UiError> window_row(i32 win) {
+    borrow NodeRow n = dom.require_row(win)?;
+    if (n.kind != NodeKind::WINDOW) { return Err(UiError::WrongNodeKind(win)); }
+    return Ok(n);
+}
+
 /**
  * Returns the X position of a window in logical coordinates.
  *
@@ -292,20 +296,8 @@ Result<Option<i32>, UiError> window_of(i32 id) {
  * @return X coordinate adjusted for UI scaling.
  */
 Result<i32, UiError> window_x(i32 win) {
-    if (!dom.node_exists(win)) { return Err(UiError::NodeNotFound(win)); }
-    Result<Option<i32>, UiError> enclosing = dom.window_of(win);
-    bool is_window = case enclosing of {
-        Ok(Some(value)) -> value == win;
-        Ok(None) -> false;
-        Err(_) -> false;
-    };
-    if (!is_window) { return Err(UiError::WrongNodeKind(win)); }
-    Option<i32> x_result = dom.node_x(win);
-    i32 x = case x_result of {
-        Some(value) -> value;
-        None -> ({ return Err(UiError::NodeNotFound(win)); });
-    };
-    return Ok(x / dom.ui_scale());
+    borrow NodeRow n = window_row(win)?;
+    return Ok(n.x / dom.ui_scale());
 }
 
 /**
@@ -315,20 +307,8 @@ Result<i32, UiError> window_x(i32 win) {
  * @return Y coordinate adjusted for UI scaling.
  */
 Result<i32, UiError> window_y(i32 win) {
-    if (!dom.node_exists(win)) { return Err(UiError::NodeNotFound(win)); }
-    Result<Option<i32>, UiError> enclosing = dom.window_of(win);
-    bool is_window = case enclosing of {
-        Ok(Some(value)) -> value == win;
-        Ok(None) -> false;
-        Err(_) -> false;
-    };
-    if (!is_window) { return Err(UiError::WrongNodeKind(win)); }
-    Option<i32> y_result = dom.node_y(win);
-    i32 y = case y_result of {
-        Some(value) -> value;
-        None -> ({ return Err(UiError::NodeNotFound(win)); });
-    };
-    return Ok(y / dom.ui_scale());
+    borrow NodeRow n = window_row(win)?;
+    return Ok(n.y / dom.ui_scale());
 }
 
 /**
