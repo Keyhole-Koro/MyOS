@@ -23,6 +23,9 @@ import mbin from "@std/format/mbin.mln";
 import { Result } from "@std/core/result.mln";
 import { result_take_ok } from "@std/core/result_take.mln";
 import { Option } from "@std/core/option.mln";
+import { Iterator } from "@std/core/iter.mln";
+import instances from "instances.mln";
+import { Instance, InstanceRow, instance_all_Iter } from "instances.mln";
 import { ShellEventKind } from "events.mln";
 import { KeyModifier, KeyCode } from "@contracts/input/keyboard.contract.mln";
 
@@ -210,101 +213,29 @@ export i32 count() { return registry_count; }
 
 // --- instances -------------------------------------------------------------------------------
 
-i32 INSTANCES_MAX = 32;
-/**
- * Shell bookkeeping for one running or starting application process.
- * @property pid Process ID while this instance slot is occupied.
- * @property app Index of the application's AppRecord in the registry.
- * @property win Main window ID after MAIN_WINDOW arrives, or None while starting.
- * @property open True while an OPEN path is waiting for the main window.
- * @property done True after the app sends EXIT; the reaper collects it once stopped.
- */
-struct AppInstance {
-    i32 pid;            // valid while the slot is Some
-    i32 app;            // registry slot
-    Option<i32> win;    // main window; None until MAIN_WINDOW
-    bool open;          // an OPEN with open_paths[slot] waits for the window
-    bool done;          // it sent EXIT; reap once it has exited
-};
-Option<AppInstance> instances[32];
-i32 instance_count = 0; // slots in use, including freed ones below the high-water mark
-
 Text<256> menu_buf; // "\n"-joined app names
-// One pending OPEN path per instance. A single global scratch buffer loses the
-// first path when two applications are still starting at the same time.
-Text<64> open_paths[32];
 
-Text<64> *open_path_for(i32 slot) { return &open_paths[slot]; }
-
-Option<i32> slot_of_owner(i32 owner) {
-    i32 i = 0;
-    while (i < instance_count) {
-        case instances[i] of {
-            Some(instance) -> ({
-                if (instance.pid == owner) { return Some(i); }
-            });
-            None -> _;
-        };
-        i++;
+// The instance of app `app` that has not sent EXIT.
+Option<Instance> instance_of_app(i32 app) {
+    for (Instance each in instances.instance_all()) {
+        borrow InstanceRow row = each.row();
+        if (!row.done && row.app == app) {
+            Option<Instance> found = Some(each);
+            return found;
+        }
     }
     return None;
 }
 
-Option<i32> slot_of_app(i32 app) {
-    i32 i = 0;
-    while (i < instance_count) {
-        case instances[i] of {
-            Some(instance) -> ({
-                if (!instance.done && instance.app == app) { return Some(i); }
-            });
-            None -> _;
-        };
-        i++;
-    }
-    return None;
-}
-
-Option<i32> free_slot() {
-    i32 i = 0;
-    while (i < instance_count) {
-        case instances[i] of {
-            None -> ({ return Some(i); });
-            Some(_) -> _;
-        };
-        i++;
-    }
-    if (instance_count >= INSTANCES_MAX) { return None; }
-    instance_count++;
-    return Some(instance_count - 1);
-}
-
-/**
- * Finds the process that owns a given main window.
- * @param win DOM node ID of the window.
- * @return Owning process ID, or None if no live instance owns the window.
- */
-export Option<i32> owner_of_window(i32 win) {
-    i32 i = 0;
-    while (i < instance_count) {
-        case instances[i] of {
-            Some(instance) -> ({
-                case instance.win of {
-                    Some(window) -> ({ if (window == win) { return Some(instance.pid); } });
-                    None -> _;
-                };
-            });
-            None -> _;
-        };
-        i++;
-    }
-    return None;
+bool has_window(borrow InstanceRow row) {
+    return case row.win of { Some(_) -> true; None -> false; };
 }
 
 // Start an instance of app `a`: spawn its executable. Its window arrives
 // later, as a MAIN_WINDOW request (window_ready below).
-Result<i32, AppError> mount(i32 a) {
-    i32 slot = case free_slot() of {
-        Some(v) -> v;
+Result<Instance, AppError> mount(i32 a) {
+    Instance instance = case instances.new_instance() of {
+        Some(value) -> value;
         None -> ({
             debug.println("app: too many instances");
             return Err(AppError::NoFreeSlot);
@@ -317,18 +248,16 @@ Result<i32, AppError> mount(i32 a) {
         Err(_) -> ({
             debug.print("app: cannot start ");
             debug.println(record->path.as_str());
+            instance.delete();
             return Err(AppError::SpawnFailed);
         });
     };
-    AppInstance instance;
-    instance.pid = pid;
-    instance.app = a;
-    instance.win = None;
-    instance.open = false;
-    instance.done = false;
-    instances[slot] = Some(instance);
+    instance.set_pid(pid);
+    borrow InstanceRow row = instance.row();
+    row.app = a;
+    row.win = None;
     dom.note_app_starting(1);
-    return Ok(slot);
+    return Ok(instance);
 }
 
 // MAIN_WINDOW from an instance: its view() built `win`. Put it on the
@@ -342,19 +271,12 @@ Result<i32, AppError> mount(i32 a) {
  * @param win DOM node ID of the window created by that process.
  */
 export void window_ready(i32 owner, i32 win) {
-    i32 slot = case slot_of_owner(owner) of {
-        Some(v) -> v;
-        None -> ({ return; });
-    };
-    AppInstance instance = case instances[slot] of {
+    Instance instance = case instances.instance_by_pid(owner) of {
         Some(value) -> value;
         None -> ({ return; });
     };
-    bool had_window = case instance.win of {
-        Some(_) -> true;
-        None -> false;
-    };
-    if (!had_window) { dom.note_app_starting(-1); }
+    borrow InstanceRow row = instance.row();
+    if (!has_window(row)) { dom.note_app_starting(-1); }
     if (win == 0) { return; }
     dom.set_owner(win, owner);
     dom.set_on_close(win, window_closed);
@@ -362,15 +284,13 @@ export void window_ready(i32 owner, i32 win) {
         Ok(_) -> _;
         Err(_) -> ({ return; });
     };
-    instance.win = Some(win);
+    row.win = Some(win);
     dom_widgets.focus_window(win);
-    if (instance.open) {
-        instance.open = false;
-        Text<64> *open_path = open_path_for(slot);
-        str opened = open_path->as_str();
+    if (row.open) {
+        row.open = false;
+        str opened = row.open_path.as_str();
         push_app_event(owner, win, ShellEventKind::OPEN, 0, 0, opened);
     }
-    instances[slot] = Some(instance);
 }
 
 // The on_close handler every app window carries: tell the instance its
@@ -383,15 +303,13 @@ export void window_ready(i32 owner, i32 win) {
  * @param arg Event argument supplied by the DOM callback (unused).
  */
 void window_closed(i32 owner, i32 win, i32 arg) {
-    i32 slot = case slot_of_owner(owner) of {
-        Some(v) -> v;
+    case instances.instance_by_pid(owner) of {
+        Some(_) -> ({ push_app_event(owner, win, ShellEventKind::CLOSE, 0, 0, ""); });
         None -> ({
             dom.remove_node(win);
             dom_widgets.activate_topmost();
-            return;
         });
     };
-    push_app_event(owner, win, ShellEventKind::CLOSE, 0, 0, "");
 }
 
 // The instance is done (EXIT): remove everything it owns -- its window,
@@ -403,18 +321,13 @@ void window_closed(i32 owner, i32 win, i32 arg) {
  * @param owner Process ID of the exiting application.
  */
 export void instance_exited(i32 owner) {
-    i32 slot = case slot_of_owner(owner) of {
-        Some(v) -> v;
+    Instance instance = case instances.instance_by_pid(owner) of {
+        Some(value) -> value;
         None -> ({ return; });
     };
     dom.remove_owned(owner);
     release_claims(owner);
-    AppInstance instance = case instances[slot] of {
-        Some(value) -> value;
-        None -> ({ return; });
-    };
-    instance.done = true;
-    instances[slot] = Some(instance);
+    instance.row().done = true;
     dom_widgets.activate_topmost();
 }
 
@@ -428,43 +341,33 @@ export void instance_exited(i32 owner) {
  * @param arg Timer callback argument (unused).
  */
 void reap_exited(i32 owner, i32 id, i32 arg) {
-    i32 i = 0;
-    while (i < instance_count) {
-        case instances[i] of {
-        None -> _;
-        Some(instance) -> ({
-            i32 pid = instance.pid;
-            Result<bool, ProcessControlError> status = console.has_exited(pid);
-            bool exited = case status of {
-                Ok(value) -> value;
+    for (Instance instance in instances.instance_all()) {
+        i32 pid = instance.pid();
+        Result<bool, ProcessControlError> status = console.has_exited(pid);
+        bool exited = case status of {
+            Ok(value) -> value;
+            Err(ProcessControlError::InvalidPid(_)) -> true;
+            Err(ProcessControlError::NotExited(_)) -> false;
+        };
+        if (exited) {
+            Result<ProcessExitStatus, ProcessControlError> reaped = console.reap(pid);
+            bool collected = case reaped of {
+                Ok(_) -> true;
                 Err(ProcessControlError::InvalidPid(_)) -> true;
                 Err(ProcessControlError::NotExited(_)) -> false;
             };
-            if (exited) {
-                Result<ProcessExitStatus, ProcessControlError> reaped = console.reap(pid);
-                bool collected = case reaped of {
-                    Ok(_) -> true;
-                    Err(ProcessControlError::InvalidPid(_)) -> true;
-                    Err(ProcessControlError::NotExited(_)) -> false;
-                };
-                if (collected) {
-                    bool had_window = case instance.win of {
-                        Some(_) -> true;
-                        None -> false;
-                    };
-                    if (!had_window) { dom.note_app_starting(-1); }
-                    if (!instance.done) {
-                        dom.remove_owned(pid);
-                        release_claims(pid);
-                        dom_widgets.activate_topmost();
-                    }
-                    process_gone_sink(pid);
-                    instances[i] = None;
+            if (collected) {
+                borrow InstanceRow row = instance.row();
+                if (!has_window(row)) { dom.note_app_starting(-1); }
+                if (!row.done) {
+                    dom.remove_owned(pid);
+                    release_claims(pid);
+                    dom_widgets.activate_topmost();
                 }
+                process_gone_sink(pid);
+                instance.delete();
             }
-        });
-        };
-        i++;
+        }
     }
 }
 
@@ -480,13 +383,10 @@ void reap_exited(i32 owner, i32 id, i32 arg) {
 export Result<Option<i32>, AppError> launch(i32 index) {
     if (index < 0 || index >= registry_count) { return Err(AppError::InvalidIndex(index)); }
     if (registry[index].single) {
-        case slot_of_app(index) of {
-            Some(slot) -> ({
-                AppInstance instance = case instances[slot] of {
-                    Some(value) -> value;
-                    None -> ({ return Err(AppError::InstanceUnavailable); });
-                };
-                case instance.win of {
+        case instance_of_app(index) of {
+            Some(instance) -> ({
+                borrow InstanceRow row = instance.row();
+                case row.win of {
                     Some(window) -> ({ dom_widgets.focus_window(window); return Ok(Some(window)); });
                     None -> ({ return Ok(None); });
                 };
@@ -532,35 +432,24 @@ export Result<Option<i32>, AppError> open(str path) {
     i32 a = 0;
     while (a < registry_count) {
         if (registry[a].opens) {
-            i32 slot = 0;
-            bool found = false;
-            if (registry[a].single) {
-                case slot_of_app(a) of {
-                    Some(v) -> ({ slot = v; found = true; });
-                    None -> _;
-                };
-            }
-            if (!found) {
-                slot = mount(a)?;
-            }
-            Text<64> *open_path = open_path_for(slot);
-            open_path->clear();
-            open_path->append(path);
-            AppInstance instance = case instances[slot] of {
+            Option<Instance> running = None;
+            if (registry[a].single) { running = instance_of_app(a); }
+            Instance instance = case running of {
                 Some(value) -> value;
-                None -> ({ return Err(AppError::InstanceUnavailable); });
+                None -> mount(a)?;
             };
-            AppInstance *instance_ptr = &instance;
-            case instance_ptr->win of {
+            borrow InstanceRow row = instance.row();
+            row.open_path.clear();
+            row.open_path.append(path);
+            case row.win of {
                 Some(win) -> ({
                     dom_widgets.focus_window(win);
-                    str opened = open_path->as_str();
-                    push_app_event(instance_ptr->pid, win, ShellEventKind::OPEN, 0, 0, opened);
+                    str opened = row.open_path.as_str();
+                    push_app_event(instance.pid(), win, ShellEventKind::OPEN, 0, 0, opened);
                     return Ok(Some(win));
                 });
                 None -> ({
-                    instance_ptr->open = true;
-                    instances[slot] = Some(instance);
+                    row.open = true;
                     return Ok(None);
                 });
             };
@@ -765,8 +654,8 @@ void release_claims(i32 owner) {
  */
 export bool dispatch_key(i32 owner, i32 code, i32 mods) {
     if (owner == 0) { return false; }
-    i32 slot = case slot_of_owner(owner) of {
-        Some(v) -> v;
+    Instance instance = case instances.instance_by_pid(owner) of {
+        Some(value) -> value;
         None -> ({ return false; });
     };
     i32 i = 0;
@@ -774,11 +663,8 @@ export bool dispatch_key(i32 owner, i32 code, i32 mods) {
         KeyClaim *claim = &claims[i];
         if (claim->owner == owner) {
             if (key_spec_matches(claim->spec.as_str(), code, mods)) {
-                AppInstance instance = case instances[slot] of {
-                    Some(value) -> value;
-                    None -> ({ return false; });
-                };
-                i32 window = case instance.win of {
+                borrow InstanceRow row = instance.row();
+                i32 window = case row.win of {
                     Some(value) -> value;
                     None -> ({ return false; });
                 };

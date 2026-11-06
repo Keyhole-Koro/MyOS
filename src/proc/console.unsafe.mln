@@ -3,7 +3,6 @@ package console;
 import serial from "@kernel/io/serial.mln";
 import heap from "@kernel/mm/heap.mln";
 import { HeapBlock } from "@kernel/mm/heap.mln";
-import mem from "@kernel/mm/mem.mln";
 import syscall from "@kernel/kernel/syscall.mln";
 import user_memory from "@os/syscall/user_memory.mln";
 import { UserAddress } from "@std/core/address.mln";
@@ -24,7 +23,8 @@ import fs from "@os/fs/fs.mln";
 import { FileHandle } from "@os/fs/fs.mln";
 import str from "@std/text/str.mln";
 import { Text } from "@std/text/text.mln";
-import ascii from "@std/text/ascii.mln";
+import consoles from "consoles.mln";
+import { Console, ConsoleRow } from "consoles.mln";
 import dom_widgets from "@os/ui/dom/dom_widgets.mln";
 import dom from "@os/ui/dom/dom.mln";
 
@@ -34,91 +34,41 @@ import dom from "@os/ui/dom/dom.mln";
 // The kernel's syscall layer does not know about the desktop; it calls the
 // write/read handlers registered here (syscall.set_console) and the spawn
 // handler (syscall.set_spawn_handler). Each running process is bound to a
-// console slot that names the TextArea its stdout goes to and holds a small
-// stdin queue the terminal fills one line at a time. Output written from a
+// row of consoles.model.mln, which names the TextArea its stdout goes to and
+// holds a small stdin queue. Output written from a
 // syscall lands in the DOM directly (append_bytes reads the user buffer
 // through the process's own page tables, which are active during the
 // syscall); the compositor repaints it on its next pass.
 
-i32 SLOTS = 8;
 i32 STDIN_CAP = 256;
 
 /**
- * Standard-I/O routing state associated with one user process.
- * @property pid Bound process ID; zero means this console slot is unused.
- * @property output DOM TextArea node receiving bytes written to stdout/stderr.
- * @property stdin Heap buffer holding queued input characters.
- * @property in_head Index of the next queued input byte to read.
- * @property in_tail Index where the next input byte will be appended.
- */
-struct ConsoleSlot {
-    i32 pid;          // 0 = free slot
-    i32 output;       // TextArea node id receiving stdout
-    i32 stdin;        // heap ring buffer of STDIN_CAP bytes
-    i32 in_head;
-    i32 in_tail;
-};
-ConsoleSlot consoles[8];
-
-bool ready = false;
-
-/**
- * Looks up the console slot index for a given process ID.
- * @param pid Process ID to search for.
- * @return Option containing the slot index if found, or None.
- */
-Option<i32> slot_of(i32 pid) {
-    if (pid <= 0) { return None; }
-    i32 i = 0;
-    while (i < SLOTS) {
-        if (consoles[i].pid == pid) { return Some(i); }
-        i++;
-    }
-    return None;
-}
-
-/**
- * Attaches a process's stdio to a DOM TextArea node.
+ * Attaches a process's stdio to a DOM TextArea node, replacing any earlier one.
  * @param pid Target process ID.
  * @param output_id DOM node ID of the TextArea for stdout.
- * @return `true` when bound, or `false` if all slots are in use or the stdin
- * buffer cannot be allocated.
+ * @return `true` when bound, or `false` if the console table is full.
  */
 export bool bind(i32 pid, i32 output_id) {
-    i32 i = 0;
-    while (i < SLOTS) {
-        if (consoles[i].pid == 0) {
-            consoles[i].pid = pid;
-            consoles[i].output = output_id;
-            if (consoles[i].stdin == 0) {
-                Result<i32, AllocationError> allocation = heap.alloc(STDIN_CAP);
-                i32 buffer = 0;
-                if (!result_take_ok<i32, AllocationError>(&allocation, &buffer)) {
-                    consoles[i].pid = 0;
-                    consoles[i].output = 0;
-                    return false;
-                }
-                consoles[i].stdin = buffer;
-            }
-            consoles[i].in_head = 0;
-            consoles[i].in_tail = 0;
-            return true;
-        }
-        i++;
-    }
-    return false;
+    case consoles.console_by_pid(pid) of {
+        Some(bound) -> ({ bound.row().output = output_id; return true; });
+        None -> _;
+    };
+    Console made = case consoles.new_console() of {
+        Some(value) -> value;
+        None -> ({ return false; });
+    };
+    made.set_pid(pid);
+    made.row().output = output_id;
+    return true;
 }
 
 /**
- * Releases a process's console slot binding.
+ * Releases a process's console binding.
  * @param pid Process ID to detach.
  */
 export void unbind(i32 pid) {
-    case slot_of(pid) of {
-        Some(i) -> ({
-            consoles[i].pid = 0;
-            consoles[i].output = 0;
-        });
+    case consoles.console_by_pid(pid) of {
+        Some(bound) -> ({ bound.delete(); });
         None -> _;
     };
 }
@@ -130,8 +80,8 @@ export void unbind(i32 pid) {
  */
 export Option<i32> output_of(i32 pid) {
     Option<i32> output = None;
-    case slot_of(pid) of {
-        Some(i) -> ({ output = Some(consoles[i].output); });
+    case consoles.console_by_pid(pid) of {
+        Some(bound) -> ({ output = Some(bound.row().output); });
         None -> _;
     };
     return output;
@@ -143,19 +93,19 @@ export Option<i32> output_of(i32 pid) {
  * @param line Text to feed as input; a newline follows it.
  */
 export void feed_line(i32 pid, str line) {
-    i32 i = case slot_of(pid) of {
+    Console bound = case consoles.console_by_pid(pid) of {
         Some(v) -> v;
         None -> ({ return; });
     };
-    i32 base = consoles[i].stdin;
+    borrow ConsoleRow row = bound.row();
     i32 k = 0;
     while (1) {
         i32 c = 10;
         if (k < line.length) { c = line.byte(k); }
-        i32 next = (consoles[i].in_tail + 1) % STDIN_CAP;
-        if (next == consoles[i].in_head) { return; } // full
-        mem.write_byte(base + consoles[i].in_tail, c);
-        consoles[i].in_tail = next;
+        i32 next = (row.in_tail + 1) % STDIN_CAP;
+        if (next == row.in_head) { return; } // full
+        row.stdin[row.in_tail] = (u8)c;
+        row.in_tail = next;
         if (k >= line.length) { return; }
         k++;
     }
@@ -200,16 +150,16 @@ i32 on_write(i32 pid, UserAddress buf, i32 count) {
  * @return Number of bytes read.
  */
 i32 on_read(i32 pid, UserAddress buf, i32 count) {
-    i32 i = case slot_of(pid) of {
+    Console bound = case consoles.console_by_pid(pid) of {
         Some(v) -> v;
         None -> ({ return 0; });
     };
-    i32 base = consoles[i].stdin;
+    borrow ConsoleRow row = bound.row();
     i32 got = 0;
     while (got < count) {
-        if (consoles[i].in_head == consoles[i].in_tail) { break; }
-        i32 c = mem.read_byte(base + consoles[i].in_head);
-        consoles[i].in_head = (consoles[i].in_head + 1) % STDIN_CAP;
+        if (row.in_head == row.in_tail) { break; }
+        i32 c = row.stdin[row.in_head];
+        row.in_head = (row.in_head + 1) % STDIN_CAP;
         user_memory.write_byte(buf.plus(got), c);
         got++;
     }
@@ -375,15 +325,6 @@ export Result<ProcessExitStatus, ProcessControlError> reap(i32 pid) {
  * Initializes console subsystem and registers console and spawn hooks with the kernel.
  */
 export void init() {
-    if (ready) { return; }
-    i32 i = 0;
-    while (i < SLOTS) {
-        consoles[i].pid = 0;
-        consoles[i].output = 0;
-        consoles[i].stdin = 0;
-        i++;
-    }
     syscall.set_console(on_write, on_read);
     syscall.set_spawn_handler(on_spawn);
-    ready = true;
 }

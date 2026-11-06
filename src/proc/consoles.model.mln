@@ -1,0 +1,13 @@
+package consoles;
+
+// Standard-I/O routing for user processes: the TextArea a process's stdout
+// goes to, and a stdin ring the terminal fills one line at a time.
+entity Console max 8 {
+    i32 pid;
+    i32 output;         // TextArea node id receiving stdout
+    u8 stdin[256];
+    i32 in_head;        // next queued input byte to read
+    i32 in_tail;        // where the next input byte is appended
+}
+
+unique Console.pid;
