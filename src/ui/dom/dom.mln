@@ -112,19 +112,19 @@ export enum NodeStyle {
 // would otherwise union into nearly the whole screen. When the list is
 // full, new areas merge into the first entry.
 export const i32 DAMAGE_MAX = 8;
-i32 g_damage_x0[8];
-i32 g_damage_y0[8];
-i32 g_damage_x1[8];
-i32 g_damage_y1[8];
+struct DamageRect {
+    i32 x0;
+    i32 y0;
+    i32 x1;
+    i32 y1;
+};
+DamageRect g_damage[8];
 i32 g_damage_count = 0;
 
 // The rect render_scene is currently repainting, so node_in_damage can test
 // against just that one; g_painting_all short-circuits it for full paints.
-i32 g_paint_x0 = 0;
-i32 g_paint_y0 = 0;
-i32 g_paint_x1 = 0;
-i32 g_paint_y1 = 0;
-i32 g_painting_all = 1;
+DamageRect g_paint;
+bool g_painting_all = true;
 
 i32 g_revision = 0;     // increments on externally observable DOM mutation
 i32 g_root_node_id = 0;
@@ -167,12 +167,15 @@ export i32 apps_starting() { return g_apps_starting; }
 bool no_key_filter(i32 owner, i32 code, i32 mods) { return false; }
 fn(i32 owner, i32 code, i32 mods) -> bool g_key_filter = no_key_filter;
 
-// Pending handler calls, stored in parallel arrays so callback types survive.
+// Pending handler calls.
 export const i32 EVENT_MAX = 64;
-fn(i32 owner, i32 id, i32 arg) -> void g_event_handlers[64];
-i32 g_event_owners[64];
-i32 g_event_ids[64];
-i32 g_event_args[64];
+struct PendingEvent {
+    fn(i32 owner, i32 id, i32 arg) -> void handler;
+    i32 owner;
+    i32 id;
+    i32 arg;
+};
+PendingEvent g_events[64];
 i32 g_event_head = 0;
 i32 g_event_tail = 0;
 
@@ -180,15 +183,18 @@ i32 g_event_tail = 0;
 // one app cannot take the whole table from the others; create_node()
 // fails past that, and past the table's size.
 export const i32 NODES_PER_OWNER = 96;
-i32 g_owner_nodes_owner[32];   // per-owner node counts, 0 = free slot
-i32 g_owner_nodes_count[32];
+struct OwnerNodes {
+    i32 owner;   // 0 = free slot
+    i32 count;
+};
+OwnerNodes g_owner_nodes[32];
 
 Option<i32> owner_slot(i32 owner, i32 make) {
     Option<i32> free = None;
     i32 i = 0;
     while (i < 32) {
-        if (g_owner_nodes_owner[i] == owner) { return Some(i); }
-        if (g_owner_nodes_owner[i] == 0) {
+        if (g_owner_nodes[i].owner == owner) { return Some(i); }
+        if (g_owner_nodes[i].owner == 0) {
             case free of {
                 None -> ({ free = Some(i); });
                 Some(_) -> _;
@@ -201,8 +207,7 @@ Option<i32> owner_slot(i32 owner, i32 make) {
         Some(v) -> v;
         None -> ({ return None; });
     };
-    g_owner_nodes_owner[slot] = owner;
-    g_owner_nodes_count[slot] = 0;
+    g_owner_nodes[slot] = OwnerNodes { owner: owner, count: 0 };
     return Some(slot);
 }
 
@@ -213,7 +218,7 @@ Option<i32> owner_slot(i32 owner, i32 make) {
  */
 export i32 nodes_of(i32 owner) {
     return case owner_slot(owner, 0) of {
-        Some(s) -> g_owner_nodes_count[s];
+        Some(s) -> g_owner_nodes[s].count;
         None -> 0;
     };
 }
@@ -375,7 +380,7 @@ export Result<i32, UiError> create_node(i32 kind, str name) {
             Some(v) -> ({ has_owner_slot = true; v; });
             None -> ({ return Err(UiError::OwnerTableFull(g_current_owner)); });
         };
-        if (g_owner_nodes_count[oslot] >= NODES_PER_OWNER) {
+        if (g_owner_nodes[oslot].count >= NODES_PER_OWNER) {
             return Err(UiError::OwnerNodeLimit(g_current_owner));
         }
     }
@@ -384,7 +389,7 @@ export Result<i32, UiError> create_node(i32 kind, str name) {
         None -> ({ return Err(UiError::NodeIdLimit); });
     };
     i32 id = made.raw();
-    if (has_owner_slot) { g_owner_nodes_count[oslot] = g_owner_nodes_count[oslot] + 1; }
+    if (has_owner_slot) { g_owner_nodes[oslot].count = g_owner_nodes[oslot].count + 1; }
     borrow NodeRow n = made.row();
     n.id = id;
     n.kind = (u16)kind;
@@ -470,10 +475,7 @@ export void push_event(fn(i32 owner, i32 id, i32 arg) -> void handler,
     i32 next = g_event_tail + 1;
     if (next >= EVENT_MAX) { next = 0; }
     if (next == g_event_head) { return; }
-    g_event_handlers[g_event_tail] = handler;
-    g_event_owners[g_event_tail] = owner;
-    g_event_ids[g_event_tail] = id;
-    g_event_args[g_event_tail] = arg;
+    g_events[g_event_tail] = PendingEvent { handler: handler, owner: owner, id: id, arg: arg };
     g_event_tail = next;
 }
 
@@ -510,16 +512,14 @@ export bool emit(borrow NodeRow n, i32 kind,
  */
 export void drain_events() {
     while (g_event_head != g_event_tail) {
-        fn(i32 owner, i32 id, i32 arg) -> void handler = g_event_handlers[g_event_head];
-        i32 owner = g_event_owners[g_event_head];
-        i32 id = g_event_ids[g_event_head];
-        i32 arg = g_event_args[g_event_head];
+        PendingEvent event = g_events[g_event_head];
         g_event_head = g_event_head + 1;
         if (g_event_head >= EVENT_MAX) { g_event_head = 0; }
         i32 outer = g_current_owner;
-        g_current_owner = owner;
+        g_current_owner = event.owner;
         defer set_current_owner(outer);
-        handler(owner, id, arg);
+        fn(i32 owner, i32 id, i32 arg) -> void handler = event.handler;
+        handler(event.owner, event.id, event.arg);
     }
 }
 
@@ -692,39 +692,21 @@ export str automation_value_of(borrow NodeRow n) {
 
 // --- damage -------------------------------------------------------------------------
 
-/**
- * Checks whether two rectangles overlap or touch.
- * @param ax0 First rectangle left.
- * @param ay0 First rectangle top.
- * @param ax1 First rectangle right.
- * @param ay1 First rectangle bottom.
- * @param bx0 Second rectangle left.
- * @param by0 Second rectangle top.
- * @param bx1 Second rectangle right.
- * @param by1 Second rectangle bottom.
- * @return 1 if rectangles touch or overlap, 0 otherwise.
- */
-export bool rects_touch(i32 ax0, i32 ay0, i32 ax1, i32 ay1, i32 bx0, i32 by0, i32 bx1, i32 by1) {
-    if (ax1 < bx0) { return false; }
-    if (bx1 < ax0) { return false; }
-    if (ay1 < by0) { return false; }
-    if (by1 < ay0) { return false; }
+// Whether two rectangles overlap or touch.
+bool rects_touch(DamageRect a, DamageRect b) {
+    if (a.x1 < b.x0) { return false; }
+    if (b.x1 < a.x0) { return false; }
+    if (a.y1 < b.y0) { return false; }
+    if (b.y1 < a.y0) { return false; }
     return true;
 }
 
-/**
- * Expands a damage rectangle entry to include another bounding box.
- * @param i Index of damage entry in table.
- * @param x0 Bounding box left.
- * @param y0 Bounding box top.
- * @param x1 Bounding box right.
- * @param y1 Bounding box bottom.
- */
-export void damage_union_into(i32 i, i32 x0, i32 y0, i32 x1, i32 y1) {
-    if (x0 < g_damage_x0[i]) { g_damage_x0[i] = x0; }
-    if (y0 < g_damage_y0[i]) { g_damage_y0[i] = y0; }
-    if (x1 > g_damage_x1[i]) { g_damage_x1[i] = x1; }
-    if (y1 > g_damage_y1[i]) { g_damage_y1[i] = y1; }
+// Grows a damage entry to include another rectangle.
+void damage_union_into(borrow DamageRect entry, DamageRect rect) {
+    if (rect.x0 < entry.x0) { entry.x0 = rect.x0; }
+    if (rect.y0 < entry.y0) { entry.y0 = rect.y0; }
+    if (rect.x1 > entry.x1) { entry.x1 = rect.x1; }
+    if (rect.y1 > entry.y1) { entry.y1 = rect.y1; }
 }
 
 /**
@@ -738,35 +720,29 @@ export void damage_union_into(i32 i, i32 x0, i32 y0, i32 x1, i32 y1) {
 export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
     i32 display_width = ui_metrics.display_width();
     i32 display_height = ui_metrics.display_height();
-    i32 x0 = x;
-    i32 y0 = y;
-    i32 x1 = x + w;
-    i32 y1 = y + h;
+    DamageRect rect = DamageRect { x0: x, y0: y, x1: x + w, y1: y + h };
 
-    if (x0 < 0) { x0 = 0; }
-    if (y0 < 0) { y0 = 0; }
-    if (x1 > display_width) { x1 = display_width; }
-    if (y1 > display_height) { y1 = display_height; }
-    if (x1 <= x0) { return; }
-    if (y1 <= y0) { return; }
+    if (rect.x0 < 0) { rect.x0 = 0; }
+    if (rect.y0 < 0) { rect.y0 = 0; }
+    if (rect.x1 > display_width) { rect.x1 = display_width; }
+    if (rect.y1 > display_height) { rect.y1 = display_height; }
+    if (rect.x1 <= rect.x0) { return; }
+    if (rect.y1 <= rect.y0) { return; }
 
     i32 i = 0;
     while (i < g_damage_count) {
-        if (rects_touch(x0, y0, x1, y1, g_damage_x0[i], g_damage_y0[i], g_damage_x1[i], g_damage_y1[i])) {
-            damage_union_into(i, x0, y0, x1, y1);
+        if (rects_touch(rect, g_damage[i])) {
+            damage_union_into(&g_damage[i], rect);
             return;
         }
         i++;
     }
     if (g_damage_count < DAMAGE_MAX) {
-        g_damage_x0[g_damage_count] = x0;
-        g_damage_y0[g_damage_count] = y0;
-        g_damage_x1[g_damage_count] = x1;
-        g_damage_y1[g_damage_count] = y1;
+        g_damage[g_damage_count] = rect;
         g_damage_count = g_damage_count + 1;
         return;
     }
-    damage_union_into(0, x0, y0, x1, y1);
+    damage_union_into(&g_damage[0], rect);
 }
 
 /**
@@ -1422,8 +1398,8 @@ export void free_subtree(i32 id) {
     if (n.owner != 0) {
         case owner_slot(n.owner, 0) of {
             Some(oslot) -> ({
-                g_owner_nodes_count[oslot] = g_owner_nodes_count[oslot] - 1;
-                if (g_owner_nodes_count[oslot] <= 0) { g_owner_nodes_owner[oslot] = 0; }
+                g_owner_nodes[oslot].count = g_owner_nodes[oslot].count - 1;
+                if (g_owner_nodes[oslot].count <= 0) { g_owner_nodes[oslot].owner = 0; }
             });
             None -> _;
         };
@@ -1604,32 +1580,29 @@ export i32 damage_count() { return g_damage_count; }
 
 /** Selects one queued damage rectangle as the current paint region. */
 export void select_damage(i32 index) {
-    g_paint_x0 = g_damage_x0[index];
-    g_paint_y0 = g_damage_y0[index];
-    g_paint_x1 = g_damage_x1[index];
-    g_paint_y1 = g_damage_y1[index];
-    g_painting_all = 0;
+    g_paint = g_damage[index];
+    g_painting_all = false;
 }
 
 /** Selects an unrestricted full-scene paint. */
-export void select_full_paint() { g_painting_all = 1; }
+export void select_full_paint() { g_painting_all = true; }
 
 /** Returns true when a node overlaps the selected paint region. */
 export bool node_intersects_paint(borrow NodeRow node) {
     if (g_painting_all) { return true; }
     node_extent(node);
-    if (g_ext_x + g_ext_w <= g_paint_x0) { return false; }
-    if (g_ext_y + g_ext_h <= g_paint_y0) { return false; }
-    if (g_ext_x >= g_paint_x1) { return false; }
-    if (g_ext_y >= g_paint_y1) { return false; }
+    if (g_ext_x + g_ext_w <= g_paint.x0) { return false; }
+    if (g_ext_y + g_ext_h <= g_paint.y0) { return false; }
+    if (g_ext_x >= g_paint.x1) { return false; }
+    if (g_ext_y >= g_paint.y1) { return false; }
     return true;
 }
 
 /** Applies the selected damage rectangle to a renderer clip. */
-export i32 paint_x() { return g_paint_x0; }
-export i32 paint_y() { return g_paint_y0; }
-export i32 paint_width() { return g_paint_x1 - g_paint_x0; }
-export i32 paint_height() { return g_paint_y1 - g_paint_y0; }
+export i32 paint_x() { return g_paint.x0; }
+export i32 paint_y() { return g_paint.y0; }
+export i32 paint_width() { return g_paint.x1 - g_paint.x0; }
+export i32 paint_height() { return g_paint.y1 - g_paint.y0; }
 
 /**
  * Checks whether a node clips its children to its bounding box.
