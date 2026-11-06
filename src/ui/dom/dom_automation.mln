@@ -11,7 +11,7 @@ import debug from "@kernel/debug/debug.mln";
 import str from "@std/text/str.mln";
 import { Result } from "@std/core/result.mln";
 import { Text } from "@std/text/text.mln";
-import { UiError } from "@contracts/ui/widget.contract.mln";
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import { NodeRole, NodeState, Children } from "dom.mln";
 
 // Human-readable tree dump (the kernel debug shell's `dump` command) and the
@@ -40,7 +40,7 @@ void print_indent(i32 depth) {
  * Structural nodes with role 0, no bounds, and zero state print nothing.
  * @param id DOM node ID.
  */
-void dump_props(i32 id) {
+void dump_props(NodeId id) {
     borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     i32 state = n.state;
     if (n.role == 0) {
@@ -75,10 +75,10 @@ void dump_props(i32 id) {
  * @param id DOM node ID to dump.
  * @param depth Current indentation depth in the tree.
  */
-void dump_node(i32 id, i32 depth) {
+void dump_node(NodeId id, i32 depth) {
     print_indent(depth);
     debug.print_str("Node(id=");
-    debug.print_i32(id);
+    debug.print_i32((i32)id);
     debug.print_str(") ");
     case dom.kind_of(id) of {
         Some(v) -> ({ debug.print_str("kind="); debug.print_i32(v); debug.print_str(" "); });
@@ -93,7 +93,7 @@ void dump_node(i32 id, i32 depth) {
     dump_props(id);
     debug.println_str("");
 
-    for (i32 child_id in dom.children(id)) {
+    for (NodeId child_id in dom.children(id)) {
         dump_node(child_id, depth + 1);
     }
 }
@@ -132,6 +132,11 @@ void automation_i32(i32 value) {
     }
 }
 
+// A node on the automation wire: its word, or zero for none.
+void automation_node_id(Option<NodeId> id) {
+    automation_i32(case id of { Some(value) -> (i32)value; None -> 0; });
+}
+
 /**
  * Transmits an escaped JSON string over the automation transport.
  * @param s String content to escape and write within quotes.
@@ -151,14 +156,14 @@ void automation_bool(bool value) {
  * Recursively transmits a DOM node and its descendants as JSON objects.
  * @param id DOM node ID to serialize.
  */
-void automation_node(i32 id) {
+void automation_node(NodeId id) {
     borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     i32 state = n.state;
     if (!g_automation_first) { automation_transport.putc(','); }
     g_automation_first = false;
 
-    automation_raw("{\"id\":"); automation_i32(id);
-    automation_raw(",\"parent\":"); automation_i32(dom.parent_id(id));
+    automation_raw("{\"id\":"); automation_i32((i32)id);
+    automation_raw(",\"parent\":"); automation_node_id(dom.parent_id(id));
     automation_raw(",\"role\":"); automation_json_string(dom_elements.role_name(n.role));
     automation_raw(",\"name\":"); automation_json_string(n.name.as_str());
     automation_raw(",\"text\":"); automation_json_string(n.text.as_str());
@@ -175,7 +180,7 @@ void automation_node(i32 id) {
     automation_raw(",\"hitTestable\":"); automation_bool((state & NodeState::HIT_TESTABLE) != 0);
     automation_transport.putc('}');
 
-    for (i32 child in dom.children(id)) {
+    for (NodeId child in dom.children(id)) {
         automation_node(child);
     }
 }
@@ -199,6 +204,6 @@ export void write_automation_snapshot() {
  */
 export void write_automation_hit_test(i32 x, i32 y) {
     automation_raw("{\"id\":");
-    automation_i32(dom_hit_test.find_at(x, y).unwrap_or(0));
+    automation_node_id(dom_hit_test.find_at(x, y));
     automation_raw("}");
 }

@@ -12,7 +12,7 @@ import heap from "@kernel/mm/heap.mln";
 import allocator from "@std/memory/allocator.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
-import { UiError } from "@contracts/ui/widget.contract.mln";
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 
 // Pins the interaction contract the compositor relies on: it holds no node ids
 // and starts every interaction from a hit test, so what must hold is that
@@ -38,30 +38,30 @@ i32 required_node_value(Option<i32> value) {
 }
 i32 g_changes = 0;
 
-void on_a(i32 owner, i32 id, i32 arg) {
+void on_a(i32 owner, NodeId id, i32 arg) {
     g_hits_a = g_hits_a + 1;
 }
 
-void on_b(i32 owner, i32 id, i32 arg) {
+void on_b(i32 owner, NodeId id, i32 arg) {
     g_hits_b = g_hits_b + 1;
 }
 
-void on_c(i32 owner, i32 id, i32 arg) {
+void on_c(i32 owner, NodeId id, i32 arg) {
     g_hits_c = g_hits_c + 1;
 }
 
-void on_d(i32 owner, i32 id, i32 arg) {
+void on_d(i32 owner, NodeId id, i32 arg) {
     g_hits_d = g_hits_d + 1;
 }
 
-void on_change(i32 owner, i32 id, i32 arg) {
+void on_change(i32 owner, NodeId id, i32 arg) {
     g_changes = g_changes + 1;
 }
 
-i32 require_node(Result<i32, UiError> result) {
+NodeId require_node(Result<NodeId, UiError> result) {
     return case result of {
         Ok(id) -> id;
-        Err(_) -> ({ assert.assert_true(false, "node creation failed"); 0; });
+        Err(_) -> ({ assert.assert_true(false, "node creation failed"); (NodeId)0; });
     };
 }
 
@@ -72,22 +72,17 @@ void require_append(Result<_, UiError> result) {
     };
 }
 
-i32 hit_or_zero(Option<i32> hit) {
-    return case hit of { Some(id) -> id; None -> 0; };
-}
-
-i32 active_or_zero() {
-    return case dom_widgets.active_window() of { Some(id) -> id; None -> 0; };
-}
-
 // Click wherever the pointer is, the way the compositor does: hit-test first,
 // then dispatch to whatever came back.
-i32 click_at(i32 x, i32 y) {
-    i32 hit = hit_or_zero(dom_hit_test.find_at(x, y));
-    if (hit != 0) {
-        dom.dispatch_click(hit);
-        dom.drain_events();
-    }
+Option<NodeId> click_at(i32 x, i32 y) {
+    Option<NodeId> hit = dom_hit_test.find_at(x, y);
+    case hit of {
+        Some(id) -> ({
+            dom.dispatch_click(id);
+            dom.drain_events();
+        });
+        None -> _;
+    };
     return hit;
 }
 
@@ -100,42 +95,42 @@ void dom_hit_dispatch() {
     desktop.init();
 
     // The public scalar boundary keeps DOM's Node representation private.
-    i32 none_sentinel = dom.node_exists(0) == 0;
-    i32 none_negative = dom.node_exists(-1) == 0;
+    i32 none_sentinel = dom.node_exists(NodeId(0)) == 0;
+    i32 none_negative = dom.node_exists(NodeId(-1)) == 0;
     i32 some_desktop = dom.node_exists(dom.desktop_id());
 
     i32 tb = theme.TITLEBAR_H; // logical px; children sit below it
 
-    i32 win = require_node(dom_elements.create_window("W", 0, 0, 400, 300));
+    NodeId win = require_node(dom_elements.create_window("W", 0, 0, 400, 300));
     require_append(dom.append_child(dom.desktop_id(), win));
 
-    i32 a = require_node(dom_elements.create_button("A", 10, 10, 100, 50));
+    NodeId a = require_node(dom_elements.create_button("A", 10, 10, 100, 50));
     dom.set_on_click(a, on_a);
     require_append(dom.append_child(win, a));          // -> (10, tb + 10)
 
-    i32 b = require_node(dom_elements.create_button("B", 200, 10, 100, 50));
+    NodeId b = require_node(dom_elements.create_button("B", 200, 10, 100, 50));
     dom.set_on_click(b, on_b);
     require_append(dom.append_child(win, b));          // -> (200, tb + 10)
 
     // A decorative Box is visible but is not a hit target. It must therefore
     // not obscure its interactive descendants or turn empty decoration into a
     // click.
-    i32 box = require_node(dom_elements.create_box(20, 170, 200, 120, 14737632, 8947848));
+    NodeId box = require_node(dom_elements.create_box(20, 170, 200, 120, 14737632, 8947848));
     require_append(dom.append_child(win, box));        // -> (20, tb + 170)
 
     // Column owns direct-child x/y positions. Text reserves its measured
     // line height even though it has no explicit bounds, so D lands below it.
-    i32 column = require_node(dom_elements.create_column(0, 10, 200, 100, 10, 5));
+    NodeId column = require_node(dom_elements.create_column(0, 10, 200, 100, 10, 5));
     require_append(dom.append_child(box, column));     // -> (20, tb + 180)
 
-    i32 c = require_node(dom_elements.create_button("C", 0, 0, 80, 20));
+    NodeId c = require_node(dom_elements.create_button("C", 0, 0, 80, 20));
     dom.set_on_click(c, on_c);
     require_append(dom.append_child(column, c));       // -> (30, tb + 190)
 
-    i32 label = require_node(dom_elements.create_text("note", 0, 0));
+    NodeId label = require_node(dom_elements.create_text("note", 0, 0));
     require_append(dom.append_child(column, label));   // -> (30, tb + 215)
 
-    i32 d = require_node(dom_elements.create_button("D", 0, 0, 80, 20));
+    NodeId d = require_node(dom_elements.create_button("D", 0, 0, 80, 20));
     dom.set_on_click(d, on_d);
     require_append(dom.append_child(column, d));       // -> below the label + gap
 
@@ -153,29 +148,29 @@ void dom_hit_dispatch() {
     assert.assert_true(required_node_value(dom.node_x(c)) == 30 * scale, "column padding places C");
     assert.assert_true(required_node_value(dom.node_y(c)) == (tb + 190) * scale, "column origin places C");
 
-    i32 hit_a = click_at(50 * scale, (tb + 30) * scale);   // inside A
-    i32 hit_b = click_at(240 * scale, (tb + 30) * scale);  // inside B
-    assert.assert_true(hit_a == a, "A hit test returns A");
-    assert.assert_true(hit_b == b, "B hit test returns B");
+    Option<NodeId> hit_a = click_at(50 * scale, (tb + 30) * scale);   // inside A
+    Option<NodeId> hit_b = click_at(240 * scale, (tb + 30) * scale);  // inside B
+    assert.assert_true(dom.holds(hit_a, a), "A hit test returns A");
+    assert.assert_true(dom.holds(hit_b, b), "B hit test returns B");
 
     // Outside both buttons the hit is the window itself: it is a hit target
     // (so clicks focus it) but carries no handler, so no counter moves.
-    i32 outside = click_at(350 * scale, (tb + 250) * scale);
-    assert.assert_true(outside == win, "empty window area hits the window");
+    Option<NodeId> outside = click_at(350 * scale, (tb + 250) * scale);
+    assert.assert_true(dom.holds(outside, win), "empty window area hits the window");
 
-    i32 box_hit = click_at(50 * scale, (tb + 175) * scale);
-    assert.assert_true(box_hit == win, "decorative box does not become a hit target");
+    Option<NodeId> box_hit = click_at(50 * scale, (tb + 175) * scale);
+    assert.assert_true(dom.holds(box_hit, win), "decorative box does not become a hit target");
 
     // C at (30, tb+190); D follows the label's measured height plus the gap.
-    i32 hit_c = click_at(35 * scale, (tb + 195) * scale);
+    Option<NodeId> hit_c = click_at(35 * scale, (tb + 195) * scale);
     i32 d_y = required_node_value(dom.node_y(d));
-    i32 hit_d = click_at(35 * scale, d_y + 5 * scale);
-    assert.assert_true(hit_c == c, "column padding places C at its hit point");
-    assert.assert_true(hit_d == d, "text line height and gap place D at its hit point");
+    Option<NodeId> hit_d = click_at(35 * scale, d_y + 5 * scale);
+    assert.assert_true(dom.holds(hit_c, c), "column padding places C at its hit point");
+    assert.assert_true(dom.holds(hit_d, d), "text line height and gap place D at its hit point");
     assert.assert_true(d_y > required_node_value(dom.node_y(label)), "D is laid out below the label");
 
-    i32 hit_a_again = click_at(50 * scale, (tb + 30) * scale);   // A again
-    assert.assert_true(hit_a_again == a, "second A hit test returns A");
+    Option<NodeId> hit_a_again = click_at(50 * scale, (tb + 30) * scale);   // A again
+    assert.assert_true(dom.holds(hit_a_again, a), "second A hit test returns A");
     assert.assert_true(g_hits_a == 2, "A receives both clicks");
     assert.assert_true(g_hits_b == 1, "B receives one click");
     assert.assert_true(g_hits_c == 1, "C receives one click");
@@ -190,15 +185,15 @@ void dom_hit_dispatch() {
 
     // Focus and z-order: a second window appended later paints on top and
     // wins the hit test where they overlap; focusing the first raises it.
-    i32 win2 = require_node(dom_elements.create_window("W2", 300, 200, 300, 200));
+    NodeId win2 = require_node(dom_elements.create_window("W2", 300, 200, 300, 200));
     require_append(dom.append_child(dom.desktop_id(), win2));
-    i32 overlap = hit_or_zero(dom_hit_test.find_at(350 * scale, (tb + 250) * scale));
-    assert.assert_true(overlap == win2, "later window is on top");
+    Option<NodeId> overlap = dom_hit_test.find_at(350 * scale, (tb + 250) * scale);
+    assert.assert_true(dom.holds(overlap, win2), "later window is on top");
     dom_widgets.focus_window(win);
-    assert.assert_true(active_or_zero() == win, "focus_window activates");
+    assert.assert_true(dom.holds(dom_widgets.active_window(), win), "focus_window activates");
     assert.assert_true(dom.get_state_flag(win, 16), "active window has STATE_FOCUSED");
-    overlap = hit_or_zero(dom_hit_test.find_at(350 * scale, (tb + 250) * scale));
-    assert.assert_true(overlap == win, "focused window was raised");
+    overlap = dom_hit_test.find_at(350 * scale, (tb + 250) * scale);
+    assert.assert_true(dom.holds(overlap, win), "focused window was raised");
 
     // Moving a window carries its subtree along.
     dom.move_node(win, 7 * scale, 3 * scale);
@@ -207,7 +202,7 @@ void dom_hit_dispatch() {
     dom.move_node(win, 0 - 7 * scale, 0 - 3 * scale);
 
     // Checkbox: dispatch_click toggles before the handler observes it.
-    i32 cb = require_node(dom_elements.create_checkbox("opt", 10, 100, 0));
+    NodeId cb = require_node(dom_elements.create_checkbox("opt", 10, 100, 0));
     dom.set_on_change(cb, on_change);
     require_append(dom.append_child(win2, cb));
     assert.assert_false(dom.is_checked(cb), "checkbox starts unchecked");
@@ -217,7 +212,7 @@ void dom_hit_dispatch() {
     assert.assert_true(g_changes == 1, "on_change fired once");
 
     // TextInput: keyboard events edit the focused field.
-    i32 field = require_node(dom_elements.create_text_input("type", 10, 130, 200, 30, 16));
+    NodeId field = require_node(dom_elements.create_text_input("type", 10, 130, 200, 30, 16));
     dom.set_on_change(field, on_change);
     require_append(dom.append_child(win2, field));
     dom_widgets.set_focus(field);
@@ -234,7 +229,7 @@ void dom_hit_dispatch() {
 
     // List queries preserve the semantic difference between no selection and
     // an invalid request; neither path is encoded as a negative integer.
-    i32 list = require_node(dom_elements.create_list("rows", 10, 170, 200, 80, 64));
+    NodeId list = require_node(dom_elements.create_list("rows", 10, 170, 200, 80, 64));
     require_append(dom.append_child(win2, list));
     dom_widgets.list_set_items(list, "first\nsecond");
     Result<Option<i32>, UiError> no_selection = dom_widgets.list_selected(list);
@@ -264,10 +259,10 @@ void dom_hit_dispatch() {
     };
     assert.assert_true(invalid_index == 1, "invalid list row is typed UiError");
 
-    Result<Option<i32>, UiError> missing_list = dom_widgets.list_selected(99999);
+    Result<Option<i32>, UiError> missing_list = dom_widgets.list_selected(NodeId(99999));
     i32 missing_node = case missing_list of {
         Ok(_) -> 0;
-        Err(cause) -> case cause of { UiError::NodeNotFound(value) -> value == 99999; _ -> 0; };
+        Err(cause) -> case cause of { UiError::NodeNotFound(value) -> value == NodeId(99999); _ -> 0; };
     };
     assert.assert_true(missing_node == 1, "missing list node is typed UiError");
 
@@ -277,7 +272,7 @@ void dom_hit_dispatch() {
     dom_widgets.close_window(win2);
     assert.assert_true(dom.node_exists(win2) == 0, "closed window is gone");
     assert.assert_true(dom.node_exists(field) == 0, "its children are gone too");
-    assert.assert_true(active_or_zero() == win, "remaining window becomes active");
+    assert.assert_true(dom.holds(dom_widgets.active_window(), win), "remaining window becomes active");
 
     // Exercise the renderer (window chrome, panel, buttons, text) in the
     // headless emulator as well as the tree-only assertions.

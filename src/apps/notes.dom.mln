@@ -6,7 +6,7 @@ import { app } from "@app/annotations.mln";
 import { text_copy } from "@app/ui_text.mln";
 import { Text } from "@std/text/text.mln";
 import { Result } from "@std/core/result.mln";
-import { UiError } from "@contracts/ui/widget.contract.mln";
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 
 // "Notes": a small form that exercises keyboard input. Two text fields, a
 // checkbox and a separator, plus a label that echoes what was typed. Every
@@ -24,9 +24,9 @@ i32 opened_count = 0; // desktop placement sequence shared by Notes windows
  * @property typed Scratch buffer used to copy text from the changed input.
  */
 struct Notes {
-    i32 title;
-    i32 body;
-    i32 echo;
+    NodeId title;
+    NodeId body;
+    NodeId echo;
     Text<128> typed;
 };
 
@@ -34,7 +34,7 @@ struct Notes {
 /** Builds a Notes window with per-instance title and body fields.
  * @return DOM node ID of the new Notes window.
  */
-i32 (borrow Notes n) view() {
+NodeId (borrow Notes n) view() {
     i32 offset = 28 * opened_count;
     opened_count++;
     return <Window title="Notes" x={540 + offset} y={96 + offset} w={380} h={330}>
@@ -56,7 +56,7 @@ i32 (borrow Notes n) view() {
  * Copies a changed input's text and mirrors it in the echo label.
  * @param id DOM node ID of the input that changed.
  */
-void (borrow Notes n) changed(i32 id) {
+void (borrow Notes n) changed(NodeId id) {
     Result<i32, UiError> copied = text_copy<128>(id, &n.typed);
     case copied of {
         Ok(_) -> _;
@@ -70,7 +70,7 @@ void (borrow Notes n) changed(i32 id) {
  * Clears the title and body fields and refreshes the echo label.
  * @param id DOM node ID supplied by the clear-button event.
  */
-void (borrow Notes n) clear(i32 id) {
+void (borrow Notes n) clear(NodeId id) {
     ui.input_set(n.title, "");
     ui.input_set(n.body, "");
     n.changed(n.title);

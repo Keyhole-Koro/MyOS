@@ -21,6 +21,7 @@ import { AppError, KeyClaimError } from "@contracts/myapp/lifecycle.contract.mln
 import console from "@os/proc/console.mln";
 import mbin from "@std/format/mbin.mln";
 import { Result } from "@std/core/result.mln";
+import { NodeId } from "@contracts/ui/widget.contract.mln";
 import { result_take_ok } from "@std/core/result_take.mln";
 import { Option } from "@std/core/option.mln";
 import { ShellEventKind } from "events.mln";
@@ -105,8 +106,8 @@ export void set_process_gone_sink(fn(i32 pid) -> void sink) { process_gone_sink 
  * @param token Correlation token or event-specific secondary value.
  * @param text Optional NUL-terminated text payload, such as an opened path.
  */
-void push_app_event(i32 owner, i32 id, i32 kind, i32 arg, i32 token, char *text) {
-    event_sink(owner, id, kind, arg, token, text);
+void push_app_event(i32 owner, NodeId id, i32 kind, i32 arg, i32 token, char *text) {
+    event_sink(owner, (i32)id, kind, arg, token, text);
 }
 
 // Names, types and paths read out of images on disk are copied here: the
@@ -247,7 +248,7 @@ i32 INSTANCES_MAX = 32;
 struct AppInstance {
     i32 pid;            // valid while the slot is Some
     i32 app;            // registry slot
-    Option<i32> win;    // main window; None until MAIN_WINDOW
+    Option<NodeId> win; // main window; None until MAIN_WINDOW
     bool open;          // an OPEN with open_paths[slot] waits for the window
     bool done;          // it sent EXIT; reap once it has exited
 };
@@ -308,7 +309,7 @@ Option<i32> free_slot() {
  * @param win DOM node ID of the window.
  * @return Owning process ID, or None if no live instance owns the window.
  */
-export Option<i32> owner_of_window(i32 win) {
+export Option<i32> owner_of_window(NodeId win) {
     i32 i = 0;
     while (i < instance_count) {
         case instances[i] of {
@@ -364,7 +365,7 @@ Result<i32, AppError> mount(i32 a) {
  * @param owner Process ID of the application instance.
  * @param win DOM node ID of the window created by that process.
  */
-export void window_ready(i32 owner, i32 win) {
+export void window_ready(i32 owner, NodeId win) {
     i32 slot = case slot_of_owner(owner) of {
         Some(v) -> v;
         None -> ({ return; });
@@ -378,7 +379,6 @@ export void window_ready(i32 owner, i32 win) {
         None -> false;
     };
     if (!had_window) { dom.note_app_starting(-1); }
-    if (win == 0) { return; }
     dom.set_owner(win, owner);
     dom.set_on_close(win, window_closed);
     case dom.append_child(dom.desktop_id(), win) of {
@@ -404,7 +404,7 @@ export void window_ready(i32 owner, i32 win) {
  * @param win DOM node ID of the closed window.
  * @param arg Event argument supplied by the DOM callback (unused).
  */
-void window_closed(i32 owner, i32 win, i32 arg) {
+void window_closed(i32 owner, NodeId win, i32 arg) {
     i32 slot = case slot_of_owner(owner) of {
         Some(v) -> v;
         None -> ({
@@ -449,7 +449,7 @@ export void instance_exited(i32 owner) {
  * @param id Timer node ID (unused).
  * @param arg Timer callback argument (unused).
  */
-void reap_exited(i32 owner, i32 id, i32 arg) {
+void reap_exited(i32 owner, NodeId id, i32 arg) {
     i32 i = 0;
     while (i < instance_count) {
         case instances[i] of {
@@ -499,7 +499,7 @@ void reap_exited(i32 owner, i32 id, i32 arg) {
  * @return Ok(Some(window)) when a main window exists, Ok(None) while it starts,
  *         or Err when the index is invalid or launching fails.
  */
-export Result<Option<i32>, AppError> launch(i32 index) {
+export Result<Option<NodeId>, AppError> launch(i32 index) {
     if (index < 0 || index >= registry_count) { return Err(AppError::InvalidIndex(index)); }
     if (registry[index].single != 0) {
         case slot_of_app(index) of {
@@ -528,7 +528,7 @@ export Result<Option<i32>, AppError> launch(i32 index) {
  * @return Ok(Some(window)) when available, Ok(None) while starting, or Err when
  *         the name is not installed or launching fails.
  */
-export Result<Option<i32>, AppError> launch_named(char *name) {
+export Result<Option<NodeId>, AppError> launch_named(char *name) {
     i32 i = 0;
     while (i < registry_count) {
     if (str.eq((char*)registry[i].name, name)) { return launch(i); }
@@ -549,7 +549,7 @@ export Result<Option<i32>, AppError> launch_named(char *name) {
  * @return Ok(Some(window)) when delivered immediately, Ok(None) while the app
  *         starts, or Err when the path, handler, or launch request is invalid.
  */
-export Result<Option<i32>, AppError> open(char *path) {
+export Result<Option<NodeId>, AppError> open(char *path) {
     str path_text = str.from_c(path);
     if (path_text.length > 63) { return Err(AppError::PathTooLong(path_text.length)); }
     i32 a = 0;
@@ -624,7 +624,8 @@ export void launch_menu() {
     if (rows < 1) { rows = 1; }
     i32 y = graphics.display_height() - dom_widgets.taskbar_height() - (rows * 34 + 20) * s;
     str items = str.from_c(menu_items());
-    case dom_widgets.open_menu(8 * s, y, items, on_menu, 0) of {
+    Option<NodeId> no_target = None;
+    case dom_widgets.open_menu(8 * s, y, items, on_menu, no_target) of {
         Ok(_) -> _;
         Err(_) -> _;
     };
@@ -796,7 +797,7 @@ export bool dispatch_key(i32 owner, i32 code, i32 mods) {
                     Some(value) -> value;
                     None -> ({ return false; });
                 };
-                i32 window = case instance.win of {
+                NodeId window = case instance.win of {
                     Some(value) -> value;
                     None -> ({ return false; });
                 };

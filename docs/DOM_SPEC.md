@@ -580,3 +580,18 @@ checked/hitTestableを含める。host側は`MyOS` / strict `Locator` / `expect`
   位置・サイズ・ハンドラにデフォルト値、`testId` プロパティ、`append_child`。
   `dom/dom_elements.mln` はサーバ内部の `create_*` だけ。`Checkbox` / `List` は
   ハンドラ無しでも hit-testable。
+
+## 2026-11-07: NodeId と Option
+
+この節より前の API の記述は当時のもの。今の契約は次のとおり。
+
+- ノード id は `NodeId`（`contracts/ui/widget.contract.mln`）。線の上と model の中だけが語で、
+  `0` を「無し」には使わない。無いことがある所は `Option<NodeId>`：`active_window_id()`、
+  `focus_id()`、`taskbar_id()`、`menu_id()`、`menu_target()`、`parent_id()`。
+  比較は `dom.holds(slot, id)` と `dom.same_node(a, b)`。
+- 生きているか分からない id は `dom.find_row(id)`（`Option<borrow NodeRow>`）か
+  `dom.require_row(id)?`（`Result`）で 1 回引いて、行から読む。`row_of` は生きていると分かって
+  いる id だけ（歩いている子など）。
+- `sel`（List の選択行、Menu の hover 行）と `color` は `Option<i32>`。`create_node` が None を
+  入れる。ゼロのバイトは `Some(0)` と読めるので、`Option` のグローバルは `dom.init()` が入れる。
+- ハンドラの ABI は `void handler(i32 owner, NodeId id, i32 arg)`。

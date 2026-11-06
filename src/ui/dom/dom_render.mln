@@ -13,6 +13,7 @@ import { Blob } from "@std/memory/blob.mln";
 import { NodeKind, NodeRole, NodeState, NodeStyle, Children } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Text } from "@std/text/text.mln";
+import { NodeId } from "@contracts/ui/widget.contract.mln";
 
 // --- renderer ---------------------------------------------------------------------------------
 // Walk the UI subtree and paint each node with graphics.*. The renderer and
@@ -521,19 +522,19 @@ export void draw_panel(borrow NodeRow n) {
 // so the bar never has to be rebuilt when windows come and go.
 
 /**
- * Finds the next window child ID in the desktop hierarchy with an ID greater than `after`.
- * @param after Window DOM Node ID lower bound (0 for first).
- * @return Next window DOM Node ID, or 0 if none.
+ * Finds the desktop window with the lowest ID word above `after`, so walking
+ * from 0 visits windows in creation order.
+ * @param after ID word lower bound (0 for first).
+ * @return Next window DOM Node ID, if any.
  */
-export i32 next_window_after(i32 after) {
-    i32 best = 0;
-    for (i32 child_id in dom.children(dom.desktop_id())) {
+export Option<NodeId> next_window_after(i32 after) {
+    Option<NodeId> best = None;
+    for (NodeId child_id in dom.children(dom.desktop_id())) {
         borrow NodeRow c = dom.row_of(child_id);
-        if (c.kind == NodeKind::WINDOW) {
-            if (child_id > after) {
-                if (best == 0) { best = child_id; }
-                else if (child_id < best) { best = child_id; }
-            }
+        i32 word = (i32)child_id;
+        if (c.kind == NodeKind::WINDOW && word > after) {
+            bool closer = case best of { Some(id) -> word < (i32)id; None -> true; };
+            if (closer) { best = Some(child_id); }
         }
     }
     return best;
@@ -609,15 +610,17 @@ export void draw_taskbar(borrow NodeRow n) {
     i32 dim = theme.TEXT_ON_DARK_DIM;
     i32 th = graphics.text_height(0, s);
     i32 index = 0;
-    i32 win = next_window_after(0);
-    while (win != 0) {
+    i32 after = 0;
+    while (1) {
+        NodeId win = case next_window_after(after) of { Some(id) -> id; None -> ({ break; }); };
         borrow NodeRow c = dom.row_of(win);
         i32 ex = x + taskbar_entry_x(index);
         i32 ebg = entry_bg;
         i32 fg = dim;
-        if (win == dom.active_window_id()) { ebg = active_bg; fg = on_dark; }
+        bool active = dom.holds(dom.active_window_id(), win);
+        if (active) { ebg = active_bg; fg = on_dark; }
         graphics.fill_round_rect(ex, y + 6 * s, ew, h - 12 * s, er, ebg);
-        if (win == dom.active_window_id()) {
+        if (active) {
             graphics.fill_round_rect(ex + 10 * s, y + h - 9 * s, ew - 20 * s, 2 * s, s, accent);
         }
         if (c.text.is_live()) {
@@ -627,7 +630,7 @@ export void draw_taskbar(borrow NodeRow n) {
             graphics.pop_clip();
         }
         index = index + 1;
-        win = next_window_after(win);
+        after = (i32)win;
     }
 
     // Clock at the right.
@@ -642,7 +645,7 @@ export void draw_taskbar(borrow NodeRow n) {
 export enum TaskbarTarget {
     Miss,
     Launcher,
-    Window(i32),
+    Window(NodeId),
 }
 
 /**
@@ -652,7 +655,7 @@ export enum TaskbarTarget {
  * @return TaskbarTarget (Miss, Launcher, or Window(id)).
  */
 export TaskbarTarget taskbar_target_at(i32 px, i32 py) {
-    borrow NodeRow n = case dom.find_row(dom.taskbar_id()) of { Some(row) -> row; None -> ({ return TaskbarTarget::Miss; }); };
+    borrow NodeRow n = case dom.row_in(dom.taskbar_id()) of { Some(row) -> row; None -> ({ return TaskbarTarget::Miss; }); };
     i32 s = dom.ui_scale();
     i32 x = n.x;
     i32 lx = x + 8 * s;
@@ -662,14 +665,15 @@ export TaskbarTarget taskbar_target_at(i32 px, i32 py) {
     }
     i32 ew = theme.TASKBAR_ENTRY_W * s;
     i32 index = 0;
-    i32 win = next_window_after(0);
-    while (win != 0) {
+    i32 after = 0;
+    while (1) {
+        NodeId win = case next_window_after(after) of { Some(id) -> id; None -> ({ break; }); };
         i32 ex = x + taskbar_entry_x(index);
         if (px >= ex) {
             if (px < ex + ew) { return TaskbarTarget::Window(win); }
         }
         index++;
-        win = next_window_after(win);
+        after = (i32)win;
     }
     return TaskbarTarget::Miss;
 }
@@ -686,7 +690,7 @@ export void set_launcher(fn() -> void handler) {
  * Invalidates the taskbar node area to refresh the clock display.
  */
 export void refresh_taskbar() {
-    dom.damage_node(dom.taskbar_id());
+    dom.damage_taskbar();
 }
 
 /**
@@ -760,7 +764,7 @@ export void render(borrow NodeRow n) {
         if (!in_damage) { return; }
         graphics.push_clip(n.x, n.y, n.w, n.h);
     }
-    for (i32 child_id in dom.children(n.id)) {
+    for (NodeId child_id in dom.children(n.id)) {
         render(dom.row_of(child_id));
     }
     if (clip) { graphics.pop_clip(); }
@@ -776,13 +780,15 @@ export void paint_desktop() {
     i32 dh = graphics.display_height();
     graphics.fill_gradient_v(0, 0, dw, dh, top, bottom);
 
-    for (i32 child_id in dom.children(dom.desktop_id())) {
-        if (child_id != dom.taskbar_id()) {
-            if (child_id != dom.menu_id()) { render(dom.row_of(child_id)); }
+    Option<NodeId> taskbar = dom.taskbar_id();
+    Option<NodeId> menu = dom.menu_id();
+    for (NodeId child_id in dom.children(dom.desktop_id())) {
+        if (!dom.holds(taskbar, child_id) && !dom.holds(menu, child_id)) {
+            render(dom.row_of(child_id));
         }
     }
-    case dom.find_row(dom.taskbar_id()) of { Some(taskbar) -> render(taskbar); None -> _; };
-    case dom.find_row(dom.menu_id()) of { Some(menu) -> render(menu); None -> _; };
+    case dom.row_in(taskbar) of { Some(row) -> render(row); None -> _; };
+    case dom.row_in(menu) of { Some(row) -> render(row); None -> _; };
 }
 
 /**

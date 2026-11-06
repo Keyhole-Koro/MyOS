@@ -17,16 +17,7 @@ import { PointerButton } from "@contracts/input/pointer.contract.mln";
 import keyboard from "@kernel/io/keyboard.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
 import irq from "@kernel/arch/irq.mln";
-import { UiError } from "@contracts/ui/widget.contract.mln";
-
-i32 compositor_window_id_or_zero(i32 id) {
-    Result<Option<i32>, UiError> result = dom.window_of(id);
-    return case result of {
-        Ok(Some(win)) -> win;
-        Ok(None) -> 0;
-        Err(_) -> 0;
-    };
-}
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 
 // Work owned by outer boundary endpoints that must run on this task. Boot wires
 // the callback; the compositor does not depend on request transport.
@@ -70,16 +61,16 @@ export void paint_first_frame() {
 // Drag state: the window being moved by its title bar (or resized by its
 // grip), and where the pointer was at the last event so each motion event
 // applies only its own delta.
-i32 g_drag_win = 0;
-i32 g_resize_win = 0;
+Option<NodeId> g_drag_win;
+Option<NodeId> g_resize_win;
 i32 g_drag_last_x = 0;
 i32 g_drag_last_y = 0;
 
 // Press state: the node under the pointer when the left button went down.
 // A click fires on release only if the pointer is still over that node, so
 // dragging off a button cancels it.
-i32 g_pressed_id = 0;
-i32 g_hot_id = 0;
+Option<NodeId> g_pressed_id;
+Option<NodeId> g_hot_id;
 
 // Desktop context menu (right-click on the wallpaper), registered by main.
 char *g_desktop_menu_items = (char*)0;
@@ -109,12 +100,11 @@ enum WindowMenuAction {
  * @param action Chosen WindowMenuAction item.
  */
 void on_window_menu(WindowMenuAction action) {
-    i32 win = dom_widgets.menu_target();
-    if (win == 0) { return; }
+    NodeId win = case dom_widgets.menu_target() of { Some(id) -> id; None -> ({ return; }); };
     case action of {
         WindowMenuAction::MINIMIZE -> dom_widgets.minimize_window(win);
         WindowMenuAction::MAXIMIZE -> dom_widgets.maximize_window(win);
-        WindowMenuAction::CLOSE -> ({ g_hot_id = 0; dom_widgets.close_window(win); });
+        WindowMenuAction::CLOSE -> ({ g_hot_id = None; dom_widgets.close_window(win); });
     };
 }
 
@@ -126,30 +116,26 @@ void on_window_menu(WindowMenuAction action) {
 void on_press(i32 ex, i32 ey) {
     // A click while a menu is open either picks an item or dismisses the
     // menu; either way it goes no further.
-    if (dom_widgets.menu_id() != 0) {
-        Option<i32> mhit = dom_hit_test.find_at(ex, ey);
-        case mhit of {
-            Some(id) -> ({
-                if (id == dom_widgets.menu_id()) { dom_widgets.menu_click(ex, ey); }
-                else { dom_widgets.close_menu(); }
-            });
-            None -> ({ dom_widgets.close_menu(); });
-        };
+    Option<NodeId> menu = dom_widgets.menu_id();
+    if (menu.is_some()) {
+        if (dom.same_node(dom_hit_test.find_at(ex, ey), menu)) { dom_widgets.menu_click(ex, ey); }
+        else { dom_widgets.close_menu(); }
         return;
     }
 
-    i32 hit = case dom_hit_test.find_at(ex, ey) of {
+    NodeId hit = case dom_hit_test.find_at(ex, ey) of {
         Some(id) -> id;
-        None -> ({ dom_widgets.set_focus(0); return; });
+        None -> ({ dom_widgets.clear_focus(); return; });
     };
 
     // Anything inside a window activates that window first.
-    i32 win = compositor_window_id_or_zero(hit);
-    if (win != 0) {
-        dom_widgets.focus_window(win);
-    }
+    Option<NodeId> enclosing = dom.enclosing_window(hit);
+    case enclosing of {
+        Some(win) -> dom_widgets.focus_window(win);
+        None -> _;
+    };
 
-    if (hit == dom.taskbar_id()) {
+    if (dom.holds(dom.taskbar_id(), hit)) {
         case dom_render.taskbar_target_at(ex, ey) of {
             TaskbarTarget::Window(target) -> dom_widgets.focus_window(target);
             TaskbarTarget::Launcher -> ({
@@ -161,14 +147,14 @@ void on_press(i32 ex, i32 ey) {
         return;
     }
 
-    if (hit == win) {
+    if (dom.holds(enclosing, hit)) {
         // The window itself: title-bar buttons, drag handle, resize grip,
         // or just focus.
-        Option<i32> button = dom_window_chrome.button_hit(win, ex, ey);
-        case button of {
+        NodeId win = hit;
+        case dom_window_chrome.button_hit(win, ex, ey) of {
             Some(value) -> ({
                 if (value == 1) {
-                    g_hot_id = 0;
+                    g_hot_id = None;
                     dom_widgets.close_window(win);
                     return;
                 }
@@ -178,13 +164,13 @@ void on_press(i32 ex, i32 ey) {
             None -> _;
         };
         if (dom_window_chrome.resize_grip_hit(win, ex, ey)) {
-            g_resize_win = win;
+            g_resize_win = Some(win);
             g_drag_last_x = ex;
             g_drag_last_y = ey;
             return;
         }
         if (dom_window_chrome.titlebar_hit(win, ex, ey)) {
-            g_drag_win = win;
+            g_drag_win = Some(win);
             g_drag_last_x = ex;
             g_drag_last_y = ey;
         }
@@ -206,7 +192,7 @@ void on_press(i32 ex, i32 ey) {
         _ -> 0;
     };
     dom.set_pressed(hit, 1);
-    g_pressed_id = hit;
+    g_pressed_id = Some(hit);
 }
 
 /**
@@ -215,32 +201,34 @@ void on_press(i32 ex, i32 ey) {
  * @param ey Vertical mouse pointer coordinate in logical pixels.
  */
 void on_right_press(i32 ex, i32 ey) {
-    if (dom_widgets.menu_id() != 0) {
+    if (dom_widgets.menu_id().is_some()) {
         dom_widgets.close_menu();
         return;
     }
-    Option<i32> found = dom_hit_test.find_at(ex, ey);
-    i32 hit = case found of {
+    NodeId hit = case dom_hit_test.find_at(ex, ey) of {
         Some(id) -> id;
         None -> ({
             if (g_desktop_menu_items != 0) {
                 str desktop_items = str.from_c(g_desktop_menu_items);
-                case dom_widgets.open_menu(ex, ey, desktop_items, g_desktop_menu_handler, 0) of { Ok(_) -> _; Err(_) -> _; };
+                Option<NodeId> no_target = None;
+                case dom_widgets.open_menu(ex, ey, desktop_items, g_desktop_menu_handler, no_target) of { Ok(_) -> _; Err(_) -> _; };
             }
             return;
         });
     };
-    if (hit == dom.taskbar_id()) { return; }
-    i32 win = compositor_window_id_or_zero(hit);
-    if (win != 0) {
-        dom_widgets.focus_window(win);
-        if (dom_widgets.is_maximized(win)) {
-            case dom_widgets.open_menu(ex, ey, "Minimize\nRestore\nClose", on_window_menu, win) of { Ok(_) -> _; Err(_) -> _; };
-        } else {
-            case dom_widgets.open_menu(ex, ey, "Minimize\nMaximize\nClose", on_window_menu, win) of { Ok(_) -> _; Err(_) -> _; };
-        }
-        return;
-    }
+    if (dom.holds(dom.taskbar_id(), hit)) { return; }
+    Option<NodeId> enclosing = dom.enclosing_window(hit);
+    case enclosing of {
+        Some(win) -> ({
+            dom_widgets.focus_window(win);
+            if (dom_widgets.is_maximized(win)) {
+                case dom_widgets.open_menu(ex, ey, "Minimize\nRestore\nClose", on_window_menu, enclosing) of { Ok(_) -> _; Err(_) -> _; };
+            } else {
+                case dom_widgets.open_menu(ex, ey, "Minimize\nMaximize\nClose", on_window_menu, enclosing) of { Ok(_) -> _; Err(_) -> _; };
+            }
+        });
+        None -> _;
+    };
 }
 
 /**
@@ -249,25 +237,24 @@ void on_right_press(i32 ex, i32 ey) {
  * @param ey Vertical mouse pointer coordinate in logical pixels.
  */
 void on_release(i32 ex, i32 ey) {
-    if (g_drag_win != 0) {
-        g_drag_win = 0;
+    if (g_drag_win.is_some()) {
+        g_drag_win = None;
         return;
     }
-    if (g_resize_win != 0) {
-        g_resize_win = 0;
+    if (g_resize_win.is_some()) {
+        g_resize_win = None;
         return;
     }
-    if (g_pressed_id != 0) {
-        // Un-press whatever this loop pressed, not whatever happens to be
-        // under the pointer now; click only if it is the same node.
-        dom.set_pressed(g_pressed_id, 0);
-        Option<i32> hit = dom_hit_test.find_at(ex, ey);
-        case hit of {
-            Some(id) -> ({ if (id == g_pressed_id) { dom.dispatch_click(id); } });
-            None -> _;
-        };
-        g_pressed_id = 0;
-    }
+    case g_pressed_id of {
+        Some(pressed) -> ({
+            // Un-press whatever this loop pressed, not whatever happens to be
+            // under the pointer now; click only if it is the same node.
+            dom.set_pressed(pressed, 0);
+            if (dom.holds(dom_hit_test.find_at(ex, ey), pressed)) { dom.dispatch_click(pressed); }
+            g_pressed_id = None;
+        });
+        None -> _;
+    };
 }
 
 /**
@@ -278,23 +265,20 @@ void on_release(i32 ex, i32 ey) {
 void on_motion(i32 ex, i32 ey) {
     i32 dx = ex - g_drag_last_x;
     i32 dy = ey - g_drag_last_y;
-    if (g_drag_win != 0) {
-        if (dx != 0) { dom.move_node(g_drag_win, dx, dy); }
-        else if (dy != 0) { dom.move_node(g_drag_win, dx, dy); }
-    }
-    if (g_resize_win != 0) {
-        Option<i32> width_result = dom.node_w(g_resize_win);
-        i32 w = case width_result of {
-            Some(value) -> value + dx;
-            None -> ({ g_resize_win = 0; return; });
-        };
-        Option<i32> height_result = dom.node_h(g_resize_win);
-        i32 h = case height_result of {
-            Some(value) -> value + dy;
-            None -> ({ g_resize_win = 0; return; });
-        };
-        dom_widgets.resize_window(g_resize_win, w, h);
-    }
+    case g_drag_win of {
+        Some(win) -> ({ if (dx != 0 || dy != 0) { dom.move_node(win, dx, dy); } });
+        None -> _;
+    };
+    case g_resize_win of {
+        Some(win) -> ({
+            borrow NodeRow n = case dom.find_row(win) of {
+                Some(row) -> row;
+                None -> ({ g_resize_win = None; return; });
+            };
+            dom_widgets.resize_window(win, n.w + dx, n.h + dy);
+        });
+        None -> _;
+    };
     g_drag_last_x = ex;
     g_drag_last_y = ey;
 }
@@ -315,6 +299,12 @@ i32 g_paint_deferred = 0;
 export void run() {
     i32 prev_left = 0;
     i32 prev_right = 0;
+
+    // An Option global starts as zero bytes, which read as Some(0).
+    g_drag_win = None;
+    g_resize_win = None;
+    g_pressed_id = None;
+    g_hot_id = None;
 
     // paint_first_frame() already painted the desktop (called from main.mln
     // before interrupts were enabled, so that paint could not be preempted).
@@ -379,13 +369,13 @@ export void run() {
             i32 my = mouse.y();
             graphics.set_cursor(mx, my);
 
-            i32 hit = dom_hit_test.find_at(mx, my).unwrap_or(0);
-            if (hit != g_hot_id) {
-                if (g_hot_id != 0) { dom.set_hovered(g_hot_id, 0); }
-                if (hit != 0) { dom.set_hovered(hit, 1); }
+            Option<NodeId> hit = dom_hit_test.find_at(mx, my);
+            if (!dom.same_node(hit, g_hot_id)) {
+                case g_hot_id of { Some(id) -> dom.set_hovered(id, 0); None -> _; };
+                case hit of { Some(id) -> dom.set_hovered(id, 1); None -> _; };
                 g_hot_id = hit;
             }
-            if (dom_widgets.menu_id() != 0) { dom_widgets.menu_hover(mx, my); }
+            dom_widgets.menu_hover(mx, my);
 
             // Timers (clock, animations) run on this task between events.
             dom_widgets.tick();

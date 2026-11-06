@@ -1,5 +1,7 @@
 package ui_event;
 
+import { NodeId } from "@contracts/ui/widget.contract.mln";
+
 // UI-domain events. The UI knows that an owned node was clicked or changed,
 // but does not know how an application process receives that notification.
 // The outer IPC endpoint installs the sink during boot.
@@ -13,15 +15,15 @@ export enum UiEventKind {
     TIMER,
 }
 
-void no_sink(i32 owner, i32 id, i32 kind, i32 arg) { }
+void no_sink(i32 owner, NodeId id, i32 kind, i32 arg) { }
 
-fn(i32 owner, i32 id, i32 kind, i32 arg) -> void g_sink = no_sink;
+fn(i32 owner, NodeId id, i32 kind, i32 arg) -> void g_sink = no_sink;
 
 /**
  * Installs the callback that receives events produced by UI nodes.
  * @param sink Callback with signature (owner, node_id, kind, argument).
  */
-export void set_sink(fn(i32 owner, i32 id, i32 kind, i32 arg) -> void sink) { g_sink = sink; }
+export void set_sink(fn(i32 owner, NodeId id, i32 kind, i32 arg) -> void sink) { g_sink = sink; }
 
 /**
  * Sends a UI event to the currently installed event callback.
@@ -30,6 +32,6 @@ export void set_sink(fn(i32 owner, i32 id, i32 kind, i32 arg) -> void sink) { g_
  * @param kind UiEventKind value describing the event.
  * @param arg Event-specific integer payload.
  */
-export void emit(i32 owner, i32 id, i32 kind, i32 arg) {
+export void emit(i32 owner, NodeId id, i32 kind, i32 arg) {
     g_sink(owner, id, kind, arg);
 }
