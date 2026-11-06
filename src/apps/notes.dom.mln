@@ -43,7 +43,7 @@ NodeId (borrow Notes n) view() {
             <TextInput ref={n.title} placeholder="Title" w={332} h={34} capacity={64} onChange={n.changed} />
             <TextInput ref={n.body} placeholder="Write something..." w={332} h={34} capacity={64} onChange={n.changed} />
             <Separator w={332} />
-            <Checkbox text="Mark as done" checked={1} />
+            <Checkbox text="Mark as done" checked={true} />
             <Row w={332} h={34} gap={10}>
                 <Button text="Clear" w={90} h={34} onClick={n.clear} />
             </Row>

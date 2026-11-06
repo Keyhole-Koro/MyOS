@@ -1182,7 +1182,14 @@ export Result<Option<fn(i32 owner, NodeId id, i32 arg) -> void>, UiError> on_clo
  * @param n Pointer to DOM Node.
  */
 export void fire_change(borrow NodeRow n) {
-    emit(&n, UiEventKind::CHANGE, n.on_change, 0);
+    emit(&n, UiEventKind::CHANGE, n.on_change, change_value(&n));
+}
+
+// The value a change event carries, which is the node's new value.
+i32 change_value(borrow NodeRow n) {
+    if (n.kind == NodeKind::CHECKBOX) { return (n.state & NodeState::CHECKED) != 0 ? 1 : 0; }
+    if (n.kind == NodeKind::LIST) { return n.sel.unwrap_or(-1); }
+    return 0;
 }
 
 /**

@@ -1,91 +1,69 @@
 package counter;
 
+import app from "@app/app.mln";
+import { App, View } from "@app/app.mln";
 import elements from "@app/elements.mln";
 import ui from "@app/ui.mln";
 import { app } from "@app/annotations.mln";
-import { Result } from "@std/core/result.mln";
-import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
+import { NodeId } from "@contracts/ui/widget.contract.mln";
 
 // Click counter demo app, and the smallest example of the app framework.
 //
-// `@app` on view() makes Counter an application: the build lists it in the
-// launcher, and each launch allocates one zeroed Counter, runs view() to
-// build its window and routes that window's events to the methods named in
-// the markup. Fields are the instance's state -- no globals, so every
-// launch is independent -- and `ref=` stores node ids into them so handlers
-// never walk the tree.
-//
-// The methods take `borrow Counter`: the framework calls them with the
-// instance's address, and a reference is that address underneath. `Counter *c`
-// with `c->` would be the same thing spelled as a raw pointer.
+// The fields are the state. `view` says what the state looks like: after each
+// event the framework reads it again and changes what differs, so a handler
+// only changes the state.
 //
 // Coordinates are logical (1024x768) and relative to the parent element; a
 // Window's children start below its title bar. Column and Row position their
 // own children, so those need only sizes.
 
 /**
- * Per-window state for the click-counter application.
+ * The click counter's state.
  * @property clicks Current accumulated click count.
  * @property step Amount added by each click, selected by the checkbox.
- * @property label DOM node ID of the text label displaying the count.
  */
+@app
 struct Counter {
     i32 clicks;
     i32 step;
-    NodeId label;
 };
 
-@app
-/** Builds the counter window and initializes its per-instance increment step.
- * @return DOM node ID of the newly created window.
- */
-NodeId (borrow Counter c) view() {
-    c.step = 1;
-    return <Window title="Counter" x={96} y={72} w={400} h={272}>
-        <Panel x={20} y={20} w={360} h={140} radius={10}>
-            <Column x={20} y={16} w={320} h={110} gap={10}>
-                <Label text="A window, a panel, two buttons." color={ui.TEXT_SECONDARY} />
-                <Label ref={c.label} text="clicks: 0" bold={1} testId="counter" />
-                <Row w={320} h={36} gap={10}>
-                    <PrimaryButton text="Click me" w={120} h={36} onClick={c.click} />
-                    <Button text="Reset" w={90} h={36} onClick={c.reset} />
-                </Row>
-            </Column>
-        </Panel>
-        <Checkbox text="Count by two" x={24} y={180} onClick={c.step_changed} />
-    </Window>;
+impl App for Counter {
+    Self start() { return Counter { step: 1 }; }
+
+    View (Self c) view() {
+        return <Window title="Counter" x={96} y={72} w={400} h={272}>
+            <Panel x={20} y={20} w={360} h={140} radius={10}>
+                <Column x={20} y={16} w={320} h={110} gap={10}>
+                    <Label text="A window, a panel, two buttons." color={ui.TEXT_SECONDARY} />
+                    <Label text={"clicks: %d", c.clicks} bold={1} testId="counter" />
+                    <Row w={320} h={36} gap={10}>
+                        <PrimaryButton text="Click me" w={120} h={36} onClick={c.click} />
+                        <Button text="Reset" w={90} h={36} onClick={c.reset} />
+                    </Row>
+                </Column>
+            </Panel>
+            <Checkbox text="Count by two" x={24} y={180} checked={c.step == 2} onChange={c.set_double} />
+        </Window>;
+    }
 }
 
-/** Refreshes the count label from the current counter state. */
-void (borrow Counter c) refresh() {
-    ui.set_text_fmt(c.label, "clicks: %d", "", c.clicks);
-}
-
-/**
- * Adds the configured step and refreshes the count label.
- * @param id DOM node ID supplied by the click event.
- */
-void (borrow Counter c) click(NodeId id) {
+/** Adds the configured step. */
+void (borrow Counter c) click() {
     c.clicks = c.clicks + c.step;
-    c.refresh();
 }
 
-/**
- * Resets the count to zero and refreshes the display.
- * @param id DOM node ID supplied by the reset-button event.
- */
-void (borrow Counter c) reset(NodeId id) {
+/** Resets the count to zero. */
+void (borrow Counter c) reset() {
     c.clicks = 0;
-    c.refresh();
 }
 
-// Checkbox: the toggle happens before the handler runs, so reading the
-// node gives the new state.
 /**
- * Selects an increment step of one or two from the checkbox state.
- * @param id Checkbox DOM node ID whose checked state has just changed.
+ * Selects an increment step of one or two.
+ * @param on Whether the checkbox is now checked.
  */
-void (borrow Counter c) step_changed(NodeId id) {
-    c.step = 1;
-    if (ui.is_checked(id).unwrap_or(false)) { c.step = 2; }
+void (borrow Counter c) set_double(bool on) {
+    c.step = on ? 2 : 1;
 }
+
+i32 main() { return app.run<Counter>(); }
