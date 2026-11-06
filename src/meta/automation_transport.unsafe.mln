@@ -15,12 +15,14 @@ i32 STATUS_REQUEST = 1;
  * Checks if a pending automation request is present in the MMIO status register.
  * @return True if a request is waiting, false otherwise.
  */
+@safe
 export bool has_request() { return (mem.read_word(STATUS_ADDR) & STATUS_REQUEST) != 0; }
 
 /**
  * Reads the pending automation command word from the MMIO receive register.
  * @return 32-bit automation command word.
  */
+@safe
 export i32 read_request() { return mem.read_word(RX_ADDR); }
 
 /**
@@ -33,6 +35,7 @@ export void putc(i32 c) { mem.write_word(TX_ADDR, c & 255); }
 /**
  * Signals completion of an automation command response to the host test controller.
  */
+@safe
 export void done() { mem.write_word(DONE_ADDR, 1); }
 
 /**

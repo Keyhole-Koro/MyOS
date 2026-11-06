@@ -1019,6 +1019,7 @@ export Result<_, FsError> remove(str path) {
 /**
  * Lists all existing files and their sizes to the serial debug console.
  */
+@safe
 export void list() {
     if (!g_enabled) { return; }
     debug.println("--- fs list ---");
