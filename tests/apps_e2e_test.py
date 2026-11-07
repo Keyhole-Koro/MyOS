@@ -179,7 +179,9 @@ def main() -> int:
             term_in.click()
             os._type("echo")
             os._press("enter")
-            text = wait_text_contains(term_out, "echo: type lines")
+            wait_text_contains(term_out, "echo: type lines")
+            # The child's stdout overtakes the terminal's own "[pid N]" line.
+            text = wait_text_contains(term_out, "] echo\n")
             child = re.findall(r"^\[pid (\d+)\] echo$", text, re.MULTILINE)[-1]
             close_window(os, "Terminal")
             expect(os.get_by_role("window", name="Terminal")).to_have_count(0)
