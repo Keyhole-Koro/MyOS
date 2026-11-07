@@ -17,28 +17,43 @@ import { copy_in_text } from "@os/syscall/user_memory.mln";
 import { UserAddress } from "@std/core/address.mln";
 import { Result } from "@std/core/result.mln";
 import { SpawnError } from "@contracts/process/spawn.contract.mln";
-import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
+import { Pid, ProcessControlError, ProcessControlStatus, ProcessExitStatus } from "@contracts/process/control.contract.mln";
 import { Text } from "@std/text/text.mln";
 
 Text<64> g_path;
 Text<128> g_line;
 
 /**
+ * Puts a control result on the wire for a service with no result_out.
+ * @param result What the operation returned.
+ * @return The ProcessControlStatus word for r2.
+ */
+i32 answer(Result<_, ProcessControlError> result) {
+    ProcessControlStatus status = case result of {
+        Ok(_) -> ProcessControlStatus::Accepted;
+        Err(_) -> ProcessControlStatus::Refused;
+    };
+    return (i32)status;
+}
+
+/**
  * Dispatches a process OS_CALL request and performs user-memory copies where needed.
  *
+ * @param caller Calling process: the parent of what it spawns, and the only
+ *               process that may control those children.
  * @param service Service code (PROC_SPAWN, PROC_BIND, PROC_UNBIND, PROC_EXITED, PROC_REAP, PROC_FEED).
  * @param args Virtual address of argument structure in caller's memory.
- * @return Ok(_) when the request was handled, or Err(UnknownService).
+ * @return Ok(r2 word) when the request was handled, or Err(UnknownService).
  */
-export Result<_, OsServiceError> handle(i32 service, UserAddress args) {
+export Result<i32, OsServiceError> handle(Pid caller, i32 service, UserAddress args) {
     if (service == OsService::PROC_SPAWN) {
         ProcSpawnArgs<Result<Pid, SpawnError>> request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
         copy_in_text<64>(UserAddress((i32)request.path), request.path_length, &g_path);
-        Result<Pid, SpawnError> result = console.spawn_file(g_path.as_str());
+        Result<Pid, SpawnError> result = console.spawn_file(Some(caller), g_path.as_str());
         if (request.stdout_node != 0) {
             case result of {
-                Ok(pid) -> ({ console.bind(pid, request.stdout_node); });
+                Ok(pid) -> ({ console.bind(caller, pid, request.stdout_node); });
                 Err(_) -> _;
             };
         }
@@ -47,48 +62,45 @@ export Result<_, OsServiceError> handle(i32 service, UserAddress args) {
             (char*)(&result),
             sizeof(Result<Pid, SpawnError>)
         );
-        return Ok(_);
+        return Ok(0);
     }
     if (service == OsService::PROC_BIND) {
         ProcBindArgs request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        console.bind(Pid(request.pid), request.output_node);
-        return Ok(_);
+        return Ok(answer(console.bind(caller, Pid(request.pid), request.output_node)));
     }
     if (service == OsService::PROC_UNBIND) {
         ProcUnbindArgs request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        console.unbind(Pid(request.pid));
-        return Ok(_);
+        return Ok(answer(console.unbind(caller, Pid(request.pid))));
     }
     if (service == OsService::PROC_EXITED) {
         ProcExitedArgs<Result<bool, ProcessControlError>> request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        Result<bool, ProcessControlError> result = console.has_exited(Pid(request.pid));
+        Result<bool, ProcessControlError> result = console.has_exited(caller, Pid(request.pid));
         user_memory.copy_out(
             UserAddress((i32)request.result_out),
             (char*)(&result),
             sizeof(Result<bool, ProcessControlError>)
         );
-        return Ok(_);
+        return Ok(0);
     }
     if (service == OsService::PROC_REAP) {
         ProcReapArgs<Result<ProcessExitStatus, ProcessControlError>> request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        Result<ProcessExitStatus, ProcessControlError> result = console.reap(Pid(request.pid));
+        Result<ProcessExitStatus, ProcessControlError> result = console.reap(caller, Pid(request.pid));
         user_memory.copy_out(
             UserAddress((i32)request.result_out),
             (char*)(&result),
             sizeof(Result<ProcessExitStatus, ProcessControlError>)
         );
-        return Ok(_);
+        return Ok(0);
     }
     if (service == OsService::PROC_FEED) {
         ProcFeedArgs request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
         copy_in_text<128>(UserAddress((i32)request.line), request.line_length, &g_line);
-        console.feed_line(Pid(request.pid), g_line.as_str());
-        return Ok(_);
+        return Ok(answer(console.feed_line(caller, Pid(request.pid), g_line.as_str())));
     }
     return Err(OsServiceError::UnknownService(service));
 }

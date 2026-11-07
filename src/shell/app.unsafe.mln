@@ -16,7 +16,7 @@ import { Annotations, AnnotationError } from "@std/meta/annotations.mln";
 import fs from "@os/fs/fs.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
 import { SpawnError } from "@contracts/process/spawn.contract.mln";
-import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
 import { AppError, KeyClaimError } from "@contracts/myapp/lifecycle.contract.mln";
 import console from "@os/proc/console.mln";
 import mbin from "@std/format/mbin.mln";
@@ -47,8 +47,12 @@ import { KeyModifier, KeyCode } from "@contracts/input/keyboard.contract.mln";
 // An instance is a process. The shell publishes events through its event
 // sink: KEY when a claimed shortcut is pressed, OPEN with a
 // path, CLOSE when the user closes its window; the instance answers CLOSE
-// with an EXIT request and ends, and the shell then frees what it owned
-// and reaps it. The instance's window comes back as a MAIN_WINDOW request.
+// with an EXIT request and ends. The instance's window comes back as a
+// MAIN_WINDOW request.
+//
+// The shell owns the apps it launches: they have no parent process, and the OS
+// reaps them as soon as they end (console.sweep). What the shell holds for any
+// process goes in process_gone().
 //
 // A process owns every DOM node it creates (requests carry its pid as the
 // owner), so closing its window sweeps dialogs and timers with it.
@@ -77,13 +81,11 @@ struct AppRecord {
 AppRecord registry[16];
 i32 registry_count = 0;
 
-// Outbound ports installed by boundary endpoints. The shell owns lifecycle
+// Outbound port installed by boundary endpoints. The shell owns lifecycle
 // policy but does not depend on the transport that delivers it.
 void no_event_sink(Pid owner, i32 id, i32 kind, i32 arg, i32 token, str text) { }
-void no_process_gone_sink(Pid pid) { }
 
 fn(Pid owner, i32 id, i32 kind, i32 arg, i32 token, str text) -> void event_sink = no_event_sink;
-fn(Pid pid) -> void process_gone_sink = no_process_gone_sink;
 
 /**
  * Installs the callback used to deliver application lifecycle and shortcut events.
@@ -92,12 +94,6 @@ fn(Pid pid) -> void process_gone_sink = no_process_gone_sink;
 export void set_event_sink(
     fn(Pid owner, i32 id, i32 kind, i32 arg, i32 token, str text) -> void sink
 ) { event_sink = sink; }
-
-/**
- * Installs the callback invoked after an exited child process is reaped.
- * @param sink Callback accepting the process ID, or 0 when no callback is needed.
- */
-export void set_process_gone_sink(fn(Pid pid) -> void sink) { process_gone_sink = sink; }
 
 /**
  * Forwards an application event through the configured event endpoint.
@@ -236,7 +232,7 @@ Result<Instance, AppError> mount(i32 a) {
         });
     };
     AppRecord *record = &registry[a];
-    Result<Pid, SpawnError> spawned = console.spawn_file(record->path.as_str());
+    Result<Pid, SpawnError> spawned = console.spawn_file(None, record->path.as_str());
     Pid pid = case spawned of {
         Ok(value) -> value;
         Err(_) -> ({
@@ -299,7 +295,16 @@ void window_closed(Option<Pid> owner, NodeId win, i32 arg) {
     case owner of {
         Some(pid) -> ({
             case instances.instance_by_pid(pid) of {
-                Some(_) -> ({ push_app_event(pid, win, ShellEventKind::CLOSE, 0, 0, ""); return; });
+                Some(instance) -> ({
+                    // A close queued for the last holder of this pid names a
+                    // window that is gone, and must not close the new instance.
+                    borrow InstanceRow row = instance.row();
+                    bool current = case row.win of { Some(held) -> held == win; None -> false; };
+                    if (current) {
+                        push_app_event(pid, win, ShellEventKind::CLOSE, 0, 0, "");
+                        return;
+                    }
+                });
                 None -> _;
             };
         });
@@ -309,63 +314,50 @@ void window_closed(Option<Pid> owner, NodeId win, i32 arg) {
     dom_widgets.activate_topmost();
 }
 
-// The instance is done (EXIT): remove everything it owns -- its window,
-// dialogs, timers -- and drop its key claims. The process ends itself
-// right after; reap_exited() collects it.
+// The instance is done (EXIT): a relaunch no longer finds it. The process ends
+// itself right after, and its window goes with everything else it owned.
 /**
- * Cleans up DOM nodes and key claims after an application sends EXIT.
- * The process itself is collected later by the periodic reaper.
+ * Records that an application has sent EXIT.
  * @param owner Process ID of the exiting application.
  */
 export void instance_exited(Pid owner) {
-    Instance instance = case instances.instance_by_pid(owner) of {
-        Some(value) -> value;
-        None -> ({ return; });
+    case instances.instance_by_pid(owner) of {
+        Some(instance) -> ({ instance.row().done = true; });
+        None -> _;
     };
-    dom.remove_owned(owner);
-    release_claims(owner);
-    instance.row().done = true;
-    dom_widgets.activate_topmost();
 }
 
-// A timer on the desktop: collect processes that have ended -- ones that
-// sent EXIT, and ones that died without (a crash): their nodes go too.
 /**
- * Reaps stopped application processes and removes resources for crashed apps.
+ * Releases what the shell holds for a process that has ended, however it ended
+ * and whether or not the shell started it: its nodes -- window, dialogs, timers
+ * -- its key claims, and its instance if it had one.
+ * @param pid Process that has ended; its slot is still held.
+ */
+export void process_gone(Pid pid) {
+    dom.remove_owned(pid);
+    release_claims(pid);
+    case instances.instance_by_pid(pid) of {
+        Some(instance) -> ({
+            borrow InstanceRow row = instance.row();
+            if (!has_window(&row)) { dom.note_app_starting(-1); }
+            instance.delete();
+            dom_widgets.activate_topmost();
+        });
+        None -> _;
+    };
+}
+
+// A timer on the desktop: this is the server task's turn to end the processes
+// that have ended -- ones that sent EXIT, and ones that died without (a crash).
+/**
+ * Runs the OS's sweep of ended processes on the server task.
  * Registered as the shell's periodic timer callback.
  * @param owner Timer event owner (unused).
  * @param id Timer node ID (unused).
  * @param arg Timer callback argument (unused).
  */
 void reap_exited(Option<Pid> owner, NodeId id, i32 arg) {
-    for (Instance instance in instances.instance_all()) {
-        Pid pid = instance.pid();
-        Result<bool, ProcessControlError> status = console.has_exited(pid);
-        bool exited = case status of {
-            Ok(value) -> value;
-            Err(ProcessControlError::InvalidPid(_)) -> true;
-            Err(ProcessControlError::NotExited(_)) -> false;
-        };
-        if (exited) {
-            Result<ProcessExitStatus, ProcessControlError> reaped = console.reap(pid);
-            bool collected = case reaped of {
-                Ok(_) -> true;
-                Err(ProcessControlError::InvalidPid(_)) -> true;
-                Err(ProcessControlError::NotExited(_)) -> false;
-            };
-            if (collected) {
-                borrow InstanceRow row = instance.row();
-                if (!has_window(&row)) { dom.note_app_starting(-1); }
-                if (!row.done) {
-                    dom.remove_owned(pid);
-                    release_claims(pid);
-                    dom_widgets.activate_topmost();
-                }
-                process_gone_sink(pid);
-                instance.delete();
-            }
-        }
-    }
+    console.sweep();
 }
 
 // Start the app at `index`; a single-instance app that is already running is

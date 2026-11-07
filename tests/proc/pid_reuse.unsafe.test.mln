@@ -11,28 +11,41 @@ import debug from "@kernel/debug/debug.mln";
 import loader from "@kernel/kernel/loader.mln";
 import process from "@kernel/kernel/process.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
+import { ProcessState } from "@kernel/kernel/process.mln";
 import console from "@os/proc/console.mln";
 import consoles from "@os/proc/consoles.mln";
 import { Console, ConsoleRow } from "@os/proc/consoles.mln";
+import process_syscall from "@os/proc/syscall.mln";
+import os_call_router from "@os/syscall/router.mln";
+import app from "@os/shell/app.mln";
+import instances from "@os/shell/instances.mln";
+import { Instance } from "@os/shell/instances.mln";
 import request_channel from "@os/ipc/channel.mln";
 import request_gateway from "@os/ipc/gateway.mln";
 import app_events from "@os/ipc/events.mln";
 import dom from "@os/ui/dom/dom.mln";
 import dom_elements from "@os/ui/dom/dom_elements.mln";
 import desktop from "@os/ui/desktop.mln";
-import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
-import { Event, EventKind } from "@contracts/myapp/message.contract.mln";
+import { Pid, ProcessControlError, ProcessControlStatus, ProcessExitStatus } from "@contracts/process/control.contract.mln";
+import { Event, EventKind, Request, RequestDomain } from "@contracts/myapp/message.contract.mln";
+import { KeyClaimError } from "@contracts/myapp/lifecycle.contract.mln";
+import { UiOp } from "@contracts/myapp/ui.contract.mln";
+import { OsService, OsServiceError } from "@contracts/myos/services.contract.mln";
+import {
+    ProcBindArgs, ProcExitedArgs, ProcFeedArgs, ProcReapArgs, ProcUnbindArgs
+} from "@contracts/myos/process-args.contract.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import { UserAddress } from "@std/core/address.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 
-// What a reused pid does today, on the real process table, loader, console,
-// gateway and DOM. These tests pin behaviour, not a wish: a pid is a process
-// table slot plus one, and the lowest free slot is taken first, so a reaped
-// pid is the very next one handed out. Whoever still holds the old number then
-// names the new process. A fix that gives pids a generation has to turn these
-// expectations around.
+// What the end of a process leaves behind, on the real process table, loader,
+// console, gateway and DOM. A pid is a process table slot plus one, and the
+// lowest free slot is taken first, so a reaped pid is the very next one handed
+// out, and whoever still holds the old number holds the new process's. Numbers
+// are not made unique, so these tests pin the two things that make that safe:
+// only a parent can use a pid, and the OS releases all it holds under a pid
+// before the number goes back.
 
 void write_be32(i32 addr, i32 value) {
     mem.write_byte(addr + 0, (value >> 24) & 0xFF);
@@ -48,43 +61,102 @@ void write_instruction(i32 addr, i32 a, i32 b, i32 c, i32 d) {
     mem.write_byte(addr + 3, d);
 }
 
-// An MBIN image of `exit(code)`: three instructions and no data.
-i32 EXIT_IMAGE_BYTES = 44;
+i32 HEADER_BYTES = 32;
+i32 SYS_EXIT = 1;
+i32 SYS_WAIT_NOTIFICATION = 11;
+i32 WAKE = 8; // the notification a waiting image blocks on: no transport signal
 
-i32 exit_image(i32 code) {
-    i32 image = case heap.alloc(EXIT_IMAGE_BYTES) of {
+// An MBIN image with room for `instructions` instructions and no data.
+i32 new_image(i32 instructions) {
+    i32 text_bytes = instructions * 4;
+    i32 image = case heap.alloc(HEADER_BYTES + text_bytes) of {
         Ok(address) -> address;
         Err(_) -> ({ debug.panic("no memory for an image"); });
     };
     write_be32(image + 0, 0x4D42494E);  // magic: 'MBIN'
     write_be32(image + 4, 1);           // version
     write_be32(image + 8, 0x40000000);  // entry point
-    write_be32(image + 12, 32);         // text offset
-    write_be32(image + 16, 12);         // text size
-    write_be32(image + 20, EXIT_IMAGE_BYTES); // data offset
+    write_be32(image + 12, HEADER_BYTES); // text offset
+    write_be32(image + 16, text_bytes); // text size
+    write_be32(image + 20, HEADER_BYTES + text_bytes); // data offset
     write_be32(image + 24, 0);          // data size
     write_be32(image + 28, 0);          // bss size
-    write_instruction(image + 32, 8, 32, 0, 1);      // movi r1, SYS_EXIT
-    write_instruction(image + 36, 8, 160, 0, code);  // movi r5, code
-    write_instruction(image + 40, 248, 0, 0, 0);     // syscall
     return image;
 }
 
-Pid spawn_exiting(i32 code) {
-    return case loader.spawn_from_buffer(exit_image(code), EXIT_IMAGE_BYTES) of {
+void write_exit(i32 at, i32 code) {
+    write_instruction(at + 0, 8, 32, 0, SYS_EXIT);   // movi r1, SYS_EXIT
+    write_instruction(at + 4, 8, 160, 0, code);      // movi r5, code
+    write_instruction(at + 8, 248, 0, 0, 0);         // syscall
+}
+
+Pid spawn_image(Option<Pid> parent, i32 image, i32 instructions) {
+    return case loader.spawn_from_buffer(parent, image, HEADER_BYTES + instructions * 4) of {
         Ok(pid) -> pid;
         Err(_) -> ({ debug.panic("spawn failed"); });
     };
 }
 
-void wait_for_exit(Pid pid) {
+// A process that ends at once with `code`.
+Pid spawn_exiting(Option<Pid> parent, i32 code) {
+    i32 image = new_image(3);
+    write_exit(image + HEADER_BYTES, code);
+    return spawn_image(parent, image, 3);
+}
+
+// A process that blocks in the kernel until wake(), then ends with `code`.
+Pid spawn_waiting(Option<Pid> parent, i32 code) {
+    i32 image = new_image(6);
+    i32 text = image + HEADER_BYTES;
+    write_instruction(text + 0, 8, 32, 0, SYS_WAIT_NOTIFICATION); // movi r1, ...
+    write_instruction(text + 4, 8, 160, 0, WAKE);                 // movi r5, WAKE
+    write_instruction(text + 8, 248, 0, 0, 0);                    // syscall
+    write_exit(text + 12, code);
+    return spawn_image(parent, image, 6);
+}
+
+// A process that never leaves user mode, and so is always Runnable.
+Pid spawn_spinning(Option<Pid> parent) {
+    i32 image = new_image(1);
+    write_instruction(image + HEADER_BYTES, 52, 0, 0, 0); // jmp to itself
+    return spawn_image(parent, image, 1);
+}
+
+// Ends a waiting process, which is how a parent gets closed here. A notification
+// sent before it has armed the wait is lost, so this repeats.
+void wake(Pid pid) {
+    while (process.accepts_threads(pid)) {
+        bool was_enabled = irq.save_disable();
+        scheduler.notify_pid(pid, WAKE);
+        irq.restore(was_enabled);
+    }
+}
+
+bool is_zombie(Pid pid) {
+    return case process.get_state(pid) of {
+        Some(state) -> case state of { ProcessState::Zombie(_) -> true; _ -> false; };
+        None -> false;
+    };
+}
+
+bool is_gone(Pid pid) {
+    return case process.get_state(pid) of { Some(_) -> false; None -> true; };
+}
+
+// A parent's wait for its child. sweep() is what the server task's timer runs.
+void wait_for_exit(Pid parent, Pid pid) {
     bool exited = false;
     while (!exited) {
-        exited = case console.has_exited(pid) of {
+        console.sweep();
+        exited = case console.has_exited(parent, pid) of {
             Ok(value) -> value;
             Err(_) -> ({ debug.panic("process vanished before it exited"); });
         };
     }
+}
+
+void sweep_until_gone(Pid pid) {
+    while (!is_gone(pid)) { console.sweep(); }
 }
 
 // The real exit path is what makes a Zombie, so processes really run.
@@ -93,6 +165,7 @@ void boot() {
     allocator.configure(heap.alloc, heap.free);
     desktop.init();
     request_channel.init();
+    os_call_router.init();
     process.init();
     scheduler.init();
     irq.set_handler();
@@ -118,97 +191,241 @@ i32 exit_code(Result<ProcessExitStatus, ProcessControlError> reaped) {
     };
 }
 
-void reap_with_code(Pid pid, i32 expected, str message) {
-    Result<ProcessExitStatus, ProcessControlError> reaped = console.reap(pid);
+void reap_with_code(Pid parent, Pid pid, i32 expected, str message) {
+    Result<ProcessExitStatus, ProcessControlError> reaped = console.reap(parent, pid);
     assert_eq<i32>(exit_code(reaped), expected, message);
+}
+
+// Each control operation's refusal: to the caller, no such child exists.
+void assert_refused(Result<_, ProcessControlError> result, str message) {
+    bool refused = case result of {
+        Ok(_) -> false;
+        Err(ProcessControlError::InvalidPid(_)) -> true;
+        Err(ProcessControlError::NotExited(_)) -> false;
+    };
+    assert.assert_true(refused, message);
+}
+
+void assert_query_refused(Result<bool, ProcessControlError> result, str message) {
+    bool refused = case result of {
+        Ok(_) -> false;
+        Err(ProcessControlError::InvalidPid(_)) -> true;
+        Err(ProcessControlError::NotExited(_)) -> false;
+    };
+    assert.assert_true(refused, message);
+}
+
+void assert_reap_refused(Result<ProcessExitStatus, ProcessControlError> result, str message) {
+    bool refused = case result of {
+        Ok(_) -> false;
+        Err(ProcessControlError::InvalidPid(_)) -> true;
+        Err(ProcessControlError::NotExited(_)) -> false;
+    };
+    assert.assert_true(refused, message);
+}
+
+bool stdin_is_empty(Pid pid) {
+    return case consoles.console_by_pid(pid) of {
+        Some(bound) -> ({
+            borrow ConsoleRow row = bound.row();
+            row.in_tail == row.in_head;
+        });
+        None -> true;
+    };
+}
+
+bool output_is(Pid pid, i32 node) {
+    return case console.output_of(pid) of { Some(held) -> held == node; None -> false; };
+}
+
+bool has_no_output(Pid pid) {
+    return case console.output_of(pid) of { Some(_) -> false; None -> true; };
 }
 
 /*@Test "the lowest free slot goes to the next process" { step: 20000000; }*/
 void the_lowest_free_slot_goes_to_the_next_process() {
     process.init();
-    Pid first = process.reserve_process().ok().unwrap_or(Pid(0));
-    Pid second = process.reserve_process().ok().unwrap_or(Pid(0));
-    Pid third = process.reserve_process().ok().unwrap_or(Pid(0));
+    Pid first = process.reserve_process(None).ok().unwrap_or(Pid(0));
+    Pid second = process.reserve_process(None).ok().unwrap_or(Pid(0));
+    Pid third = process.reserve_process(None).ok().unwrap_or(Pid(0));
     assert_eq<i32>((i32)first, 1, "pids count up from one");
     assert_eq<i32>((i32)third, 3, "pids count up from one");
 
     // Slots 4 to 16 have never been used, and still the freed one is taken.
     process.free_proc(second);
-    Pid reused = process.reserve_process().ok().unwrap_or(Pid(0));
+    Pid reused = process.reserve_process(None).ok().unwrap_or(Pid(0));
     assert_same(reused, second, "a freed pid is the next one handed out");
 }
 
-/*@Test "a stale pid names the next process" {
+/*@Test "a stale pid does not reach the next process" {
     timer_interval: 3000;
     step: 50000000;
 }*/
-void a_stale_pid_names_the_next_process() {
+void a_stale_pid_does_not_reach_the_next_process() {
     boot();
-    Pid stale = spawn_exiting(11);
+    Pid holder = spawn_waiting(None, 0);
+    Pid other_parent = spawn_waiting(None, 0);
+    Pid stale = spawn_exiting(Some(holder), 11);
     irq.enable();
-    wait_for_exit(stale);
-    reap_with_code(stale, 11, "the first process reaps with its own code");
+    wait_for_exit(holder, stale);
+    reap_with_code(holder, stale, 11, "the first process reaps with its own code");
 
     // While the slot is empty the old number is honestly invalid...
-    bool invalid = case console.has_exited(stale) of {
-        Ok(_) -> false;
-        Err(ProcessControlError::InvalidPid(_)) -> true;
-        Err(ProcessControlError::NotExited(_)) -> false;
-    };
-    assert.assert_true(invalid, "a reaped pid is invalid until the slot is taken");
+    assert_query_refused(console.has_exited(holder, stale), "a reaped pid is invalid");
 
-    // ...and with the next spawn it is a process again. Interrupts stay off so
-    // the new process stays Alive while it is looked at.
+    // ...and it still is once the number names another parent's child. Interrupts
+    // stay off so the new process stays Alive while it is looked at.
     bool was_enabled = irq.save_disable();
-    Pid next = spawn_exiting(22);
+    Pid next = spawn_exiting(Some(other_parent), 22);
     assert_same(next, stale, "the next process gets the reaped pid");
-    bool still_running = case console.has_exited(stale) of {
-        Ok(exited) -> !exited;
-        Err(_) -> false;
-    };
-    assert.assert_true(still_running, "the stale pid reports on the new process");
+    assert_query_refused(console.has_exited(holder, stale), "the stale pid reports nothing");
 
-    // A stale caller reaches the new process's stdio.
-    console.bind(stale, 9);
-    bool rebound = case console.output_of(next) of { Some(node) -> node == 9; None -> false; };
-    assert.assert_true(rebound, "binding the stale pid moves the new process's stdout");
-    console.feed_line(stale, "x");
-    bool fed = case consoles.console_by_pid(next) of {
-        Some(bound) -> ({
-            borrow ConsoleRow row = bound.row();
-            row.in_tail != row.in_head;
-        });
-        None -> false;
-    };
-    assert.assert_true(fed, "a line fed to the stale pid is in the new process's stdin");
+    // Its stdio is out of reach.
+    assert_refused(console.bind(holder, stale, 9), "the stale pid cannot be bound");
+    assert.assert_true(has_no_output(next), "binding the stale pid leaves stdout alone");
+    assert.assert_true(console.bind(other_parent, next, 7).is_ok(), "its parent binds it");
+    assert_refused(console.bind(holder, stale, 9), "the stale pid cannot be rebound");
+    assert.assert_true(output_is(next, 7), "rebinding the stale pid leaves stdout alone");
+    assert_refused(console.feed_line(holder, stale, "x"), "the stale pid cannot be fed");
+    assert.assert_true(stdin_is_empty(next), "a line for the stale pid reaches no stdin");
+    assert_refused(console.unbind(holder, stale), "the stale pid cannot be unbound");
+    assert.assert_true(output_is(next, 7), "unbinding the stale pid leaves stdout alone");
 
-    // The stale holder collects the status, and the real parent gets nothing.
+    // Its status stays with its parent.
     irq.restore(was_enabled);
-    wait_for_exit(next);
-    reap_with_code(stale, 22, "reaping the stale pid takes the new process's status");
-    bool lost = case console.reap(next) of {
-        Ok(_) -> false;
-        Err(ProcessControlError::InvalidPid(_)) -> true;
-        Err(ProcessControlError::NotExited(_)) -> false;
-    };
-    assert.assert_true(lost, "the real parent's reap finds nothing");
+    wait_for_exit(other_parent, next);
+    assert_reap_refused(console.reap(holder, stale), "the stale holder collects nothing");
+    reap_with_code(other_parent, next, 22, "the real parent gets the status");
 }
 
-// console.reap() frees the slot and the console row, and nothing else: the
-// transport and the nodes go only through the shell's reap_exited(), for the
-// processes it started. So a process started any other way (a Terminal child)
-// leaves them behind for whoever gets its pid.
-/*@Test "a reaped process leaves its events and nodes to the next one" {
+/*@Test "only a parent controls a child" {
     timer_interval: 3000;
     step: 50000000;
 }*/
-void a_reaped_process_leaves_its_events_and_nodes_to_the_next_one() {
+void only_a_parent_controls_a_child() {
     boot();
-    Pid stale = spawn_exiting(11);
+    Pid parent = spawn_waiting(None, 0);
+    Pid stranger = spawn_waiting(None, 0);
+    Pid child = spawn_exiting(Some(parent), 11);
+    Pid grandchild = spawn_waiting(Some(child), 0);
+
+    assert_query_refused(console.has_exited(stranger, child), "a stranger cannot query it");
+    assert_refused(console.bind(stranger, child, 9), "a stranger cannot bind it");
+    assert_refused(console.feed_line(stranger, child, "x"), "a stranger cannot feed it");
+    assert_refused(console.unbind(stranger, child), "a stranger cannot unbind it");
+    assert_query_refused(console.has_exited(parent, grandchild), "a grandparent is a stranger too");
+    assert_query_refused(console.has_exited(child, parent), "a child cannot query its parent");
+    assert_query_refused(console.has_exited(child, child), "a process is not its own child");
+    assert.assert_true(has_no_output(child), "no refused call touched the child");
+
+    assert.assert_true(console.bind(parent, child, 9).is_ok(), "the parent binds it");
+    assert.assert_true(console.feed_line(parent, child, "x").is_ok(), "the parent feeds it");
+    assert.assert_true(!stdin_is_empty(child), "the parent's line is in its stdin");
+
+    irq.enable();
+    wait_for_exit(parent, child);
+    assert_reap_refused(console.reap(stranger, child), "a stranger cannot take the status");
+    reap_with_code(parent, child, 11, "so the parent's reap still finds it");
+}
+
+// The refusal crosses the boundary, as result_out or as the r2 word.
+/*@Test "a refused call says so across the syscall boundary" {
+    timer_interval: 3000;
+    step: 50000000;
+}*/
+void a_refused_call_says_so_across_the_syscall_boundary() {
+    boot();
+    Pid parent = spawn_waiting(None, 0);
+    Pid stranger = spawn_waiting(None, 0);
+    Pid child = spawn_waiting(Some(parent), 0);
+    i32 accepted = (i32)ProcessControlStatus::Accepted;
+    i32 refused = (i32)ProcessControlStatus::Refused;
+
+    ProcBindArgs bind = ProcBindArgs { pid: (i32)child, output_node: 9 };
+    UserAddress bind_args = UserAddress((i32)(&bind));
+    Result<i32, OsServiceError> bound = process_syscall.handle(stranger, OsService::PROC_BIND, bind_args);
+    assert_eq<i32>(bound.ok().unwrap_or(-1), refused, "PROC_BIND refuses a stranger");
+    assert.assert_true(has_no_output(child), "and binds nothing");
+    Result<i32, OsServiceError> rebound = process_syscall.handle(parent, OsService::PROC_BIND, bind_args);
+    assert_eq<i32>(rebound.ok().unwrap_or(-1), accepted, "PROC_BIND accepts the parent");
+    assert.assert_true(output_is(child, 9), "and binds");
+
+    str line = "x";
+    ProcFeedArgs feed = ProcFeedArgs { pid: (i32)child, line: line.data, line_length: line.length };
+    UserAddress feed_args = UserAddress((i32)(&feed));
+    Result<i32, OsServiceError> fed = process_syscall.handle(stranger, OsService::PROC_FEED, feed_args);
+    assert_eq<i32>(fed.ok().unwrap_or(-1), refused, "PROC_FEED refuses a stranger");
+    assert.assert_true(stdin_is_empty(child), "and feeds nothing");
+
+    ProcUnbindArgs unbind = ProcUnbindArgs { pid: (i32)child };
+    UserAddress unbind_args = UserAddress((i32)(&unbind));
+    Result<i32, OsServiceError> unbound = process_syscall.handle(stranger, OsService::PROC_UNBIND, unbind_args);
+    assert_eq<i32>(unbound.ok().unwrap_or(-1), refused, "PROC_UNBIND refuses a stranger");
+    assert.assert_true(output_is(child, 9), "and unbinds nothing");
+
+    Result<bool, ProcessControlError> exited = Ok(true);
+    ProcExitedArgs<Result<bool, ProcessControlError>> query = ProcExitedArgs<Result<bool, ProcessControlError>> {
+        pid: (i32)child, result_out: &exited
+    };
+    process_syscall.handle(stranger, OsService::PROC_EXITED, UserAddress((i32)(&query)));
+    assert_query_refused(exited, "PROC_EXITED refuses a stranger");
+
+    ProcessExitStatus untouched = ProcessExitStatus::Code(0);
+    Result<ProcessExitStatus, ProcessControlError> reaped = Ok(untouched);
+    ProcReapArgs<Result<ProcessExitStatus, ProcessControlError>> reap = ProcReapArgs<Result<ProcessExitStatus, ProcessControlError>> {
+        pid: (i32)child, result_out: &reaped
+    };
+    process_syscall.handle(stranger, OsService::PROC_REAP, UserAddress((i32)(&reap)));
+    assert_reap_refused(reaped, "PROC_REAP refuses a stranger");
+}
+
+// The OS's release comes between the exit and the reap, so the slot, and with it
+// the number, cannot go while anything is still held under the pid.
+/*@Test "a child cannot be reaped before the OS has released it" {
+    timer_interval: 3000;
+    step: 50000000;
+}*/
+void a_child_cannot_be_reaped_before_the_os_has_released_it() {
+    boot();
+    Pid parent = spawn_waiting(None, 0);
+    Pid child = spawn_exiting(Some(parent), 11);
+    assert.assert_true(console.bind(parent, child, 9).is_ok(), "the parent binds it");
+
+    irq.enable();
+    while (!is_zombie(child)) { }
+    assert.assert_true(output_is(child, 9), "a Zombie's console has not been released yet");
+    bool visible = case console.has_exited(parent, child) of { Ok(value) -> value; Err(_) -> true; };
+    assert.assert_true(!visible, "the parent does not see it as exited yet");
+    bool too_early = case console.reap(parent, child) of {
+        Ok(_) -> false;
+        Err(ProcessControlError::InvalidPid(_)) -> false;
+        Err(ProcessControlError::NotExited(_)) -> true;
+    };
+    assert.assert_true(too_early, "and cannot reap it");
+
+    console.sweep();
+    assert.assert_true(has_no_output(child), "the release took the console");
+    assert.assert_true(!is_gone(child), "and left the slot");
+    assert.assert_true(console.bind(parent, child, 9).is_ok(), "binding an ended child is no error");
+    assert.assert_true(has_no_output(child), "but cannot bring its console back");
+    reap_with_code(parent, child, 11, "now the reap takes the slot");
+    assert.assert_true(is_gone(child), "and that was the last of it");
+}
+
+// Whatever a process held goes with it, for any process, not only a shell's.
+/*@Test "an ended process leaves the next holder of its pid nothing" {
+    timer_interval: 3000;
+    step: 50000000;
+}*/
+void an_ended_process_leaves_the_next_holder_of_its_pid_nothing() {
+    boot();
+    Pid parent = spawn_waiting(None, 0);
+    Pid stale = spawn_exiting(Some(parent), 11);
     Event event;
     UserAddress out = UserAddress((i32)(&event));
+    i32 timers = dom.timer_count();
 
-    // What the process's first POLL and CREATE_BUTTON do.
+    // What the process's first POLL, CREATE_BUTTON and CLAIM_KEY do.
     assert.assert_true(!request_gateway.poll(stale, out), "no event is queued yet");
     dom.set_current_owner(Some(stale));
     NodeId node = case dom_elements.create_button("B", 0, 0, 10, 10) of {
@@ -217,55 +434,146 @@ void a_reaped_process_leaves_its_events_and_nodes_to_the_next_one() {
     };
     dom.set_current_owner(None);
     app_events.push(stale, (i32)node, EventKind::CLICK, 5, 0, "");
+    Result<i32, KeyClaimError> claim = app.claim_key(stale, "Ctrl+K");
+    i32 token = claim.ok().unwrap_or(0);
+    assert.assert_true(token != 0, "the key is claimed");
+    assert.assert_true(console.bind(parent, stale, 9).is_ok(), "the parent binds its stdout");
+    assert.assert_true(console.feed_line(parent, stale, "unread").is_ok(), "and feeds its stdin");
+
+    // Its last request is still queued when it ends: nothing has served it yet.
+    Result<NodeId, UiError> created;
+    Request last = Request {
+        domain: RequestDomain::UI, op: UiOp::CREATE_TIMER, owner: 0,
+        a0: 1000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0, s0: (char*)0, s1: (char*)0,
+        result_out: (i32)(&created), result_size: sizeof(Result<NodeId, UiError>),
+        s0_len: 0, s1_len: 0,
+    };
+    assert.assert_true(request_gateway.request(stale, UserAddress((i32)(&last))), "the request is queued");
 
     irq.enable();
-    wait_for_exit(stale);
-    reap_with_code(stale, 11, "the first process reaps with its own code");
+    wait_for_exit(parent, stale);
+    reap_with_code(parent, stale, 11, "the first process reaps with its own code");
+    assert.assert_true(!request_channel.serve(), "no request outlived it");
+
     bool was_enabled = irq.save_disable();
-    Pid next = spawn_exiting(22);
-    assert_same(next, stale, "the next process gets the reaped pid");
-
-    assert.assert_true(request_gateway.poll(next, out), "the new process polls the old click");
-    assert_eq<i32>(event.id, (i32)node, "the event names the old process's node");
-    assert_eq<i32>(event.arg, 5, "the event is the old process's");
-    bool inherited = case dom.owner_of(node) of {
-        Ok(Some(owner)) -> owner == next;
-        Ok(None) -> false;
-        Err(_) -> false;
-    };
-    assert.assert_true(inherited, "the old process's node now belongs to the new one");
-    irq.restore(was_enabled);
-}
-
-// The shell's teardown is what keeps this from happening to desktop apps.
-/*@Test "the shell's teardown leaves the next process nothing" {
-    timer_interval: 3000;
-    step: 50000000;
-}*/
-void the_shells_teardown_leaves_the_next_process_nothing() {
-    boot();
-    Pid stale = spawn_exiting(11);
-    Event event;
-    UserAddress out = UserAddress((i32)(&event));
-    assert.assert_true(!request_gateway.poll(stale, out), "no event is queued yet");
-    dom.set_current_owner(Some(stale));
-    NodeId node = case dom_elements.create_button("B", 0, 0, 10, 10) of {
-        Ok(id) -> id;
-        Err(_) -> ({ debug.panic("no node"); });
-    };
-    dom.set_current_owner(None);
-    app_events.push(stale, (i32)node, EventKind::CLICK, 5, 0, "");
-
-    irq.enable();
-    wait_for_exit(stale);
-    reap_with_code(stale, 11, "the first process reaps with its own code");
-    dom.remove_owned(stale);
-    request_gateway.process_gone(stale);
-    bool was_enabled = irq.save_disable();
-    Pid next = spawn_exiting(22);
+    Pid next = spawn_exiting(Some(parent), 22);
     assert_same(next, stale, "the next process gets the reaped pid");
 
     assert.assert_true(!request_gateway.poll(next, out), "the old click was drained");
+    assert.assert_true(!request_gateway.reply(next, out), "the old reply was drained");
     assert_eq<bool>(dom.owner_of(node).is_ok(), false, "the old node is gone");
+    assert_eq<i32>(dom.timer_count(), timers, "the node its last request made is gone");
+    assert.assert_true(has_no_output(next), "the old stdout is gone");
+    assert.assert_true(stdin_is_empty(next), "the old stdin is gone");
+
+    // Claims fill the lowest free entry: the same token means the old one went.
+    Result<i32, KeyClaimError> again = app.claim_key(next, "Ctrl+K");
+    assert_eq<i32>(again.ok().unwrap_or(0), token, "the old key claim is gone");
+
+    // An event for a gone process is dropped, not left for the next holder to bind.
     irq.restore(was_enabled);
+    wait_for_exit(parent, next);
+    reap_with_code(parent, next, 22, "the next process reaps with its own code");
+    app_events.push(next, 1, EventKind::CLICK, 5, 0, "");
+    was_enabled = irq.save_disable();
+    Pid third = spawn_exiting(Some(parent), 33);
+    assert_same(third, stale, "the third process gets the same pid");
+    assert.assert_true(!request_gateway.poll(third, out), "an event sent to nobody reaches nobody");
+    irq.restore(was_enabled);
+}
+
+// The desktop's case: an app the shell launched has no parent process, so no
+// process can touch it, and the OS collects it itself.
+/*@Test "the OS reaps the apps the shell launched" {
+    timer_interval: 3000;
+    step: 50000000;
+}*/
+void the_os_reaps_the_apps_the_shell_launched() {
+    boot();
+    Pid stranger = spawn_waiting(None, 0);
+    Pid application = spawn_exiting(None, 11);
+    Instance instance = case instances.new_instance() of {
+        Some(value) -> value;
+        None -> ({ debug.panic("no instance"); return; });
+    };
+    instance.set_pid(application);
+    dom.set_current_owner(Some(application));
+    NodeId window = case dom_elements.create_window("W", 0, 0, 100, 100) of {
+        Ok(id) -> id;
+        Err(_) -> ({ debug.panic("no node"); });
+    };
+    dom.set_current_owner(None);
+    assert_query_refused(console.has_exited(stranger, application), "a process cannot query it");
+
+    irq.enable();
+    while (!is_zombie(application)) { }
+    assert_reap_refused(console.reap(stranger, application), "or take it");
+    console.sweep();
+
+    assert.assert_true(is_gone(application), "the sweep reaped it");
+    bool has_instance = case instances.instance_by_pid(application) of { Some(_) -> true; None -> false; };
+    assert.assert_true(!has_instance, "its instance is gone");
+    assert_eq<bool>(dom.owner_of(window).is_ok(), false, "its window is gone");
+    bool was_enabled = irq.save_disable();
+    assert_same(spawn_exiting(None, 22), application, "and its pid is free");
+    irq.restore(was_enabled);
+}
+
+// A terminal's hangup. Blocked in the kernel and running in user mode are the
+// two ways a child can be found; the grandchild shows it carries down a tree.
+/*@Test "closing a parent frees its children's pids" {
+    timer_interval: 3000;
+    step: 50000000;
+}*/
+void closing_a_parent_frees_its_childrens_pids() {
+    boot();
+    Pid terminal = spawn_waiting(None, 0);
+    Pid blocked = spawn_waiting(Some(terminal), 0);
+    Pid spinning = spawn_spinning(Some(terminal));
+    Pid grandchild = spawn_waiting(Some(blocked), 0);
+    assert.assert_true(console.bind(terminal, blocked, 9).is_ok(), "the terminal binds its child");
+    dom.set_current_owner(Some(blocked));
+    NodeId node = case dom_elements.create_button("B", 0, 0, 10, 10) of {
+        Ok(id) -> id;
+        Err(_) -> ({ debug.panic("no node"); });
+    };
+    dom.set_current_owner(None);
+
+    irq.enable();
+    console.sweep();
+    bool running = case console.has_exited(terminal, spinning) of { Ok(value) -> !value; Err(_) -> false; };
+    assert.assert_true(running, "a sweep leaves the children of a living parent alone");
+
+    wake(terminal);
+    sweep_until_gone(terminal);
+    assert.assert_true(is_gone(blocked), "the blocked child is gone");
+    assert.assert_true(is_gone(spinning), "the running child is gone");
+    assert.assert_true(is_gone(grandchild), "the child's child is gone");
+    assert.assert_true(has_no_output(blocked), "the child's console went with it");
+    assert_eq<bool>(dom.owner_of(node).is_ok(), false, "and so did its nodes");
+
+    bool was_enabled = irq.save_disable();
+    assert_same(spawn_exiting(None, 0), terminal, "the parent's pid is free");
+    assert_same(spawn_exiting(None, 0), blocked, "the child's pid is free");
+    assert_same(spawn_exiting(None, 0), spinning, "the child's pid is free");
+    assert_same(spawn_exiting(None, 0), grandchild, "the grandchild's pid is free");
+    irq.restore(was_enabled);
+}
+
+// A process's own exit status stays for its parent while its children go.
+/*@Test "a closed process's parent still gets its status" {
+    timer_interval: 3000;
+    step: 50000000;
+}*/
+void a_closed_processs_parent_still_gets_its_status() {
+    boot();
+    Pid desktop = spawn_waiting(None, 0);
+    Pid terminal = spawn_waiting(Some(desktop), 7);
+    Pid child = spawn_waiting(Some(terminal), 0);
+
+    irq.enable();
+    wake(terminal);
+    wait_for_exit(desktop, terminal);
+    assert.assert_true(is_gone(child), "the child is gone before its parent can be reaped");
+    reap_with_code(desktop, terminal, 7, "the parent's parent gets its status");
 }

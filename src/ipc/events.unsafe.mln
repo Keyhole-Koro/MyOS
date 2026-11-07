@@ -110,6 +110,22 @@ export void bind(Pid owner, ChannelId channel) {
 }
 
 /**
+ * Removes a process owner's event binding, so nothing is queued for its pid.
+ *
+ * @param owner Process ID.
+ */
+export void unbind(Pid owner) {
+    i32 i = 0;
+    while (i < OWNERS_MAX) {
+        case event_bindings[i].owner of {
+            Some(bound) -> ({ if (bound == owner) { event_bindings[i].owner = None; return; } });
+            None -> _;
+        };
+        i++;
+    }
+}
+
+/**
  * Retrieves the bound IPC channel handle for a given process owner.
  *
  * @param owner Process ID.

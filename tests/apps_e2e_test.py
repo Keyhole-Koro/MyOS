@@ -61,6 +61,12 @@ def raise_window(os, name):
     click_point(os, w.bounds.x + w.bounds.width - 80, w.bounds.y + 16)
 
 
+def close_window(os, name):
+    """The close button sits at the left of the title bar."""
+    w = os.get_by_role("window", name=name).snapshot()
+    click_point(os, w.bounds.x + 30, w.bounds.y + 16)
+
+
 def main() -> int:
     firmware = REPO_ROOT / "build" / "firmware_linked.mbin"
     disk = REPO_ROOT / "build" / "disk.img"
@@ -165,7 +171,30 @@ def main() -> int:
             listing = os.get_by_test_id("file-list").snapshot().text
             assert listing.split("\n")[0] == "..", f"no way back from /bin:\n{listing}"
 
-        print("PASS: user process, editor disk round-trip and file manager via automation")
+            # 5. Closing a terminal hangs up what runs in it: the OS ends a
+            #    child still waiting for input and frees its pid, with no help
+            #    from the app. The new terminal retakes the old one's pid, so
+            #    the next program gets the child's, the lowest number free.
+            raise_window(os, "Terminal")
+            term_in.click()
+            os._type("echo")
+            os._press("enter")
+            text = wait_text_contains(term_out, "echo: type lines")
+            child = re.findall(r"^\[pid (\d+)\] echo$", text, re.MULTILINE)[-1]
+            close_window(os, "Terminal")
+            expect(os.get_by_role("window", name="Terminal")).to_have_count(0)
+            launch_app(os, 4)  # Terminal
+            expect(term_in).to_be_visible()
+            term_in.click()
+            os._type("hello")
+            os._press("enter")
+            # The exit report comes after the terminal's own "[pid N]" line; a
+            # child's stdout can overtake that line, which is a request.
+            text = wait_text_contains(term_out, "exited with 7")
+            pids = re.findall(r"^\[pid (\d+)\] hello$", text, re.MULTILINE)
+            assert pids == [child], f"the closed terminal's child kept pid {child}: {pids}"
+
+        print("PASS: user process, editor disk round-trip, file manager and hangup via automation")
         return 0
     except (AssertionError, RuntimeError) as error:
         print(f"FAIL: {error}")

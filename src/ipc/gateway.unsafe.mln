@@ -41,6 +41,7 @@ i32 RESULT_CAP = 64;
  * Per-process channels and kernel staging buffers for the request gateway.
  * @property reply_ch IPC channel for replies sent to this process.
  * @property event_ch IPC channel for events sent to this process.
+ * @property events_bound True while app_events routes this slot's owner to event_ch.
  * @property s0 Kernel copy of the first request string argument.
  * @property s1 Kernel copy of the second request string argument.
  * @property out Kernel staging buffer for request output bytes.
@@ -53,6 +54,7 @@ i32 RESULT_CAP = 64;
 struct GatewaySlot {
     ChannelId reply_ch;
     ChannelId event_ch;
+    bool events_bound;
     i32 s0;
     i32 s1;
     i32 out;
@@ -176,7 +178,8 @@ void stage_request_outputs(i32 slot_index, Request *request) {
 /**
  * Lazily initializes per-process IPC reply/event channels and staging buffers.
  *
- * Binds the newly created event channel to the process in `app_events`.
+ * A slot keeps its channels and buffers from one holder of the pid to the next.
+ * Its event channel is bound to the process in `app_events` for each holder.
  *
  * @param pid Process ID.
  * @return `true` when the PID has a gateway slot; `false` when it is invalid.
@@ -202,7 +205,10 @@ bool ready(Pid pid) {
         gateway_slots[i].out = alloc_or_panic(OUT_CAP);
         check_result_capacity();
         gateway_slots[i].result = alloc_or_panic(RESULT_CAP);
+    }
+    if (!gateway_slots[i].events_bound) {
         app_events.bind(pid, gateway_slots[i].event_ch);
+        gateway_slots[i].events_bound = true;
     }
     return true;
 }
@@ -310,18 +316,28 @@ export bool poll(Pid pid, UserAddress user_event) {
 }
 
 /**
- * Cleans up transport channels and staging buffers when a process exits.
+ * Leaves a process's gateway slot as a new holder of the pid must find it.
  *
- * Drains any pending replies and events for the specified process.
+ * Stops routing events to it, drains pending replies and events, and clears
+ * the staging buffers a reply copies out of.
  *
  * @param pid Process ID of terminated process.
  */
 export void process_gone(Pid pid) {
     i32 i = case slot(pid) of { Some(v) -> v; None -> ({ return; }); };
+    app_events.unbind(pid);
+    gateway_slots[i].events_bound = false;
+    if (gateway_slots[i].reply_ch == ChannelId(0)) { return; }
     i32 w[24];
-    if (gateway_slots[i].reply_ch != ChannelId(0)) { while (ipc.recv(gateway_slots[i].reply_ch, &w[0])) { } }
-    if (gateway_slots[i].event_ch != ChannelId(0)) { while (ipc.recv(gateway_slots[i].event_ch, &w[0])) { } }
+    while (ipc.recv(gateway_slots[i].reply_ch, &w[0])) { }
+    while (ipc.recv(gateway_slots[i].event_ch, &w[0])) { }
     gateway_slots[i].out_user = UserAddress(0);
     gateway_slots[i].result_user = UserAddress(0);
     gateway_slots[i].result_size = 0;
+    mem.write_byte(gateway_slots[i].out, 0);
+    i32 at = 0;
+    while (at < RESULT_CAP) {
+        mem.write_byte(gateway_slots[i].result + at, 0);
+        at++;
+    }
 }
