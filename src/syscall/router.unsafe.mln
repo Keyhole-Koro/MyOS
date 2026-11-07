@@ -13,9 +13,12 @@ import { Result } from "@std/core/result.mln";
 import user_memory from "user_memory.mln";
 import { copy_in_text } from "user_memory.mln";
 import { UserAddress } from "@std/core/address.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
 import request_gateway from "@os/ipc/gateway.mln";
 import fs_syscall from "@os/fs/syscall.mln";
 import process_syscall from "@os/proc/syscall.mln";
+import console from "@os/proc/console.mln";
+import request_channel from "@os/ipc/channel.mln";
 import app_events from "@os/ipc/events.mln";
 import app from "@os/shell/app.mln";
 import { Text } from "@std/text/text.mln";
@@ -33,7 +36,7 @@ Text<128> g_log_line;
  * @param args Virtual address of argument struct or scalar argument in caller's memory space.
  * @return Ok(service status/result), or Err(UnknownService).
  */
-Result<i32, OsServiceError> handle(i32 pid, i32 service, UserAddress args) {
+Result<i32, OsServiceError> handle(Pid pid, i32 service, UserAddress args) {
     if (service == OsService::REQUEST) {
         if (request_gateway.request(pid, args)) { return Ok(1); }
         return Ok(0);
@@ -51,14 +54,13 @@ Result<i32, OsServiceError> handle(i32 pid, i32 service, UserAddress args) {
         return Ok(0);
     }
     if (service >= OsService::PROC_SPAWN && service <= OsService::PROC_FEED) {
-        process_syscall.handle(service, args)?;
-        return Ok(0);
+        return process_syscall.handle(pid, service, args);
     }
     if (service == OsService::LOG) {
         LogArgs request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
         copy_in_text<128>(UserAddress((i32)request.text), request.length, &g_log_line);
-        debug.printf("[pid %d] ", pid);
+        debug.printf("[pid %d] ", (i32)pid);
         debug.println(g_log_line.as_str());
         return Ok(0);
     }
@@ -66,13 +68,28 @@ Result<i32, OsServiceError> handle(i32 pid, i32 service, UserAddress args) {
 }
 
 /**
+ * Releases what the layers above the console hold for a process that has ended.
+ *
+ * The order matters. Its last requests can still be queued, and each would
+ * make a node or a reply under its pid after this ran, for the next holder to
+ * find: answer them first, so the nodes are swept and the replies drained.
+ *
+ * @param pid Process that has ended; no thread of it can run again.
+ */
+void release_process(Pid pid) {
+    request_channel.serve();
+    app.process_gone(pid);
+    request_gateway.process_gone(pid);
+}
+
+/**
  * Initializes the OS service router.
  *
- * Sets up shell event and process cleanup sinks, and registers `handle` as
- * the OS_CALL handler with the kernel syscall subsystem.
+ * Sets up the shell's event sink and the process teardown, and registers
+ * `handle` as the OS_CALL handler with the kernel syscall subsystem.
  */
 export void init() {
     app.set_event_sink(app_events.push_shell);
-    app.set_process_gone_sink(request_gateway.process_gone);
+    console.set_process_gone_sink(release_process);
     syscall.set_os_handler(handle);
 }

@@ -596,5 +596,10 @@ checked/hitTestableを含める。host側は`MyOS` / strict `Locator` / `expect`
   いる id だけ（歩いている子など）。
 - `sel`（List の選択行、Menu の hover 行）と `color` は `Option<i32>`。`create_node` が None を
   入れる。ゼロのバイトは `Some(0)` と読めるので、`Option` のグローバルは `dom.init()` が入れる。
-- ハンドラの ABI は `void handler(i32 owner, NodeId id, i32 arg)`。
+- サーバのハンドラの ABI は `void handler(Option<Pid> owner, NodeId id, i32 arg)`。キーフィルタも
+  `owner` を `Option<Pid>` で受ける。
+- `owner` は `Option<Pid>`（`contracts/process/control.contract.mln`）で、None が system。
+  `owner_of` は `Result<Option<Pid>, UiError>`、`current_owner` と `set_current_owner` も
+  `Option<Pid>`。`set_owner` と `remove_owned` は `Pid` を取る。アプリ側の runtime の
+  `handler(i32 owner, NodeId id, i32 arg)` は別物で、`owner` はインスタンスの番地。
 - `on_key` と `set_on_key` は無くした。キーは `set_key_filter` のフィルタと widget の既定動作だけが受ける。

@@ -8,16 +8,19 @@ import user_memory from "@os/syscall/user_memory.mln";
 import { UserAddress } from "@std/core/address.mln";
 import debug from "@kernel/debug/debug.mln";
 import loader from "@kernel/kernel/loader.mln";
+import irq from "@kernel/arch/irq.mln";
+import kernel_config from "@kernel/kernel/kernel_config.mln";
 import process from "@kernel/kernel/process.mln";
+import scheduler from "@kernel/kernel/scheduler.mln";
 import thread from "@kernel/kernel/thread.mln";
-import { ProcessState, ProcessError } from "@kernel/kernel/process.mln";
+import { ProcessState } from "@kernel/kernel/process.mln";
 import { LoaderError } from "@contracts/process/loader.contract.mln";
 import { Result } from "@std/core/result.mln";
 import { result_take_ok } from "@std/core/result_take.mln";
 import { AllocationError } from "@std/memory/allocator.mln";
 import { Option } from "@std/core/option.mln";
 import { SpawnError, SpawnFsOperation, SpawnFilesystemError, SpawnReadMismatch } from "@contracts/process/spawn.contract.mln";
-import { ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
+import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
 import { FsError, SeekWhence } from "@contracts/io/fs.contract.mln";
 import fs from "@os/fs/fs.mln";
 import { FileHandle } from "@os/fs/fs.mln";
@@ -40,34 +43,69 @@ import { NodeId } from "@contracts/ui/widget.contract.mln";
 // syscall lands in the DOM directly (append_bytes reads the user buffer
 // through the process's own page tables, which are active during the
 // syscall); the compositor repaints it on its next pass.
+//
+// This is also where a process ends. A process controls only its children, and
+// a child can be reaped only once the OS holds nothing under its pid, so a
+// reused pid starts clean. sweep(), on the server task, does that release;
+// see below for why it cannot happen inside a parent's reap syscall.
 
 i32 STDIN_CAP = 256;
 
 /**
+ * The exit status of a child ended because its parent did. Nobody reads it, as
+ * the OS reaps such a child; it is 128 plus SIGHUP's number, to read as a hangup.
+ */
+i32 HANGUP_CODE = 129;
+
+// What the layers above hold for a process. The router installs this: those
+// layers import this one, so it cannot name them.
+void no_process_gone_sink(Pid pid) { }
+
+fn(Pid pid) -> void process_gone_sink = no_process_gone_sink;
+
+/**
+ * Installs the callback that releases what the layers above hold for a process.
+ * @param sink Called once per process, on the server task, with its slot still held.
+ */
+export void set_process_gone_sink(fn(Pid pid) -> void sink) { process_gone_sink = sink; }
+
+/**
+ * Checks that `pid` is a child of `caller`, the rule for every control operation.
+ * @param caller Process asking.
+ * @param pid Process it wants to act on.
+ * @return Ok(_), or Err(InvalidPid) when no such child exists.
+ */
+Result<_, ProcessControlError> check_child(Pid caller, Pid pid) {
+    if (!process.is_child_of(pid, Some(caller))) {
+        return Err(ProcessControlError::InvalidPid(pid));
+    }
+    return Ok(_);
+}
+
+/**
  * Attaches a process's stdio to a DOM TextArea node, replacing any earlier one.
+ * With the console table full the process keeps writing to the serial log.
  * @param pid Target process ID.
  * @param output_id DOM node ID of the TextArea for stdout.
- * @return `true` when bound, or `false` if the console table is full.
  */
-export bool bind(i32 pid, i32 output_id) {
+void attach(Pid pid, i32 output_id) {
     case consoles.console_by_pid(pid) of {
-        Some(bound) -> ({ bound.row().output = output_id; return true; });
+        Some(bound) -> ({ bound.row().output = output_id; return; });
         None -> _;
     };
     Console made = case consoles.new_console() of {
         Some(value) -> value;
-        None -> ({ return false; });
+        None -> ({ return; });
     };
     made.set_pid(pid);
     made.row().output = output_id;
-    return true;
 }
 
 /**
- * Releases a process's console binding.
+ * Removes a process's console row, if it has one.
  * @param pid Process ID to detach.
  */
-export void unbind(i32 pid) {
+void detach(Pid pid) {
     case consoles.console_by_pid(pid) of {
         Some(bound) -> ({ bound.delete(); });
         None -> _;
@@ -75,11 +113,37 @@ export void unbind(i32 pid) {
 }
 
 /**
+ * Attaches a child's stdio to a TextArea. A child that has ended has no stdio
+ * left to route, and a row made for it now would outlive its release.
+ * @param caller Calling process, which must be the parent.
+ * @param pid Child process ID.
+ * @param output_id DOM node ID of the TextArea for stdout.
+ * @return Ok(_), or Err(InvalidPid) when no such child exists.
+ */
+export Result<_, ProcessControlError> bind(Pid caller, Pid pid, i32 output_id) {
+    check_child(caller, pid)?;
+    if (process.accepts_threads(pid)) { attach(pid, output_id); }
+    return Ok(_);
+}
+
+/**
+ * Releases a child's console binding.
+ * @param caller Calling process, which must be the parent.
+ * @param pid Child process ID.
+ * @return Ok(_), or Err(InvalidPid) when no such child exists.
+ */
+export Result<_, ProcessControlError> unbind(Pid caller, Pid pid) {
+    check_child(caller, pid)?;
+    detach(pid);
+    return Ok(_);
+}
+
+/**
  * Looks up the TextArea DOM node ID associated with a process's stdout.
  * @param pid Process ID.
  * @return `Some(node_id)` when attached, or `None` when unattached.
  */
-export Option<i32> output_of(i32 pid) {
+export Option<i32> output_of(Pid pid) {
     Option<i32> output = None;
     case consoles.console_by_pid(pid) of {
         Some(bound) -> ({ output = Some(bound.row().output); });
@@ -89,14 +153,18 @@ export Option<i32> output_of(i32 pid) {
 }
 
 /**
- * Queues one line of text into the process's stdin buffer.
- * @param pid Target process ID.
+ * Queues one line of text into a child's stdin buffer. A child with no console,
+ * or a full queue, drops the line.
+ * @param caller Calling process, which must be the parent.
+ * @param pid Child process ID.
  * @param line Text to feed as input; a newline follows it.
+ * @return Ok(_), or Err(InvalidPid) when no such child exists.
  */
-export void feed_line(i32 pid, str line) {
+export Result<_, ProcessControlError> feed_line(Pid caller, Pid pid, str line) {
+    check_child(caller, pid)?;
     Console bound = case consoles.console_by_pid(pid) of {
         Some(v) -> v;
-        None -> ({ return; });
+        None -> ({ return Ok(_); });
     };
     borrow ConsoleRow row = bound.row();
     i32 k = 0;
@@ -104,10 +172,10 @@ export void feed_line(i32 pid, str line) {
         i32 c = 10;
         if (k < line.length) { c = line.byte(k); }
         i32 next = (row.in_tail + 1) % STDIN_CAP;
-        if (next == row.in_head) { return; } // full
+        if (next == row.in_head) { return Ok(_); } // full
         row.stdin[row.in_tail] = (u8)c;
         row.in_tail = next;
-        if (k >= line.length) { return; }
+        if (k >= line.length) { return Ok(_); }
         k++;
     }
 }
@@ -121,7 +189,7 @@ export void feed_line(i32 pid, str line) {
  * @param count Number of bytes to write.
  * @return Number of bytes written.
  */
-i32 on_write(i32 pid, UserAddress buf, i32 count) {
+i32 on_write(Pid pid, UserAddress buf, i32 count) {
     Option<i32> output = output_of(pid);
     i32 out = 0;
     bool has_output = false;
@@ -150,7 +218,7 @@ i32 on_write(i32 pid, UserAddress buf, i32 count) {
  * @param count Maximum number of bytes to read.
  * @return Number of bytes read.
  */
-i32 on_read(i32 pid, UserAddress buf, i32 count) {
+i32 on_read(Pid pid, UserAddress buf, i32 count) {
     Console bound = case consoles.console_by_pid(pid) of {
         Some(v) -> v;
         None -> ({ return 0; });
@@ -211,10 +279,11 @@ SpawnError filesystem_failure(SpawnFsOperation operation, FsError cause) {
 
 /**
  * Opens an executable image, loads it as a user process, and releases the image buffer.
+ * @param parent Process that will own the new one; None for the OS itself.
  * @param path Path searched as supplied, under bin/, and under apps/.
  * @return Ok(pid) when the process starts, or Err(SpawnError) with the launch failure.
  */
-export Result<i32, SpawnError> spawn_file(str path) {
+export Result<Pid, SpawnError> spawn_file(Option<Pid> parent, str path) {
     // The file is closed and the image buffer freed on every path out.
     FileHandle file = FileHandle { fd: open_executable(path)? };
     i32 size = case fs.seek(file.fd, 0, SeekWhence::End) of {
@@ -243,7 +312,7 @@ export Result<i32, SpawnError> spawn_file(str path) {
         }));
     }
     // A loader failure becomes SpawnError::Loader through the contract's From.
-    i32 pid = loader.spawn_from_buffer(image.addr, size)?;
+    Pid pid = loader.spawn_from_buffer(parent, image.addr, size)?;
     return Ok(pid);
 }
 
@@ -252,7 +321,11 @@ export Result<i32, SpawnError> spawn_file(str path) {
  * @param user_path Address of a null-terminated path string in user space.
  * @return The new process ID.
  */
-Result<i32, SpawnError> on_spawn(UserAddress user_path) {
+Result<Pid, SpawnError> on_spawn(UserAddress user_path) {
+    Pid parent = case thread.current_pid() of {
+        Some(value) -> value;
+        None -> ({ debug.panic("SYS_SPAWN hook called without a current process"); });
+    };
     Text<32> path = Text<32> {};
     path.clear();
     i32 k = 0;
@@ -262,64 +335,132 @@ Result<i32, SpawnError> on_spawn(UserAddress user_path) {
         path.push((u8)c);
         k++;
     }
-    Result<i32, SpawnError> result = spawn_file(path.as_str());
-    i32 pid = 0;
-    if (result_take_ok<i32, SpawnError>(&result, &pid)) {
-        i32 parent = case thread.current_pid() of {
-            Some(value) -> value;
-            None -> ({ debug.panic("SYS_SPAWN hook called without a current process"); });
-        };
-        Option<i32> output = output_of(parent);
-        case output of {
-            Some(node) -> ({ bind(pid, node); });
-            None -> _;
-        };
-    }
-    return result;
-}
-
-/**
- * Checks whether a process has terminated.
- * @param pid Process ID.
- * @return Ok(true) if exited, Ok(false) if live, or Err(InvalidPid).
- */
-export Result<bool, ProcessControlError> has_exited(i32 pid) {
-    Option<ProcessState> state = process.get_state(pid);
-    Result<bool, ProcessControlError> result;
-    case state of {
-        Some(s) -> ({
-            bool exited = case s of { ProcessState::Zombie(_) -> true; _ -> false; };
-            result = Ok(exited);
-        });
-        None -> ({ result = Err(ProcessControlError::InvalidPid(pid)); });
-    };
-    return result;
-}
-
-/**
- * Reaps an exited Zombie process, retrieves its typed exit status, and frees its slot.
- * @param pid Process ID.
- * @return Ok(exit_status), Err(NotExited), or Err(InvalidPid).
- */
-export Result<ProcessExitStatus, ProcessControlError> reap(i32 pid) {
-    Option<ProcessState> state = process.get_state(pid);
-    Result<ProcessExitStatus, ProcessControlError> result;
-    case state of {
-        Some(s) -> ({
-            case s of {
-                ProcessState::Zombie(status) -> ({
-                    Result<_, ProcessError> freed = process.free_proc(pid);
-                    case freed of {
-                        Ok(_) -> ({ unbind(pid); result = Ok(status); });
-                        Err(_) -> ({ result = Err(ProcessControlError::InvalidPid(pid)); });
-                    };
-                });
-                _ -> ({ result = Err(ProcessControlError::NotExited(pid)); });
+    Result<Pid, SpawnError> result = spawn_file(Some(parent), path.as_str());
+    case result of {
+        Ok(pid) -> ({
+            Option<i32> output = output_of(parent);
+            case output of {
+                Some(node) -> ({ attach(pid, node); });
+                None -> _;
             };
         });
-        None -> ({ result = Err(ProcessControlError::InvalidPid(pid)); });
+        Err(_) -> _;
     };
     return result;
+}
+
+/**
+ * Checks whether a child can be reaped: true once it has ended and the OS holds
+ * nothing under its pid, which is a sweep() after it became a Zombie.
+ * @param caller Calling process, which must be the parent.
+ * @param pid Child process ID.
+ * @return Ok(true) if reapable, Ok(false) if not yet, or Err(InvalidPid).
+ */
+export Result<bool, ProcessControlError> has_exited(Pid caller, Pid pid) {
+    check_child(caller, pid)?;
+    return case process.get_state(pid) of {
+        Some(state) -> Ok(case state of { ProcessState::Released(_) -> true; _ -> false; });
+        None -> Err(ProcessControlError::InvalidPid(pid));
+    };
+}
+
+/**
+ * Reaps a released child: retrieves its typed exit status and frees its slot,
+ * which is all that is left of it.
+ * @param caller Calling process, which must be the parent.
+ * @param pid Child process ID.
+ * @return Ok(exit_status), Err(NotExited), or Err(InvalidPid).
+ */
+export Result<ProcessExitStatus, ProcessControlError> reap(Pid caller, Pid pid) {
+    check_child(caller, pid)?;
+    ProcessState state = case process.get_state(pid) of {
+        Some(value) -> value;
+        None -> ({ return Err(ProcessControlError::InvalidPid(pid)); });
+    };
+    return case state of {
+        ProcessState::Released(status) -> case process.free_proc(pid) of {
+            Ok(_) -> Ok(status);
+            Err(_) -> Err(ProcessControlError::InvalidPid(pid));
+        };
+        _ -> Err(ProcessControlError::NotExited(pid));
+    };
+}
+
+// --- the end of a process ---
+// One path, however a process ended. The kernel has already taken its threads
+// and address space (Zombie); this takes what the OS holds under its pid
+// (Released). The slot goes last of all, in a reap: the number stays taken until
+// nothing can reach the old process through it, so a reused pid sees no old state.
+//
+// It runs on the server task, under the DOM lock, because nodes are part of what
+// goes. A reap arrives as a syscall, with interrupts off, on top of a server task
+// that may be preempted anywhere in a pass, holding that lock: a syscall can
+// neither wait for the lock nor walk the tree without it.
+
+/**
+ * Hangs up every child of a process that has ended: ends it, releases it and
+ * frees its slot, since no parent is left to reap it.
+ * @param parent A process that has ended.
+ * @return True when no child remains; false if one must be retried on a later
+ *         sweep because it is still on its way out.
+ */
+bool end_children(Pid parent) {
+    bool all_gone = true;
+    i32 number = 1;
+    while (number <= kernel_config.MAX_PROCS) {
+        Pid child = Pid(number);
+        if (process.is_child_of(child, Some(parent))) {
+            ProcessExitStatus hangup = ProcessExitStatus::Code(HANGUP_CODE);
+            scheduler.terminate(child, hangup);
+            if (release(child)) { process.free_proc(child); }
+            else { all_gone = false; }
+        }
+        number++;
+    }
+    return all_gone;
+}
+
+/**
+ * Takes an ended process from Zombie to Released, children first: a parent stays
+ * until they are gone, so no process ever names a parent that is not there.
+ * @param pid Any process number.
+ * @return True when `pid` is Released, whether by this call or an earlier one.
+ */
+bool release(Pid pid) {
+    ProcessState state = case process.get_state(pid) of {
+        Some(value) -> value;
+        None -> ({ return false; });
+    };
+    bool zombie = case state of {
+        ProcessState::Zombie(_) -> true;
+        ProcessState::Released(_) -> ({ return true; });
+        _ -> false;
+    };
+    if (!zombie) { return false; }
+    if (!end_children(pid)) { return false; }
+    process_gone_sink(pid);
+    {
+        // Syscalls use this table, and this task can be preempted.
+        bool was_enabled = irq.save_disable();
+        defer irq.restore(was_enabled);
+        detach(pid);
+    }
+    process.mark_released(pid);
+    return true;
+}
+
+/**
+ * Releases every process that has ended, and reaps those the OS itself owns:
+ * the shell's apps, whose exit status nobody wants. A child with a living parent
+ * stays Released until that parent reaps it. Call on the server task.
+ */
+export void sweep() {
+    i32 number = 1;
+    while (number <= kernel_config.MAX_PROCS) {
+        Pid pid = Pid(number);
+        if (release(pid) && process.is_child_of(pid, None)) { process.free_proc(pid); }
+        number++;
+    }
 }
 
 /**

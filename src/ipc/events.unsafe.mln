@@ -15,6 +15,7 @@ import { EventKind, TransportSignal } from "@contracts/myapp/message.contract.ml
 import ui_event from "@os/ui/events.mln";
 import { UiEventKind } from "@os/ui/events.mln";
 import { NodeId } from "@contracts/ui/widget.contract.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
 import { ShellEventKind } from "@os/shell/events.mln";
 import { Option } from "@std/core/option.mln";
 import str from "@std/text/str.mln";
@@ -23,11 +24,11 @@ import scheduler from "@kernel/kernel/scheduler.mln";
 i32 OWNERS_MAX = 16;
 /**
  * Event-routing binding between one app process and its kernel IPC channel.
- * @property owner PID using this binding; zero means the record is free.
+ * @property owner Process using this binding; None means the record is free.
  * @property channel Channel ID to which this owner's outgoing events are queued.
  */
 struct EventBinding {
-    i32 owner;        // pid, 0 = free
+    Option<Pid> owner;
     ChannelId channel;
 };
 EventBinding event_bindings[16];
@@ -43,7 +44,7 @@ EventBinding event_bindings[16];
  * @param kind Event type (UiEventKind enum).
  * @param arg Event-specific numeric argument (e.g. checkbox state, timer ticks).
  */
-void forward_ui_event(i32 owner, NodeId id, i32 kind, i32 arg) {
+void forward_ui_event(Pid owner, NodeId id, i32 kind, i32 arg) {
     if (kind == UiEventKind::CLICK ||
         kind == UiEventKind::CHANGE ||
         kind == UiEventKind::ACTIVATE ||
@@ -73,7 +74,7 @@ export void init() { ui_event.set_sink(forward_ui_event); }
  * @param token Correlation token or modifier flags.
  * @param text Optional text payload (e.g. file path on OPEN).
  */
-export void push_shell(i32 owner, i32 id, i32 kind, i32 arg, i32 token, str text) {
+export void push_shell(Pid owner, i32 id, i32 kind, i32 arg, i32 token, str text) {
     if (kind == ShellEventKind::KEY) {
         push(owner, id, EventKind::KEY, arg, token, text);
     } else if (kind == ShellEventKind::CLOSE) {
@@ -89,21 +90,39 @@ export void push_shell(i32 owner, i32 id, i32 kind, i32 arg, i32 token, str text
  * @param owner Process ID.
  * @param channel Kernel IPC channel handle.
  */
-export void bind(i32 owner, ChannelId channel) {
+export void bind(Pid owner, ChannelId channel) {
     Option<i32> free = None;
     i32 i = 0;
     while (i < OWNERS_MAX) {
-        if (event_bindings[i].owner == owner) { event_bindings[i].channel = channel; return; }
-        if (event_bindings[i].owner == 0 && free.is_none()) { free = Some(i); }
+        case event_bindings[i].owner of {
+            Some(bound) -> ({ if (bound == owner) { event_bindings[i].channel = channel; return; } });
+            None -> ({ if (free.is_none()) { free = Some(i); } });
+        };
         i++;
     }
     case free of {
         Some(slot) -> ({
-            event_bindings[slot].owner = owner;
+            event_bindings[slot].owner = Some(owner);
             event_bindings[slot].channel = channel;
         });
         None -> _;
     };
+}
+
+/**
+ * Removes a process owner's event binding, so nothing is queued for its pid.
+ *
+ * @param owner Process ID.
+ */
+export void unbind(Pid owner) {
+    i32 i = 0;
+    while (i < OWNERS_MAX) {
+        case event_bindings[i].owner of {
+            Some(bound) -> ({ if (bound == owner) { event_bindings[i].owner = None; return; } });
+            None -> _;
+        };
+        i++;
+    }
 }
 
 /**
@@ -112,10 +131,13 @@ export void bind(i32 owner, ChannelId channel) {
  * @param owner Process ID.
  * @return Some(channel) if bound, or None if this owner has no event channel.
  */
-Option<ChannelId> channel_of(i32 owner) {
+Option<ChannelId> channel_of(Pid owner) {
     i32 i = 0;
     while (i < OWNERS_MAX) {
-        if (event_bindings[i].owner == owner) { return Some(event_bindings[i].channel); }
+        case event_bindings[i].owner of {
+            Some(bound) -> ({ if (bound == owner) { return Some(event_bindings[i].channel); } });
+            None -> _;
+        };
         i++;
     }
     return None;
@@ -137,7 +159,7 @@ i32 dropped_count = 0;   // events lost to a full channel (an app that stopped p
  * @param token Correlation token or secondary argument.
  * @param text Optional text copied into the queued event's inline payload.
  */
-export void push(i32 owner, i32 id, i32 kind, i32 arg, i32 token, str text) {
+export void push(Pid owner, i32 id, i32 kind, i32 arg, i32 token, str text) {
     Option<ChannelId> bound = channel_of(owner);
     ChannelId ch = case bound of {
         Some(value) -> value;
@@ -147,7 +169,7 @@ export void push(i32 owner, i32 id, i32 kind, i32 arg, i32 token, str text) {
         if (ipc.has(ch, id, kind)) { return; }
     }
     i32 w[24];
-    w[0] = owner;
+    w[0] = (i32)owner;
     w[1] = id;
     w[2] = kind;
     w[3] = arg;

@@ -16,9 +16,10 @@ import { Text } from "@std/text/text.mln";
 import ascii from "@std/text/ascii.mln";
 import str from "@std/text/str.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
 import { KeyEventType, KeyModifier, KeyCode } from "@contracts/input/keyboard.contract.mln";
 
-fn(i32 owner, NodeId id, i32 arg) -> void close_handler_or_zero(NodeId id) {
+fn(Option<Pid> owner, NodeId id, i32 arg) -> void close_handler_or_zero(NodeId id) {
     return case dom.on_close_of(id) of {
         Ok(Some(handler)) -> handler;
         Ok(None) -> 0;
@@ -138,9 +139,10 @@ export void activate_topmost() {
  * @param win DOM node ID of the window to close.
  */
 export void close_window(NodeId win) {
-    fn(i32 owner, NodeId id, i32 arg) -> void handler = close_handler_or_zero(win);
+    fn(Option<Pid> owner, NodeId id, i32 arg) -> void handler = close_handler_or_zero(win);
     if (handler != 0) {
-        dom.push_event(handler, dom.owner_of(win).unwrap_or(0), win, 0);
+        Option<Pid> owner = dom.owner_of(win).unwrap_or(None);
+        dom.push_event(handler, owner, win, 0);
         return;
     }
     dom.remove_node(win);
@@ -1060,7 +1062,7 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
             return;
         }
         // App shortcuts (@key) for the active window's app go first.
-        fn(i32 owner, i32 code, i32 mods) -> bool filter = dom.key_filter();
+        fn(Option<Pid> owner, i32 code, i32 mods) -> bool filter = dom.key_filter();
         case dom.row_in(dom.active_window_id()) of {
             Some(win) -> ({ if (filter(win.owner, code, mods)) { return; } });
             None -> _;
@@ -1174,7 +1176,7 @@ export void tick() {
  * @return Timer DOM Node ID.
  */
 export Result<NodeId, UiError> create_timer(
-    i32 interval, fn(i32 owner, NodeId id, i32 arg) -> void handler) {
+    i32 interval, fn(Option<Pid> owner, NodeId id, i32 arg) -> void handler) {
     NewNode node = NewNode { id: dom.create_node(NodeKind::TIMER, "timer")? };
     borrow NodeRow t = dom.row_of(node.id);
     t.interval = interval;

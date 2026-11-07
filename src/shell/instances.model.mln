@@ -2,11 +2,12 @@ package instances;
 
 import { Text } from "@std/text/text.mln";
 import { NodeId } from "@contracts/ui/widget.contract.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
 
 // The instances running on the desktop: one row per running or starting app
 // process, keyed by its pid. Applications never see these ids.
 entity Instance max 32 {
-    i32 pid;
+    Pid pid;
     i32 app;            // registry slot
     Option<NodeId> win; // main window; None until MAIN_WINDOW
     bool open;          // open_path waits for the window
