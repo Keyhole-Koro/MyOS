@@ -679,10 +679,7 @@ void a_file_belongs_to_the_process_that_opened_it() {
     Result<i32, FsError> answer = Ok(0);
     FsReadArgs read = FsReadArgs { fd: fd, buffer: &buffer[0], size: 4, result_out: &answer };
     fs_syscall.handle(stranger, OsService::FS_READ, UserAddress((i32)(&read)));
-    bool bad_fd = case answer of {
-        Ok(_) -> false;
-        Err(error) -> case error of { BadFd(_) -> true; _ -> false; };
-    };
+    bool bad_fd = case answer of { Err(FsError::BadFd(_)) -> true; _ -> false; };
     assert.assert_true(bad_fd, "a stranger's read gets BadFd");
 
     FsCloseArgs close = FsCloseArgs { fd: fd };
