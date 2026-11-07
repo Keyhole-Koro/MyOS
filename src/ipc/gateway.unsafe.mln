@@ -23,8 +23,8 @@ import { Request, RequestDomain, TransportSignal } from "@contracts/myapp/messag
 import { UiOp } from "@contracts/myapp/ui.contract.mln";
 import { UiError } from "@contracts/ui/widget.contract.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
+import process from "@kernel/kernel/process.mln";
 
-i32 PROCS = 16;
 i32 S0_CAP = 1024;
 i32 S1_CAP = 128;
 i32 OUT_CAP = 4096;
@@ -66,18 +66,6 @@ struct GatewaySlot {
 };
 
 GatewaySlot gateway_slots[16];
-
-/**
- * Maps a process ID to an internal slot index (0..15).
- *
- * @param pid Process ID (1..16).
- * @return Slot index (0..15), or None for an invalid process ID.
- */
-Option<i32> slot(Pid pid) {
-    i32 number = (i32)pid;
-    if (number <= 0 || number > PROCS) { return None; }
-    return Some(number - 1);
-}
 
 /** Stops the kernel if a typed request result outgrows its staging buffer. */
 void check_result_capacity() {
@@ -172,7 +160,7 @@ void stage_request_outputs(i32 slot_index, Request *request) {
  * @return `true` when the PID has a gateway slot; `false` when it is invalid.
  */
 bool ready(Pid pid) {
-    i32 i = case slot(pid) of {
+    i32 i = case process.slot_of(pid) of {
         Some(v) -> v;
         None -> ({ return false; });
     };
@@ -215,7 +203,7 @@ bool ready(Pid pid) {
  */
 export bool request(Pid pid, UserAddress user_request) {
     if (!ready(pid)) { debug.panic("request_gateway: invalid caller PID"); }
-    i32 i = case slot(pid) of {
+    i32 i = case process.slot_of(pid) of {
         Some(v) -> v;
         None -> ({ debug.panic("request_gateway: PID slot disappeared"); return false; });
     };
@@ -243,7 +231,7 @@ export bool request(Pid pid, UserAddress user_request) {
  * @return True if a reply was received.
  */
 export bool reply(Pid pid, UserAddress user_out) {
-    i32 i = case slot(pid) of {
+    i32 i = case process.slot_of(pid) of {
         Some(v) -> v;
         None -> ({ debug.panic("request_gateway: invalid reply PID"); return false; });
     };
@@ -281,7 +269,7 @@ export bool reply(Pid pid, UserAddress user_out) {
  */
 export bool poll(Pid pid, UserAddress user_event) {
     if (!ready(pid)) { debug.panic("request_gateway: invalid poll PID"); }
-    i32 i = case slot(pid) of {
+    i32 i = case process.slot_of(pid) of {
         Some(v) -> v;
         None -> ({ debug.panic("request_gateway: PID slot disappeared"); return false; });
     };
@@ -311,7 +299,7 @@ export bool poll(Pid pid, UserAddress user_event) {
  * @param pid Process ID of terminated process.
  */
 export void process_gone(Pid pid) {
-    i32 i = case slot(pid) of { Some(v) -> v; None -> ({ return; }); };
+    i32 i = case process.slot_of(pid) of { Some(v) -> v; None -> ({ return; }); };
     app_events.unbind(pid);
     gateway_slots[i].events_bound = false;
     if (gateway_slots[i].reply_ch == ChannelId(0)) { return; }

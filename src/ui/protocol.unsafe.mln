@@ -23,7 +23,6 @@ import { UiOp } from "@contracts/myapp/ui.contract.mln";
 
 bool writes_typed_result(i32 op) {
     if (op == UiOp::TEXT_COPY) { return true; }
-    if (op == UiOp::AREA_LINES || op == UiOp::LIST_COUNT) { return true; }
     return op >= UiOp::CREATE_WINDOW && op <= UiOp::APPEND_CHILD;
 }
 
@@ -84,13 +83,9 @@ RequestStatus run_request(Request *m) {
     if (op == UiOp::INPUT_SET)      { input_set(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::AREA_APPEND)    { area_append(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::AREA_CLEAR)     { area_clear(id); return RequestStatus::OK; }
-    if (op == UiOp::AREA_LINES)     { return answer<Result<i32, UiError>>(m, area_lines(id)); }
     if (op == UiOp::LIST_SET_ITEMS) { list_set_items(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::LIST_SELECT)    { dom_widgets.list_select(id, m->a1); return RequestStatus::OK; }
-    if (op == UiOp::LIST_COUNT)     { return answer<Result<i32, UiError>>(m, list_count(id)); }
     if (op == UiOp::FOCUS)          { focus(id); return RequestStatus::OK; }
-    if (op == UiOp::FOCUS_WINDOW)   { focus_window(id); return RequestStatus::OK; }
-    if (op == UiOp::TEST_ID)        { test_id(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::SEND_KEY)       { send_key(m->a0, m->a1, m->a2); return RequestStatus::OK; }
     if (op >= UiOp::CREATE_WINDOW && op <= UiOp::APPEND_CHILD) {
         return answer<Result<NodeId, UiError>>(m, protocol_elements.create(m));
@@ -160,28 +155,12 @@ void area_append(NodeId id, char *s) {
 void area_clear(NodeId id) { dom_widgets.clear_text_area(id); }
 
 /**
- * Returns the line count of a multi-line text area.
- *
- * @param id UI node ID.
- * @return Ok(line count), or Err for an invalid ID or wrong node kind.
- */
-Result<i32, UiError> area_lines(NodeId id) { return dom_widgets.text_area_line_count(id); }
-
-/**
  * Replaces the item list of a list widget with newline-separated strings.
  *
  * @param id UI node ID.
  * @param items Newline-separated item string.
  */
 void list_set_items(NodeId id, char *items) { dom_widgets.list_set_items(id, str.from_c(items)); }
-
-/**
- * Returns the number of items in a list widget.
- *
- * @param id UI node ID.
- * @return Ok(item count), or Err for an invalid ID or wrong node kind.
- */
-Result<i32, UiError> list_count(NodeId id) { return dom_widgets.list_count(id); }
 
 // --- focus and windows ------------------------------------------------------------------------
 
@@ -191,21 +170,6 @@ Result<i32, UiError> list_count(NodeId id) { return dom_widgets.list_count(id); 
  * @param id UI node ID.
  */
 void focus(NodeId id) { dom_widgets.set_focus(id); }
-
-/**
- * Sets focus to an entire window and activates it.
- *
- * @param win Window node ID.
- */
-void focus_window(NodeId win) { dom_widgets.focus_window(win); }
-
-/**
- * Assigns an automation test identifier to a node.
- *
- * @param id UI node ID.
- * @param name Test identifier name.
- */
-void test_id(NodeId id, char *name) { dom.set_test_id(id, str.from_c(name)); }
 
 // --- keys ---------------------------------------------------------------------------------------
 

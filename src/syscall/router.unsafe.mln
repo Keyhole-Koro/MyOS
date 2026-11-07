@@ -50,7 +50,7 @@ Result<i32, OsServiceError> handle(Pid pid, i32 service, UserAddress args) {
         return Ok(0);
     }
     if (service >= OsService::FS_OPEN && service <= OsService::FS_IS_DIR) {
-        fs_syscall.handle(service, args)?;
+        fs_syscall.handle(pid, service, args)?;
         return Ok(0);
     }
     if (service >= OsService::PROC_SPAWN && service <= OsService::PROC_FEED) {
@@ -80,6 +80,7 @@ void release_process(Pid pid) {
     request_channel.serve();
     app.process_gone(pid);
     request_gateway.process_gone(pid);
+    fs_syscall.process_gone(pid);
 }
 
 /**

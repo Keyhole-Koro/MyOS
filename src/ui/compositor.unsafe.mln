@@ -299,12 +299,6 @@ export void run() {
     i32 prev_left = 0;
     i32 prev_right = 0;
 
-    // An Option global starts as zero bytes, which read as Some(0).
-    g_drag_win = None;
-    g_resize_win = None;
-    g_pressed_id = None;
-    g_hot_id = None;
-
     // paint_first_frame() already painted the desktop (called from main.mln
     // before interrupts were enabled, so that paint could not be preempted).
 

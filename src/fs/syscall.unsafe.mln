@@ -24,6 +24,7 @@ import fs from "fs.mln";
 import user_memory from "@os/syscall/user_memory.mln";
 import { copy_in_text } from "@os/syscall/user_memory.mln";
 import { UserAddress } from "@std/core/address.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
 import { Text } from "@std/text/text.mln";
 import debug from "@kernel/debug/debug.mln";
 import error_trace from "@std/debug/error_trace.mln";
@@ -67,6 +68,32 @@ bool accept<A: OsCall>(i32 service, UserAddress user_args, A *out) {
  */
 void reply<T>(T *user_out, T *value) {
     user_memory.copy_out(UserAddress((i32)user_out), (char*)value, sizeof(T));
+}
+
+/**
+ * Answers for a file the caller does not hold: to it, no such descriptor exists.
+ * @param caller Calling process.
+ * @param fd Descriptor it named.
+ * @param user_out The record's result_out user address.
+ * @return True when the request is refused and already answered.
+ */
+bool refused(Pid caller, i32 fd, Result<i32, FsError> *user_out) {
+    if (fs.usable_by(fd, caller)) { return false; }
+    Result<i32, FsError> out = Err(FsError::BadFd(fd));
+    reply<Result<i32, FsError>>(user_out, &out);
+    return true;
+}
+
+/**
+ * Hands a file just opened for a process to that process.
+ * @param opened What open or create returned.
+ * @param caller Calling process.
+ */
+void keep(Result<i32, FsError> opened, Pid caller) {
+    case opened of {
+        Ok(fd) -> fs.give_to(fd, caller);
+        Err(_) -> _;
+    };
 }
 
 /**
@@ -190,19 +217,29 @@ void copy_in_path(char *user_path, i32 length) {
  * accept() matches service against each record's bound OsService, so a
  * record is only ever read under its own service number.
  *
+ * @param caller Calling process, which holds the files it opens.
  * @param service Filesystem service code (FS_OPEN .. FS_IS_DIR).
  * @param args Virtual address of argument structure in caller's memory.
  * @return Ok(_) when the request was handled, or Err(UnknownService).
  */
-export Result<_, OsServiceError> handle(i32 service, UserAddress args) {
+export Result<_, OsServiceError> handle(Pid caller, i32 service, UserAddress args) {
     FsReadArgs read;
-    if (accept<FsReadArgs>(service, args, &read)) { read_user(&read); return Ok(_); }
+    if (accept<FsReadArgs>(service, args, &read)) {
+        if (!refused(caller, read.fd, read.result_out)) { read_user(&read); }
+        return Ok(_);
+    }
     FsWriteArgs write;
-    if (accept<FsWriteArgs>(service, args, &write)) { write_user(&write); return Ok(_); }
+    if (accept<FsWriteArgs>(service, args, &write)) {
+        if (!refused(caller, write.fd, write.result_out)) { write_user(&write); }
+        return Ok(_);
+    }
     FsDirNextArgs dir_next;
     if (accept<FsDirNextArgs>(service, args, &dir_next)) { dir_next_user(&dir_next); return Ok(_); }
     FsCloseArgs close;
-    if (accept<FsCloseArgs>(service, args, &close)) { fs.close(close.fd); return Ok(_); }
+    if (accept<FsCloseArgs>(service, args, &close)) {
+        if (fs.usable_by(close.fd, caller)) { fs.close(close.fd); }
+        return Ok(_);
+    }
     FsEntrySizeArgs entry_size;
     if (accept<FsEntrySizeArgs>(service, args, &entry_size)) {
         Result<i32, FsError> r = fs.entry_size(entry_size.entry);
@@ -217,6 +254,7 @@ export Result<_, OsServiceError> handle(i32 service, UserAddress args) {
     }
     FsSeekArgs seek;
     if (accept<FsSeekArgs>(service, args, &seek)) {
+        if (refused(caller, seek.fd, seek.result_out)) { return Ok(_); }
         Result<i32, FsError> r = fs.seek(seek.fd, seek.offset, seek.whence);
         reply<Result<i32, FsError>>(seek.result_out, &r);
         return Ok(_);
@@ -225,6 +263,7 @@ export Result<_, OsServiceError> handle(i32 service, UserAddress args) {
     if (accept<FsOpenArgs>(service, args, &open)) {
         copy_in_path(open.path, open.path_length);
         Result<i32, FsError> r = fs.open(g_path.as_str());
+        keep(r, caller);
         log_error_trace(r.is_err());
         reply<Result<i32, FsError>>(open.result_out, &r);
         return Ok(_);
@@ -233,6 +272,7 @@ export Result<_, OsServiceError> handle(i32 service, UserAddress args) {
     if (accept<FsCreateArgs>(service, args, &create)) {
         copy_in_path(create.path, create.path_length);
         Result<i32, FsError> r = fs.create(g_path.as_str());
+        keep(r, caller);
         log_error_trace(r.is_err());
         reply<Result<i32, FsError>>(create.result_out, &r);
         return Ok(_);
@@ -255,3 +295,9 @@ export Result<_, OsServiceError> handle(i32 service, UserAddress args) {
     }
     return Err(OsServiceError::UnknownService(service));
 }
+
+/**
+ * Closes what a process left open.
+ * @param pid Process that has ended.
+ */
+export void process_gone(Pid pid) { fs.close_all_of(pid); }

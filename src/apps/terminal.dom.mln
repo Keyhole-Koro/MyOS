@@ -52,7 +52,8 @@ impl App for Terminal {
         </Window>;
     }
 
-    /** Stops routing the child's output to a log that is going away. */
+    /** Stops routing the child's output to a log that is going away. A refusal
+     * means the child is gone already, and with it the output. */
     void (borrow Self t) close() {
         case t.pid of { Some(pid) -> terminal.unbind(pid); None -> _; };
     }
@@ -197,7 +198,13 @@ void (borrow Terminal t) run_line(str line) {
     t.say_line(line);
 
     case t.pid of {
-        Some(pid) -> ({ process.feed_line(pid, line); return; });
+        Some(pid) -> ({
+            case process.feed_line(pid, line) of {
+                Ok(_) -> _;
+                Err(error) -> t.say_error("input", error.describe());
+            };
+            return;
+        });
         None -> _;
     };
     // "cmd arg": split at the first space, skipping the spaces after it.

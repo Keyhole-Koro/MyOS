@@ -131,7 +131,6 @@ i32 g_revision = 0;     // increments on externally observable DOM mutation
 NodeId g_root_node_id;
 NodeId g_desktop_node_id;  // set while the desktop is built; UI attaches under this
 
-// init() sets these: an Option global starts as zero bytes, which read as Some(0).
 Option<NodeId> g_taskbar_id;    // the desktop's taskbar node, drawn above windows
 Option<NodeId> g_active_window; // window with STATE_FOCUSED (front-most, gets keys)
 Option<NodeId> g_focus_id;      // node with keyboard focus (a TextInput)
@@ -417,9 +416,6 @@ export Result<NodeId, UiError> create_node(i32 kind, str name) {
     n.kind = (u16)kind;
     n.name = replaced_text(n.name, name);
     n.owner = g_current_owner;
-    // A fresh row is zero bytes, and zero bytes read as Some(0).
-    n.sel = None;
-    n.color = None;
     touch();
     return Ok(id);
 }

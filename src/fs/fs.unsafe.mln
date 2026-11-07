@@ -17,6 +17,8 @@ import { Text } from "@std/text/text.mln";
 import { FsError, SeekWhence } from "@contracts/io/fs.contract.mln";
 import { From } from "@std/core/convert.mln";
 import { Drop } from "@std/core/drop.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
+import irq from "@kernel/arch/irq.mln";
 
 // =========================================================================
 // MyFileSystem (MFS): Direct File Descriptor (mfd) Subsystem (No RAM Cache)
@@ -77,6 +79,9 @@ bool g_enabled = false;
 // 3. User Descriptors: Allocated dynamically from mfd 3 up to (fs_config.FD_MAX - 1).
 // 4. Descriptor Metadata: Each open file handle holds its own cursor (offset)
 //    and loaded metadata (entry_idx, first_block, file_size).
+// 5. Ownership: a file opened through a syscall belongs to that process (see
+//    give_to). No other process can use the descriptor, and it closes when the
+//    process ends, so a killed process does not use up the table.
 
 
 /**
@@ -86,6 +91,7 @@ bool g_enabled = false;
  * @property first_block First data block in the file's linked block chain.
  * @property file_size Current file size in bytes.
  * @property flags File-entry flags copied from the on-disk record.
+ * @property owner Process that opened the file; None is the OS itself.
  */
 export struct FileState {
     i32 entry_idx;
@@ -93,6 +99,7 @@ export struct FileState {
     i32 first_block;
     i32 file_size;
     i32 flags;
+    Option<Pid> owner;
 };
 
 /**
@@ -651,8 +658,69 @@ export Result<i32, FsError> open(str path) {
         first_block: buf_word(off + 16),
         file_size: buf_word(off + 20),
         flags: 3,
+        owner: None,
     });
     return Ok(fd);
+}
+
+/**
+ * Gives an open file to a process: only it may use the descriptor, and the file
+ * closes when the process ends.
+ * @param fd Descriptor fresh from open() or create().
+ * @param owner Process that opened it.
+ */
+export void give_to(i32 fd, Pid owner) {
+    case g_fd_table[fd] of {
+        File(f) -> ({
+            f.owner = Some(owner);
+            g_fd_table[fd] = OpenFile::File(f);
+        });
+        _ -> _;
+    };
+}
+
+/**
+ * @param fd Validated descriptor.
+ * @param process Process to ask about.
+ * @return Whether fd is a file that process opened.
+ */
+bool holds_file(i32 fd, Pid process) {
+    return case g_fd_table[fd] of {
+        File(f) -> case f.owner of {
+            Some(owner) -> owner == process;
+            None -> false;
+        };
+        _ -> false;
+    };
+}
+
+/**
+ * Says whether a process may use a descriptor. Only a file somebody else holds
+ * is out of reach: the standard streams are shared, and each operation answers
+ * for a bad or closed descriptor itself.
+ * @param fd Descriptor a process asked for.
+ * @param caller That process.
+ * @return False when fd is a file of another process or of the OS.
+ */
+export bool usable_by(i32 fd, Pid caller) {
+    if (fd < 0 || fd >= fs_config.FD_MAX) { return true; }
+    bool file = case g_fd_table[fd] of { File(_) -> true; _ -> false; };
+    return !file || holds_file(fd, caller);
+}
+
+/**
+ * Closes every file a process left open.
+ * @param owner A process that has ended.
+ */
+export void close_all_of(Pid owner) {
+    // Syscalls use this table, and the task calling this can be preempted.
+    bool was_enabled = irq.save_disable();
+    defer irq.restore(was_enabled);
+    i32 fd = 3;
+    while (fd < fs_config.FD_MAX) {
+        if (holds_file(fd, owner)) { close(fd); }
+        fd++;
+    }
 }
 
 /**

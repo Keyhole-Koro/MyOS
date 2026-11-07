@@ -379,17 +379,6 @@ export i32 line_len_at(borrow NodeRow n, i32 start) {
 }
 
 /**
- * Returns total line count of a TextArea node.
- * @param id DOM Node ID.
- * @return Ok(line count), or Err when the node is missing or is not a TextArea.
- */
-export Result<i32, UiError> text_area_line_count(NodeId id) {
-    borrow NodeRow n = dom.require_row(id)?;
-    if (n.kind != NodeKind::TEXT_AREA) { return Err(UiError::WrongNodeKind(id)); }
-    return Ok(line_of(&n, n.len) + 1);
-}
-
-/**
  * Calculates number of visible lines fitting inside a TextArea or List.
  * @param n Pointer to DOM Node.
  * @return Number of visible text lines.

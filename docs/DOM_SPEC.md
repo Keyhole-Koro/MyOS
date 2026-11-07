@@ -594,8 +594,8 @@ checked/hitTestableを含める。host側は`MyOS` / strict `Locator` / `expect`
 - 生きているか分からない id は `dom.find_row(id)`（`Option<borrow NodeRow>`）か
   `dom.require_row(id)?`（`Result`）で 1 回引いて、行から読む。`row_of` は生きていると分かって
   いる id だけ（歩いている子など）。
-- `sel`（List の選択行、Menu の hover 行）と `color` は `Option<i32>`。`create_node` が None を
-  入れる。ゼロのバイトは `Some(0)` と読めるので、`Option` のグローバルは `dom.init()` が入れる。
+- `sel`（List の選択行、Menu の hover 行）と `color` は `Option<i32>`。`None` はタグ 0 なので、新しい行もグローバルも
+  最初から None になる。
 - サーバのハンドラの ABI は `void handler(Option<Pid> owner, NodeId id, i32 arg)`。キーフィルタも
   `owner` を `Option<Pid>` で受ける。
 - `owner` は `Option<Pid>`（`contracts/process/control.contract.mln`）で、None が system。

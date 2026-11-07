@@ -38,14 +38,16 @@ import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import { UserAddress } from "@std/core/address.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
+import fs from "@os/fs/fs.mln";
+import fs_syscall from "@os/fs/syscall.mln";
+import { FsError, SeekWhence } from "@contracts/io/fs.contract.mln";
+import { FsCloseArgs, FsReadArgs } from "@contracts/myos/fs-args.contract.mln";
 
 // What the end of a process leaves behind, on the real process table, loader,
-// console, gateway and DOM. A pid is a process table slot plus one, and the
-// lowest free slot is taken first, so a reaped pid is the very next one handed
-// out, and whoever still holds the old number holds the new process's. Numbers
-// are not made unique, so these tests pin the two things that make that safe:
-// only a parent can use a pid, and the OS releases all it holds under a pid
-// before the number goes back.
+// console, gateway, DOM and file table. The lowest free slot is taken first, so
+// a reaped process's slot is the very next one handed out. These tests pin what
+// makes that safe: the new process gets a new pid, only a parent can use a pid,
+// and the OS releases all it holds under a pid before the slot goes back.
 
 void write_be32(i32 addr, i32 value) {
     mem.write_byte(addr + 0, (value >> 24) & 0xFF);
@@ -180,6 +182,12 @@ void boot() {
     mmu.enable_paging(directory);
 }
 
+// The next process in a slot: the same table entry under a pid of its own.
+void assert_takes_slot(Pid actual, Pid old, str message) {
+    assert_eq<i32>(process.slot_of(actual).unwrap_or(-1), process.slot_of(old).unwrap_or(-2), message);
+    assert.assert_true((i32)actual != (i32)old, "and its pid is new");
+}
+
 void assert_same(Pid actual, Pid expected, str message) {
     assert_eq<i32>((i32)actual, (i32)expected, message);
 }
@@ -254,7 +262,8 @@ void the_lowest_free_slot_goes_to_the_next_process() {
     // Slots 4 to 16 have never been used, and still the freed one is taken.
     process.free_proc(second);
     Pid reused = process.reserve_process(None).ok().unwrap_or(Pid(0));
-    assert_same(reused, second, "a freed pid is the next one handed out");
+    assert_takes_slot(reused, second, "a freed slot is the next one handed out");
+    assert_eq<i32>((i32)reused, (1 << 5) | 2, "under the slot's next generation");
 }
 
 /*@Test "a stale pid does not reach the next process" {
@@ -277,7 +286,7 @@ void a_stale_pid_does_not_reach_the_next_process() {
     // stay off so the new process stays Alive while it is looked at.
     bool was_enabled = irq.save_disable();
     Pid next = spawn_exiting(Some(other_parent), 22);
-    assert_same(next, stale, "the next process gets the reaped pid");
+    assert_takes_slot(next, stale, "the next process gets the reaped slot");
     assert_query_refused(console.has_exited(holder, stale), "the stale pid reports nothing");
 
     // Its stdio is out of reach.
@@ -296,6 +305,38 @@ void a_stale_pid_does_not_reach_the_next_process() {
     wait_for_exit(other_parent, next);
     assert_reap_refused(console.reap(holder, stale), "the stale holder collects nothing");
     reap_with_code(other_parent, next, 22, "the real parent gets the status");
+}
+
+/*@Test "a stale pid does not reach the parent's next child" {
+    timer_interval: 3000;
+    step: 50000000;
+}*/
+void a_stale_pid_does_not_reach_the_parents_next_child() {
+    boot();
+    Pid parent = spawn_waiting(None, 0);
+    Pid stale = spawn_exiting(Some(parent), 11);
+    irq.enable();
+    wait_for_exit(parent, stale);
+    reap_with_code(parent, stale, 11, "the first child is reaped");
+
+    // The parent passes every check for its own child, so only the pid tells
+    // the two apart. Interrupts stay off so the child stays Alive.
+    bool was_enabled = irq.save_disable();
+    Pid next = spawn_exiting(Some(parent), 22);
+    assert_takes_slot(next, stale, "the next child gets the reaped slot");
+    assert_query_refused(console.has_exited(parent, stale), "the stale pid reports nothing");
+    assert_refused(console.bind(parent, stale, 9), "the stale pid cannot be bound");
+    assert.assert_true(has_no_output(next), "and the new child's stdout is left alone");
+    assert.assert_true(console.bind(parent, next, 7).is_ok(), "its own pid binds it");
+    assert_refused(console.feed_line(parent, stale, "x"), "the stale pid cannot be fed");
+    assert.assert_true(stdin_is_empty(next), "and the line reaches no stdin");
+    assert_refused(console.unbind(parent, stale), "the stale pid cannot be unbound");
+    assert.assert_true(output_is(next, 7), "and the new child's stdout stays");
+    irq.restore(was_enabled);
+
+    wait_for_exit(parent, next);
+    assert_reap_refused(console.reap(parent, stale), "the stale pid collects nothing");
+    reap_with_code(parent, next, 22, "the new child's status is its own");
 }
 
 /*@Test "only a parent controls a child" {
@@ -457,7 +498,7 @@ void an_ended_process_leaves_the_next_holder_of_its_pid_nothing() {
 
     bool was_enabled = irq.save_disable();
     Pid next = spawn_exiting(Some(parent), 22);
-    assert_same(next, stale, "the next process gets the reaped pid");
+    assert_takes_slot(next, stale, "the next process gets the reaped slot");
 
     assert.assert_true(!request_gateway.poll(next, out), "the old click was drained");
     assert.assert_true(!request_gateway.reply(next, out), "the old reply was drained");
@@ -477,7 +518,7 @@ void an_ended_process_leaves_the_next_holder_of_its_pid_nothing() {
     app_events.push(next, 1, EventKind::CLICK, 5, 0, "");
     was_enabled = irq.save_disable();
     Pid third = spawn_exiting(Some(parent), 33);
-    assert_same(third, stale, "the third process gets the same pid");
+    assert_takes_slot(third, stale, "the third process gets the same slot");
     assert.assert_true(!request_gateway.poll(third, out), "an event sent to nobody reaches nobody");
     irq.restore(was_enabled);
 }
@@ -515,7 +556,7 @@ void the_os_reaps_the_apps_the_shell_launched() {
     assert.assert_true(!has_instance, "its instance is gone");
     assert_eq<bool>(dom.owner_of(window).is_ok(), false, "its window is gone");
     bool was_enabled = irq.save_disable();
-    assert_same(spawn_exiting(None, 22), application, "and its pid is free");
+    assert_takes_slot(spawn_exiting(None, 22), application, "and its slot is free");
     irq.restore(was_enabled);
 }
 
@@ -553,10 +594,10 @@ void closing_a_parent_frees_its_childrens_pids() {
     assert_eq<bool>(dom.owner_of(node).is_ok(), false, "and so did its nodes");
 
     bool was_enabled = irq.save_disable();
-    assert_same(spawn_exiting(None, 0), terminal, "the parent's pid is free");
-    assert_same(spawn_exiting(None, 0), blocked, "the child's pid is free");
-    assert_same(spawn_exiting(None, 0), spinning, "the child's pid is free");
-    assert_same(spawn_exiting(None, 0), grandchild, "the grandchild's pid is free");
+    assert_takes_slot(spawn_exiting(None, 0), terminal, "the parent's slot is free");
+    assert_takes_slot(spawn_exiting(None, 0), blocked, "the child's slot is free");
+    assert_takes_slot(spawn_exiting(None, 0), spinning, "the child's slot is free");
+    assert_takes_slot(spawn_exiting(None, 0), grandchild, "the grandchild's slot is free");
     irq.restore(was_enabled);
 }
 
@@ -576,4 +617,77 @@ void a_closed_processs_parent_still_gets_its_status() {
     wait_for_exit(desktop, terminal);
     assert.assert_true(is_gone(child), "the child is gone before its parent can be reaped");
     reap_with_code(desktop, terminal, 7, "the parent's parent gets its status");
+}
+
+// Opens `/held` until the table is full and gives each to `owner`.
+i32 take_descriptors(Pid owner) {
+    i32 taken = 0;
+    while (1) {
+        case fs.open("/held") of {
+            Ok(fd) -> ({ fs.give_to(fd, owner); taken = taken + 1; });
+            Err(_) -> ({ return taken; });
+        };
+    }
+}
+
+// Five descriptors are all the system has, so one leaked by each of five
+// killed processes would stop every open, the OS's own program loads included.
+/*@Test "an ended process leaves no file open" {
+    disk: true;
+    timer_interval: 3000;
+    step: 400000000;
+}*/
+void an_ended_process_leaves_no_file_open() {
+    boot();
+    fs.init();
+    case fs.create("/held") of {
+        Ok(fd) -> fs.close(fd);
+        Err(_) -> ({ debug.panic("no file to hold"); });
+    };
+    Pid holder = spawn_waiting(None, 0);
+    i32 total = take_descriptors(holder);
+    assert_eq<i32>(total, 5, "the system has five descriptors");
+    assert.assert_true(fs.open("/held").is_err(), "and the holder took them all");
+    irq.enable();
+    wake(holder);
+    sweep_until_gone(holder);
+    Pid next = spawn_waiting(None, 0);
+    assert_eq<i32>(take_descriptors(next), total, "the end of a process gives them all back");
+}
+
+/*@Test "a file belongs to the process that opened it" {
+    disk: true;
+    timer_interval: 3000;
+    step: 400000000;
+}*/
+void a_file_belongs_to_the_process_that_opened_it() {
+    boot();
+    fs.init();
+    Pid holder = spawn_waiting(None, 0);
+    Pid stranger = spawn_waiting(None, 0);
+    i32 fd = case fs.create("/held") of {
+        Ok(value) -> value;
+        Err(_) -> ({ debug.panic("no file to hold"); });
+    };
+    assert.assert_true(!fs.usable_by(fd, stranger), "the OS's own file is out of reach");
+    fs.give_to(fd, holder);
+    assert.assert_true(fs.usable_by(fd, holder), "the holder uses its file");
+    assert.assert_true(!fs.usable_by(fd, stranger), "a stranger does not");
+    assert.assert_true(fs.usable_by(1, stranger), "stdout is everybody's");
+
+    char buffer[4];
+    Result<i32, FsError> answer = Ok(0);
+    FsReadArgs read = FsReadArgs { fd: fd, buffer: &buffer[0], size: 4, result_out: &answer };
+    fs_syscall.handle(stranger, OsService::FS_READ, UserAddress((i32)(&read)));
+    bool bad_fd = case answer of {
+        Ok(_) -> false;
+        Err(error) -> case error of { BadFd(_) -> true; _ -> false; };
+    };
+    assert.assert_true(bad_fd, "a stranger's read gets BadFd");
+
+    FsCloseArgs close = FsCloseArgs { fd: fd };
+    fs_syscall.handle(stranger, OsService::FS_CLOSE, UserAddress((i32)(&close)));
+    assert.assert_true(fs.seek(fd, 0, SeekWhence::Set).is_ok(), "and its close closes nothing");
+    fs_syscall.handle(holder, OsService::FS_CLOSE, UserAddress((i32)(&close)));
+    assert.assert_true(fs.seek(fd, 0, SeekWhence::Set).is_err(), "the holder's close does");
 }

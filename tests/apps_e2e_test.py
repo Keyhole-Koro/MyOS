@@ -96,10 +96,12 @@ def main() -> int:
             os._type("spawner")
             os._press("enter")
             text = wait_text_contains(term_out, "exited with 47")
-            # A reaped pid is the next one handed out, so each of these ran
-            # under the same number (tests/proc/pid_reuse.unsafe.test.mln).
+            # A reaped slot is the next one handed out, so each of these ran in
+            # the same slot under a pid of its own: the low five bits are the
+            # slot (tests/proc/pid_reuse.unsafe.test.mln).
             pids = re.findall(r"^\[pid (\d+)\] \w+$", text, re.MULTILINE)
-            assert len(pids) == 3 and len(set(pids)) == 1, f"pids: {pids}"
+            assert len(pids) == 3 and len(set(pids)) == 3, f"pids: {pids}"
+            assert len({int(pid) & 31 for pid in pids}) == 1, f"pids: {pids}"
 
             # `ls` is a terminal built-in reading the MFS disk.
             os._type("ls")
@@ -192,7 +194,8 @@ def main() -> int:
             # child's stdout can overtake that line, which is a request.
             text = wait_text_contains(term_out, "exited with 7")
             pids = re.findall(r"^\[pid (\d+)\] hello$", text, re.MULTILINE)
-            assert pids == [child], f"the closed terminal's child kept pid {child}: {pids}"
+            slots = [int(pid) & 31 for pid in pids]
+            assert slots == [int(child) & 31], f"the closed terminal's child kept its slot: {child}, {pids}"
 
         print("PASS: user process, editor disk round-trip, file manager and hangup via automation")
         return 0
