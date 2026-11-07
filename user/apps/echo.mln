@@ -19,5 +19,4 @@ export i32 main() {
         ulib.print("> ");
         ulib.print_line(line);
     }
-    return 0;
 }

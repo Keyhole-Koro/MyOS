@@ -791,8 +791,6 @@ export Result<i32, FsError> seek(i32 fd, i32 offset, SeekWhence whence) {
             return Ok(target);
         });
     };
-    FsError fallback = WrongType(fd);
-    return Err(fallback);
 }
 
 /**
@@ -889,8 +887,6 @@ export Result<i32, FsError> read(i32 fd, i32 buf, i32 size) {
             return Ok(read_total);
         });
     };
-    FsError fallback = WrongType(fd);
-    return Err(fallback);
 }
 
 /**
@@ -926,7 +922,6 @@ Result<i32, FsError> finish_write(i32 fd, i32 new_size) {
             return Ok(written);
         });
     };
-    return Err(FsError::WrongType(fd));
 }
 
 /**
@@ -1021,8 +1016,6 @@ export Result<i32, FsError> write(i32 fd, i32 buf, i32 size) {
             return finish_write(fd, file_size + written);
         });
     };
-    FsError fallback = WrongType(fd);
-    return Err(fallback);
 }
 
 /**
