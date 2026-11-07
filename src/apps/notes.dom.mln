@@ -7,7 +7,6 @@ import ui from "@app/ui.mln";
 import { TextField } from "@app/ui.mln";
 import { app } from "@app/annotations.mln";
 import { Text } from "@std/text/text.mln";
-import { NodeId } from "@contracts/ui/widget.contract.mln";
 
 // "Notes": a small form that exercises keyboard input. Two text fields, a
 // checkbox and a separator, plus a label that echoes what was typed. What is
@@ -30,7 +29,7 @@ impl App for Notes {
     Self start() { return Notes { title: ui.field(), body: ui.field() }; }
 
     View (Self n) view() {
-        return <Window title="Notes" x={540} y={96} w={380} h={330}>
+        return <Window title="Notes" w={380} h={330}>
             <Column x={24} y={20} w={332} h={270} gap={12}>
                 <Label text="Click a field and type. Tab moves between fields." color={ui.TEXT_SECONDARY} />
                 <TextInput field={n.title} placeholder="Title" w={332} h={34} capacity={64} onChange={n.changed} />

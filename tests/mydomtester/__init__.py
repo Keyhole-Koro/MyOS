@@ -164,6 +164,27 @@ class MyOS:
     def get_by_test_id(self, test_id: str) -> "Locator":
         return Locator(self, test_id=test_id)
 
+    def raise_window(self, name: str) -> None:
+        """Bring a window to the front by clicking a part of it nothing covers.
+
+        New windows cascade, so a raised window can bury the title bars of the
+        ones after it; their bottom edges still show. The left of the title bar
+        holds the window's buttons."""
+        window = self.get_by_role("window", name=name).snapshot()
+        box = window.bounds
+        for y in (box.y + 16, box.y + box.height - 8):
+            for x in range(box.x + box.width - 120, box.x + 160, -40):
+                if self._hit_test(x, y) == window.id:
+                    before = self.snapshot().revision
+                    self._pointer_sequence([{"type": "move", "x": x, "y": y},
+                                            {"type": "down", "button": "left"},
+                                            {"type": "up", "button": "left"}])
+                    deadline = time.monotonic() + COMMAND_TIMEOUT_S
+                    while time.monotonic() < deadline and self.snapshot().revision == before:
+                        pass
+                    return
+        raise MyOSError(f"no part of window {name!r} can be clicked: {window}")
+
     def screenshot(self, path: str | Path) -> Path:
         result = self._request("screen.screenshot", {"path": str(path)})
         return Path(result["path"])

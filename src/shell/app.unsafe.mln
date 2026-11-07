@@ -39,11 +39,11 @@ import { KeyModifier, KeyCode } from "@contracts/input/keyboard.contract.mln";
 // An installed app is an executable on the disk whose header carries an
 // @app row (the compiler recorded it; install() reads it with MyStdLib's
 // annotations iterator, without loading the file): its type name, launcher
-// name, whether it is single-instance and whether it takes @open. What its
-// other annotations mean -- @timer, @key, @on_close -- is the app's own
-// runtime's business (MyAppFramework/src/runtime/runtime.mln), which reads them
-// when the process starts and asks the shell only for what crosses the
-// boundary: a timer node, a key claim.
+// name, whether it is single-instance and whether it takes opened paths. What
+// its other annotations mean -- @timer, @key -- is the app's own runtime's
+// business (MyAppFramework/src/runtime/runtime.mln), which reads them when the
+// process starts and asks the shell only for what crosses the boundary: a timer
+// node, a key claim.
 //
 // An instance is a process. The shell publishes events through its event
 // sink: KEY when a claimed shortcut is pressed, OPEN with a
@@ -66,13 +66,22 @@ i32 APPS_MAX = 16;
 i32 DIALOG_OFFSET_X = 60;
 i32 DIALOG_OFFSET_Y = 90;
 
+// Where a new window goes. Each steps down and right of the last, by more than
+// a title bar so the ones behind can still be raised, and after the last step
+// they start over.
+i32 CASCADE_X = 60;
+i32 CASCADE_Y = 40;
+i32 CASCADE_STEP = 36;
+i32 CASCADE_STEPS = 6;
+i32 cascade_next = 0;
+
 /**
  * Metadata read from an installed executable's @app annotation.
  * @property path Executable path.
  * @property type Application receiver type recorded in the @app annotation.
  * @property single True when launch requests should reuse an existing instance.
  * @property name Launcher label; falls back to type when the annotation omits a name.
- * @property opens True when this application declares an @open handler.
+ * @property opens True when the @app annotation says it takes opened paths.
  */
 struct AppRecord {
     Text<32> path;
@@ -151,9 +160,11 @@ void register_image(str path, str image) {
         Ok(value) -> value;
         Err(_) -> ({ return; });
     };
-    Annotations opens = annotations.in_image(image);
-    opens.on("open", type);
-    register_app(path, type, single, label, opens.next());
+    bool opens = case rows.flag(2) of {
+        Ok(value) -> value;
+        Err(_) -> ({ return; });
+    };
+    register_app(path, type, single, label, opens);
     debug.print("app: installed ");
     debug.print(type);
     debug.print(" (");
@@ -253,6 +264,16 @@ Result<Instance, AppError> mount(i32 a) {
     return Ok(instance);
 }
 
+// Moves a new window to the next step of the cascade.
+void place_window(NodeId win) {
+    borrow NodeRow n = case dom.find_row(win) of { Some(found) -> found; None -> ({ return; }); };
+    i32 s = dom.ui_scale();
+    i32 step = CASCADE_STEP * cascade_next;
+    dom.move_node(win, (CASCADE_X + step) * s - n.x, (CASCADE_Y + step) * s - n.y);
+    cascade_next++;
+    if (cascade_next == CASCADE_STEPS) { cascade_next = 0; }
+}
+
 // MAIN_WINDOW from an instance: its view() built `win`. Put it on the
 // desktop as the instance's window, and deliver an OPEN that was waiting
 // for it.
@@ -269,7 +290,10 @@ export void window_ready(Pid owner, NodeId win) {
         None -> ({ return; });
     };
     borrow InstanceRow row = instance.row();
-    if (!has_window(&row)) { dom.note_app_starting(-1); }
+    if (!has_window(&row)) {
+        dom.note_app_starting(-1);
+        place_window(win);
+    }
     dom.set_owner(win, owner);
     dom.set_on_close(win, window_closed);
     case dom.append_child(dom.desktop_id(), win) of {
@@ -334,7 +358,7 @@ export void hide_dialog(Pid owner, NodeId win) {
 }
 
 // The on_close handler every app window carries: tell the instance its
-// window is closing (a CLOSE event; its runtime runs the app's @on_close)
+// window is closing (a CLOSE event; its runtime runs the app's `close`)
 // and wait for its EXIT request to actually take it down.
 /**
  * Handles a window-close event by asking its owning app to close gracefully.
@@ -467,13 +491,13 @@ Result<Instance, AppError> instance_for_open(i32 a) {
     return mount(a);
 }
 
-// Hand `path` to an app with an @open method: the running instance of a
+// Hand `path` to an app that declares `opens`: the running instance of a
 // single-instance app, otherwise a fresh one, as an OPEN event -- sent at
 // once to a running instance, or as soon as a new one reports its window.
 // Returns Some(window) when it went to a live window and None while that
 // window is still starting; invalid paths and launch failures are errors.
 /**
- * Routes a file path to the first installed app that declares an @open handler.
+ * Routes a file path to the first installed app that declares `opens`.
  * Queues the path until the app's main window exists when the app is starting.
  * @param path Path to open.
  * @return Ok(Some(window)) when delivered immediately, Ok(None) while the app

@@ -11,7 +11,6 @@ import str from "@std/text/str.mln";
 import { Text } from "@std/text/text.mln";
 import { Result } from "@std/core/result.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
-import { NodeId } from "@contracts/ui/widget.contract.mln";
 import { Option } from "@std/core/option.mln";
 
 // File manager: lists the MFS disk, opens a file in the editor (activate a
@@ -51,7 +50,7 @@ impl App for Files {
     }
 
     View (Self f) view() {
-        return <Window title="Files" x={60} y={60} w={440} h={400}>
+        return <Window title="Files" w={440} h={400}>
             <List name="files" items={f.rows} selected={f.selected} x={12} y={12} w={416} h={270} capacity={1024}
                   focus={true} onChange={f.select} onActivate={f.open_selected} testId="file-list" />
             <Row x={12} y={294} w={416} h={34} gap={8}>

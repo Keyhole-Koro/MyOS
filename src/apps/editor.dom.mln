@@ -5,7 +5,7 @@ import { App, View } from "@app/app.mln";
 import elements from "@app/elements.mln";
 import ui from "@app/ui.mln";
 import { TextField } from "@app/ui.mln";
-import { app, key, open } from "@app/annotations.mln";
+import { app, key } from "@app/annotations.mln";
 import fs from "@std/hosted/fs.mln";
 import { FsChunk } from "@std/hosted/fs.mln";
 import str from "@std/text/str.mln";
@@ -29,7 +29,6 @@ import { KeyEventType, KeyCode } from "@contracts/input/keyboard.contract.mln";
  * @property status What the last load or save did.
  */
 @app(name = "Editor", single, opens)
-@open // what the shell looks for until it reads `opens`
 struct Editor {
     TextField name;
     TextField body;
@@ -40,7 +39,7 @@ impl App for Editor {
     Self start() { return Editor { name: ui.field(), body: ui.field() }; }
 
     View (Self e) view() {
-        return <Window title="Editor" x={300} y={120} w={520} h={420}>
+        return <Window title="Editor" w={520} h={420}>
             <Row x={12} y={12} w={496} h={34} gap={8}>
                 <TextInput field={e.name} placeholder="file name" w={300} h={34} capacity={16} testId="editor-name" />
                 <PrimaryButton text="Save" w={90} h={34} onClick={e.save} />

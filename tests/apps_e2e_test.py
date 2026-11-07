@@ -55,12 +55,6 @@ def launch_app(os, row_index):
                 menu.bounds.y + 16 + ROW_H * row_index + ROW_H // 2)
 
 
-def raise_window(os, name):
-    """Bring a window to the front by clicking a clear spot on its title bar."""
-    w = os.get_by_role("window", name=name).snapshot()
-    click_point(os, w.bounds.x + w.bounds.width - 80, w.bounds.y + 16)
-
-
 def close_window(os, name):
     """The close button sits at the left of the title bar."""
     w = os.get_by_role("window", name=name).snapshot()
@@ -83,6 +77,10 @@ def main() -> int:
             # 1. A user-space program runs as its own process; its stdout
             #    lands in the terminal, and its exit code is reported.
             expect(term_in).to_be_visible()
+            # Boot's windows arrive in any order, and each lands on top.
+            expect(os.get_by_role("window", name="Counter")).to_be_visible()
+            expect(os.get_by_role("window", name="Notes")).to_be_visible()
+            os.raise_window("Terminal")
             term_in.click()
             os._type("hello")
             os._press("enter")
@@ -175,7 +173,7 @@ def main() -> int:
             #    child still waiting for input and frees its pid, with no help
             #    from the app. The new terminal retakes the old one's pid, so
             #    the next program gets the child's, the lowest number free.
-            raise_window(os, "Terminal")
+            os.raise_window("Terminal")
             term_in.click()
             os._type("echo")
             os._press("enter")

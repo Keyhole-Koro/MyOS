@@ -22,6 +22,11 @@ def main() -> int:
             expect(increment).to_be_enabled()
             expect(increment).to_have_count(1)
 
+            # Boot opens Counter first, so the windows after it land on top.
+            expect(os.get_by_role("window", name="Notes")).to_be_visible()
+            expect(os.get_by_role("window", name="Terminal")).to_be_visible()
+            os.raise_window("Counter")
+
             increment.click()
             expect(counter.get_by_test_id("counter")).to_have_text("clicks: 1")
 
@@ -29,14 +34,7 @@ def main() -> int:
             increment.click()
             expect(counter.get_by_test_id("counter")).to_have_text("clicks: 3")
 
-            # Notes sits behind the Terminal at boot; raise it by clicking a
-            # clear spot on its title bar before typing into it.
-            notes = os.get_by_role("window", name="Notes").snapshot()
-            os._pointer_sequence([
-                {"type": "move", "x": notes.bounds.x + notes.bounds.width - 120, "y": notes.bounds.y + 16},
-                {"type": "down", "button": "left"},
-                {"type": "up", "button": "left"},
-            ])
+            os.raise_window("Notes")
             title = os.get_by_role("textbox", name="Title")
             title.fill("Hello")
             expect(title).to_have_value("Hello")

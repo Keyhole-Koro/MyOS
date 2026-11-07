@@ -7,7 +7,7 @@ framework, not any one app, is responsible for:
   - the launcher menu lists every @app in the manifest and starts one;
   - @app(single) brings the running instance forward instead of a second one;
   - @key shortcuts reach the active window's app (Ctrl+S saves in the editor);
-  - ui.open() routes a path to the @open app from another app (Files -> Editor);
+  - ui.open() routes a path to the app that declares `opens` (Files -> Editor);
   - closing a window frees the instance: a relaunch starts from initial state;
   - a dialog an app opened is a window of its own and closes with Cancel;
   - every app is an executable on the disk (an MBIN file with an @app row,
@@ -77,11 +77,6 @@ def launch_app(os, name):
         time.sleep(0.05)
 
 
-def raise_window(os, name):
-    w = os.get_by_role("window", name=name).snapshot()
-    click_point(os, w.bounds.x + w.bounds.width - 120, w.bounds.y + 16)
-
-
 def close_window(os, name):
     """The close button sits at the left of the title bar."""
     w = os.get_by_role("window", name=name).snapshot()
@@ -97,6 +92,10 @@ def main() -> int:
     try:
         with MyOS.launch(firmware, disk=disk,
                          artifacts=REPO_ROOT / "qa" / "outputs" / "app-framework") as os:
+            # Boot's windows arrive in any order, and each lands on top.
+            for name in ("Counter", "Notes", "Terminal"):
+                expect(os.get_by_role("window", name=name)).to_be_visible()
+
             # 1. The launcher lists the manifest and starts an app.
             launch_app(os, "Editor")
             editor = os.get_by_role("window", name="Editor")
@@ -115,7 +114,7 @@ def main() -> int:
             os._press("s", MOD_CTRL)
             wait_text_contains(os.get_by_test_id("editor-status"), "saved ")
 
-            # 4. ui.open() from Files reaches the editor's @open: "New" loads
+            # 4. ui.open() from Files reaches the editor's `open`: "New" loads
             #    untitled.txt into the (still single) editor and raises it.
             launch_app(os, "Files")
             expect(os.get_by_role("window", name="Files")).to_be_visible()
@@ -124,7 +123,7 @@ def main() -> int:
             wait_text_contains(os.get_by_test_id("editor-status"), "loaded ")
 
             # 5. A dialog the app built is its own window; Cancel closes it.
-            raise_window(os, "Files")
+            os.raise_window("Files")
             listing = os.get_by_test_id("file-list").snapshot()
             click_point(os, listing.bounds.x + 40, listing.bounds.y + 20)  # first row
             wait_text_contains(os.get_by_test_id("files-status"), "selected ")
@@ -140,7 +139,7 @@ def main() -> int:
             expect(os.get_by_role("window", name="Editor")).to_have_count(1)
 
             # 7. A relaunch after close starts from the initial state.
-            raise_window(os, "Counter")
+            os.raise_window("Counter")
             os.get_by_role("window", name="Counter").get_by_role("button", name="Click me").click()
             expect(os.get_by_test_id("counter")).to_have_text("clicks: 1")
             close_window(os, "Counter")

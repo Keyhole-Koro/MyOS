@@ -43,7 +43,7 @@ impl App for Terminal {
     Self start() { return Terminal { out: ui.log(), input: ui.field() }; }
 
     View (Self t) view() {
-        return <Window title="Terminal" x={220} y={40} w={560} h={400}>
+        return <Window title="Terminal" w={560} h={400}>
             <TextArea log={t.out} text="MyOS terminal. Type help, ls, or the name of a program (hello, echo, count).\n" name="output" x={12} y={12} w={536} h={296} capacity={6144} readonly={1} testId="terminal-output" />
             <Row x={12} y={320} w={536} h={34} gap={8}>
                 <TextInput field={t.input} placeholder="type a command, e.g. help" w={440} h={34} capacity={96} focus={true} testId="terminal-input" />
