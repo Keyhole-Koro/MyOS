@@ -18,15 +18,12 @@ import irq from "@kernel/arch/irq.mln";
 import protocol_elements from "protocol_elements.mln";
 import { NodeRow } from "dom/dom_model.mln";
 import { Blob } from "@std/memory/blob.mln";
-import { NodeKind, NodeState } from "dom/dom.mln";
 import { Request, RequestStatus } from "@contracts/myapp/message.contract.mln";
 import { UiOp } from "@contracts/myapp/ui.contract.mln";
 
 bool writes_typed_result(i32 op) {
-    if (op == UiOp::TEXT_COPY || op == UiOp::IS_CHECKED) { return true; }
+    if (op == UiOp::TEXT_COPY) { return true; }
     if (op == UiOp::AREA_LINES || op == UiOp::LIST_COUNT) { return true; }
-    if (op == UiOp::LIST_SELECTED || op == UiOp::LIST_ITEM) { return true; }
-    if (op == UiOp::WINDOW_OF || op == UiOp::WINDOW_X || op == UiOp::WINDOW_Y) { return true; }
     return op >= UiOp::CREATE_WINDOW && op <= UiOp::APPEND_CHILD;
 }
 
@@ -83,7 +80,6 @@ RequestStatus run_request(Request *m) {
     if (op == UiOp::TEXT_COPY) {
         return answer<Result<i32, UiError>>(m, staged(text_of(id), (char*)m->a1, m->a2));
     }
-    if (op == UiOp::IS_CHECKED)     { return answer<Result<bool, UiError>>(m, is_checked(id)); }
     if (op == UiOp::SET_CHECKED)    { set_checked(id, m->a1); return RequestStatus::OK; }
     if (op == UiOp::INPUT_SET)      { input_set(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::AREA_APPEND)    { area_append(id, m->s0); return RequestStatus::OK; }
@@ -92,20 +88,8 @@ RequestStatus run_request(Request *m) {
     if (op == UiOp::LIST_SET_ITEMS) { list_set_items(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::LIST_SELECT)    { dom_widgets.list_select(id, m->a1); return RequestStatus::OK; }
     if (op == UiOp::LIST_COUNT)     { return answer<Result<i32, UiError>>(m, list_count(id)); }
-    if (op == UiOp::LIST_SELECTED) {
-        return answer<Result<Option<i32>, UiError>>(m, dom_widgets.list_selected(id));
-    }
-    if (op == UiOp::LIST_ITEM) {
-        return answer<Result<i32, UiError>>(
-            m, staged(dom_widgets.list_item(id, m->a1), (char*)m->a2, m->a3));
-    }
     if (op == UiOp::FOCUS)          { focus(id); return RequestStatus::OK; }
     if (op == UiOp::FOCUS_WINDOW)   { focus_window(id); return RequestStatus::OK; }
-    if (op == UiOp::CLOSE)          { close(id); return RequestStatus::OK; }
-    if (op == UiOp::WINDOW_OF)      { return answer<Result<Option<NodeId>, UiError>>(m, window_of(id)); }
-    if (op == UiOp::WINDOW_X)       { return answer<Result<i32, UiError>>(m, window_x(id)); }
-    if (op == UiOp::WINDOW_Y)       { return answer<Result<i32, UiError>>(m, window_y(id)); }
-    if (op == UiOp::SHOW)           { show(id); return RequestStatus::OK; }
     if (op == UiOp::TEST_ID)        { test_id(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::SEND_KEY)       { send_key(m->a0, m->a1, m->a2); return RequestStatus::OK; }
     if (op >= UiOp::CREATE_WINDOW && op <= UiOp::APPEND_CHILD) {
@@ -136,18 +120,6 @@ Result<str, UiError> text_of(NodeId id) {
 }
 
 // --- widgets --------------------------------------------------------------------------------
-
-/**
- * Checks whether a checkbox node is checked.
- *
- * @param id UI node ID.
- * @return Ok(true/false) for a Checkbox, or Err for an invalid ID or wrong node kind.
- */
-Result<bool, UiError> is_checked(NodeId id) {
-    borrow NodeRow n = dom.require_row(id)?;
-    if (n.kind != NodeKind::CHECKBOX) { return Err(UiError::WrongNodeKind(id)); }
-    return Ok((n.state & NodeState::CHECKED) != 0);
-}
 
 /**
  * Sets the checked state of a checkbox node.
@@ -226,67 +198,6 @@ void focus(NodeId id) { dom_widgets.set_focus(id); }
  * @param win Window node ID.
  */
 void focus_window(NodeId win) { dom_widgets.focus_window(win); }
-
-/**
- * Closes an application-opened window or dialog.
- *
- * Removes the node from the DOM and activates the topmost remaining window.
- *
- * @param win Window node ID.
- */
-void close(NodeId win) {
-    dom.remove_node(win);
-    dom_widgets.activate_topmost();
-}
-
-/**
- * Resolves the enclosing window node ID for a given descendant control node.
- *
- * @param id UI node ID.
- * @return Ok(Some(window)), Ok(None) outside any window, or Err for an invalid ID.
- */
-Result<Option<NodeId>, UiError> window_of(NodeId id) {
-    return dom.window_of(id);
-}
-
-// The row of a node that must be a window.
-Result<borrow NodeRow, UiError> window_row(NodeId win) {
-    borrow NodeRow n = dom.require_row(win)?;
-    if (n.kind != NodeKind::WINDOW) { return Err(UiError::WrongNodeKind(win)); }
-    return Ok(n);
-}
-
-/**
- * Returns the X position of a window in logical coordinates.
- *
- * @param win Window node ID.
- * @return X coordinate adjusted for UI scaling.
- */
-Result<i32, UiError> window_x(NodeId win) {
-    borrow NodeRow n = window_row(win)?;
-    return Ok(n.x / dom.ui_scale());
-}
-
-/**
- * Returns the Y position of a window in logical coordinates.
- *
- * @param win Window node ID.
- * @return Y coordinate adjusted for UI scaling.
- */
-Result<i32, UiError> window_y(NodeId win) {
-    borrow NodeRow n = window_row(win)?;
-    return Ok(n.y / dom.ui_scale());
-}
-
-/**
- * Mounts a window tree onto the desktop and focuses it.
- *
- * @param win Window node ID.
- */
-void show(NodeId win) {
-    case dom.append_child(dom.desktop_id(), win) of { Ok(_) -> _; Err(_) -> ({ return; }); };
-    dom_widgets.focus_window(win);
-}
 
 /**
  * Assigns an automation test identifier to a node.

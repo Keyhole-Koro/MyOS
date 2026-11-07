@@ -1387,16 +1387,6 @@ export Children children(NodeId id) {
 }
 
 /**
- * Returns the enclosing WINDOW node ID for a given node.
- * @param id DOM Node ID.
- * @return Ok(Some(window)) when inside a window, Ok(None) otherwise, or Err for an invalid ID.
- */
-export Result<Option<NodeId>, UiError> window_of(NodeId id) {
-    if (!node_exists(id)) { return Err(UiError::NodeNotFound(id)); }
-    return Ok(enclosing_window(id));
-}
-
-/**
  * Returns the enclosing WINDOW node ID for a node that may be gone.
  * @param id DOM Node ID.
  * @return Some(window) when inside a window, None otherwise or for a dead ID.

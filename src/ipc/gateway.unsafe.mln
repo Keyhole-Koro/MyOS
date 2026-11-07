@@ -146,19 +146,6 @@ void stage_request_outputs(i32 slot_index, Request *request) {
         }
         request->a1 = gateway_slots[slot_index].out;
         request->a2 = gateway_slots[slot_index].out_cap;
-    } else if (request->domain == RequestDomain::UI && request->op == UiOp::LIST_ITEM) {
-        gateway_slots[slot_index].out_user = UserAddress(request->a2);
-        gateway_slots[slot_index].out_cap = request->a3;
-        if (gateway_slots[slot_index].out_cap < 0) {
-            gateway_slots[slot_index].out_cap = 0;
-        }
-        if (gateway_slots[slot_index].out_cap > OUT_CAP) {
-            gateway_slots[slot_index].out_cap = OUT_CAP;
-        }
-        char *out = (char*)gateway_slots[slot_index].out;
-        out[0] = (char)0;
-        request->a2 = gateway_slots[slot_index].out;
-        request->a3 = gateway_slots[slot_index].out_cap;
     }
 
     if (request->result_out != 0 && request->result_size > 0) {

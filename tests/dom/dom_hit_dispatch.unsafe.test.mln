@@ -13,6 +13,7 @@ import allocator from "@std/memory/allocator.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
+import { NodeRow } from "@os/ui/dom/dom_model.mln";
 import { Pid } from "@contracts/process/control.contract.mln";
 
 // Pins the interaction contract the compositor relies on: it holds no node ids
@@ -240,44 +241,31 @@ void dom_hit_dispatch() {
     str emptied = dom.text_of(area);
     assert.assert_true(emptied.length == 0, "an empty write clears a text area");
 
-    // List queries preserve the semantic difference between no selection and
-    // an invalid request; neither path is encoded as a negative integer.
+    // A list's selection is an Option, and neither no selection nor a row past
+    // the end is encoded as a negative integer.
     NodeId list = require_node(dom_elements.create_list("rows", 10, 170, 200, 80, 64));
     require_append(dom.append_child(win2, list));
     dom_widgets.list_set_items(list, "first\nsecond");
-    Result<Option<i32>, UiError> no_selection = dom_widgets.list_selected(list);
-    i32 is_none = case no_selection of {
-        Ok(value) -> case value of { None -> 1; Some(_) -> 0; };
-        Err(_) -> 0;
-    };
-    assert.assert_true(is_none == 1, "no list selection is Ok(None)");
+    borrow NodeRow list_row = dom.row_of(list);
+    assert.assert_true(list_row.sel.is_none(), "a new list has no selection");
 
     dom_widgets.list_select(list, 1);
-    Result<Option<i32>, UiError> selected = dom_widgets.list_selected(list);
-    i32 selected_row = case selected of {
-        Ok(value) -> case value of { Some(row) -> row; None -> 99; };
-        Err(_) -> 99;
-    };
-    assert.assert_true(selected_row == 1, "selected list row is Ok(Some(1))");
+    i32 selected_row = case list_row.sel of { Some(row) -> row; None -> 99; };
+    assert.assert_true(selected_row == 1, "a selected row is Some(1)");
 
-    Result<str, UiError> copied = dom_widgets.list_item(list, 1);
-    str item = case copied of { Ok(view) -> view; Err(_) -> ""; };
-    assert.assert_true(item.length == 6, "valid list item returns its row");
-    assert.assert_true(item.data[0] == 's', "valid list item views the text");
+    dom_widgets.list_select(list, 9);
+    assert.assert_true(list_row.sel.is_none(), "a row past the end selects nothing");
 
-    Result<str, UiError> bad_item = dom_widgets.list_item(list, 9);
-    i32 invalid_index = case bad_item of {
-        Ok(_) -> 0;
-        Err(cause) -> case cause of { UiError::InvalidIndex(value) -> value == 9; _ -> 0; };
-    };
-    assert.assert_true(invalid_index == 1, "invalid list row is typed UiError");
+    Result<i32, UiError> counted = dom_widgets.list_count(list);
+    i32 rows = case counted of { Ok(value) -> value; Err(_) -> 0; };
+    assert.assert_true(rows == 2, "a list counts its rows");
 
-    Result<Option<i32>, UiError> missing_list = dom_widgets.list_selected(NodeId(99999));
+    Result<i32, UiError> missing_list = dom_widgets.list_count(NodeId(99999));
     i32 missing_node = case missing_list of {
         Ok(_) -> 0;
         Err(cause) -> case cause of { UiError::NodeNotFound(value) -> value == NodeId(99999); _ -> 0; };
     };
-    assert.assert_true(missing_node == 1, "missing list node is typed UiError");
+    assert.assert_true(missing_node == 1, "a missing list node is a typed UiError");
 
     // Closing a window drops its subtree and hands activation to the top-most
     // remaining window.

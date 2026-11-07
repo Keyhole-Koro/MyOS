@@ -665,18 +665,6 @@ export void list_set_items(NodeId id, str items) {
 }
 
 /**
- * Returns the currently selected row index in a List. No selection is a
- * successful `None`; an invalid node is an error.
- * @param id DOM Node ID of List.
- * @return Result containing an optional 0-based row index.
- */
-export Result<Option<i32>, UiError> list_selected(NodeId id) {
-    borrow NodeRow n = dom.require_row(id)?;
-    if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
-    return Ok(n.sel);
-}
-
-/**
  * Returns total row count of a List node.
  * @param id DOM Node ID of List.
  * @return Ok(row count), or Err when the node is missing or is not a List.
@@ -686,26 +674,6 @@ export Result<i32, UiError> list_count(NodeId id) {
     if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
     if (n.len == 0) { return Ok(0); }
     return Ok(line_of(&n, n.len) + 1);
-}
-
-/**
- * Retrieves the text of a specific item in a List node.
- * @param id DOM Node ID of List.
- * @param index 0-based item index.
- * @return A view of the row, valid until the list next changes.
- */
-export Result<str, UiError> list_item(NodeId id, i32 index) {
-    borrow NodeRow n = dom.require_row(id)?;
-    if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
-    i32 count = list_count(id)?;
-    if (index < 0 || index >= count) { return Err(UiError::InvalidIndex(index)); }
-    i32 start = line_start(&n, index);
-    i32 llen = line_len_at(&n, start);
-    str all = n.text.view(n.len);
-    return case all.slice(start, start + llen) of {
-        Some(line) -> Ok(line);
-        None -> Err(UiError::InvalidIndex(index));
-    };
 }
 
 /**
