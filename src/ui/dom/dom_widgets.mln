@@ -36,10 +36,11 @@ export enum EditResult {
 // --- focus / window management -----------------------------------------------------------
 
 /**
- * Returns height of the taskbar in display pixels (or 0 if none).
- * @return Taskbar height in pixels.
+ * Returns the height of the taskbar node in display pixels, as laid out.
+ * ui_metrics.taskbar_height() is the theme's logical height instead.
+ * @return Taskbar node height in display pixels, or 0 without a taskbar.
  */
-export i32 taskbar_height() {
+export i32 taskbar_node_height() {
     return case dom.row_in(dom.taskbar_id()) of { Some(n) -> n.h; None -> 0; };
 }
 
@@ -214,7 +215,7 @@ export void maximize_window(NodeId win) {
     n.sw = n.w;
     n.sh = n.h;
     i32 dw = ui_metrics.display_width();
-    i32 dh = ui_metrics.display_height() - taskbar_height();
+    i32 dh = ui_metrics.display_height() - taskbar_node_height();
     dom.move_node(win, -n.x, -n.y);
     resize_window(win, dw, dh);
     dom.set_state_flag(win, NodeState::MAXIMIZED, 1);

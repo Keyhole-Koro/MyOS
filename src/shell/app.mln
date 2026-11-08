@@ -492,7 +492,7 @@ export void launch_menu() {
     i32 s = dom.ui_scale();
     i32 rows = registry_count;
     if (rows < 1) { rows = 1; }
-    i32 y = graphics.display_height() - dom_widgets.taskbar_height() - (rows * 34 + 20) * s;
+    i32 y = graphics.display_height() - dom_widgets.taskbar_node_height() - (rows * 34 + 20) * s;
     str items = menu_items();
     case dom_widgets.open_menu(8 * s, y, items, on_menu, None) of {
         Ok(_) -> _;
