@@ -185,6 +185,7 @@ i32 g_clip_sp = 0;
 /**
  * Initializes the graphics clip stack and clears the clipping rectangle.
  */
+@safe
 export void init() {
     clear_clip();
     g_clip_sp = 0;
