@@ -8,6 +8,7 @@ import dom from "dom/dom.mln";
 import dom_hit_test from "dom/dom_hit_test.mln";
 import { NodeKind } from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
+import dom_text_edit from "dom/dom_text_edit.mln";
 import dom_window_chrome from "dom/dom_window_chrome.mln";
 import dom_render from "dom/dom_render.mln";
 import { TaskbarTarget } from "dom/dom_render.mln";
@@ -340,7 +341,7 @@ export void run() {
 
                 if (wheel != 0) {
                     case dom_hit_test.find_at(ex, ey) of {
-                        Some(id) -> ({ dom_widgets.dispatch_wheel(id, wheel); });
+                        Some(id) -> ({ dom_text_edit.dispatch_wheel(id, wheel); });
                         None -> _;
                     };
                 }

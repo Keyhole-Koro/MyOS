@@ -4,7 +4,7 @@ import blob from "@std/memory/blob.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
 import graphics from "@os/ui/graphics.mln";
 import theme from "@os/ui/theme.mln";
-import dom_widgets from "dom_widgets.mln";
+import dom_text_edit from "dom_text_edit.mln";
 import dom_window_chrome from "dom_window_chrome.mln";
 import dom from "dom.mln";
 import { NodeRow } from "dom_model.mln";
@@ -242,20 +242,20 @@ export void draw_text_area(borrow NodeRow n) {
 
     i32 fg = theme.TEXT_PRIMARY;
     fg = node_fg(&n, fg);
-    bool ro = dom_widgets.is_readonly(&n);
+    bool ro = dom_text_edit.is_readonly(&n);
     Blob buf = n.text;
     i32 len = n.len;
     graphics.push_clip(x + s, y + s, w - 2 * s, h - 2 * s);
-    i32 rows = dom_widgets.visible_lines(&n);
+    i32 rows = dom_text_edit.visible_lines(&n);
     i32 first = n.scroll;
-    i32 start = dom_widgets.line_start(&n, first);
+    i32 start = dom_text_edit.line_start(&n, first);
     i32 row = 0;
     bool has_caret = false;
     i32 caret_x = 0;
     i32 caret_y = 0;
     while (row < rows) {
         if (start > len) { break; }
-        i32 llen = dom_widgets.line_len_at(&n, start);
+        i32 llen = dom_text_edit.line_len_at(&n, start);
         i32 ty = y + pad + row * lh;
         Text<160> line = copy_line(buf, start, llen);
         str label_3 = line.as_str();
@@ -314,13 +314,13 @@ export void draw_rows(borrow NodeRow n, i32 hl_color, i32 hl_fg) {
     i32 r = theme.BUTTON_RADIUS * s;
     graphics.push_clip(x + s, y + s, w - 2 * s, h - 2 * s);
     defer graphics.pop_clip();
-    i32 rows = dom_widgets.visible_lines(&n);
+    i32 rows = dom_text_edit.visible_lines(&n);
     i32 first = n.scroll;
-    i32 start = dom_widgets.line_start(&n, first);
+    i32 start = dom_text_edit.line_start(&n, first);
     i32 row = 0;
     while (row < rows) {
         if (start >= len) { break; }
-        i32 llen = dom_widgets.line_len_at(&n, start);
+        i32 llen = dom_text_edit.line_len_at(&n, start);
         i32 ty = y + pad + row * lh;
         i32 color = fg;
         bool highlighted = case n.sel of {

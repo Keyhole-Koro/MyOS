@@ -8,11 +8,11 @@ import { NodeRow } from "dom_model.mln";
 import { Blob } from "@std/memory/blob.mln";
 import { UiEventKind } from "@os/ui/events.mln";
 import ui_config from "@os/ui/config.mln";
-import { NodeKind, NodeRole, NodeState, NodeStyle, Children, NewNode } from "dom.mln";
+import dom_text_edit from "dom_text_edit.mln";
+import { EditResult } from "dom_text_edit.mln";
+import { NodeKind, NodeRole, NodeState, Children, NewNode } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
-import { Text } from "@std/text/text.mln";
-import ascii from "@std/text/ascii.mln";
 import str from "@std/text/str.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import { Pid } from "@contracts/process/control.contract.mln";
@@ -24,13 +24,6 @@ fn(Option<Pid> owner, NodeId id, i32 arg) -> void close_handler_or_zero(NodeId i
         Ok(None) -> 0;
         Err(_) -> 0;
     };
-}
-
-/** Result of applying a keyboard edit to a text-input widget. */
-export enum EditResult {
-    Unhandled,
-    Changed,
-    Moved,
 }
 
 // --- focus / window management -----------------------------------------------------------
@@ -221,412 +214,6 @@ export void maximize_window(NodeId win) {
     dom.set_state_flag(win, NodeState::MAXIMIZED, 1);
 }
 
-// --- keyboard --------------------------------------------------------------------------------
-
-/**
- * Inserts a character into a text buffer at current cursor position.
- * @param n DOM Node row.
- * @param c ASCII character code to insert.
- */
-export void input_insert(borrow NodeRow n, i32 c) {
-    i32 len = n.len;
-    i32 cap = n.cap;
-    if (len + 1 >= cap) { return; }
-    Blob buf = n.text;
-    i32 cur = n.cursor;
-    i32 i = len;
-    while (i > cur) {
-        buf.put(i, buf.at(i - 1));
-        i--;
-    }
-    buf.put(cur, (char)c);
-    buf.put(len + 1, (char)0);
-    n.len = (u16)(len + 1);
-    n.cursor = (u16)(cur + 1);
-}
-
-/**
- * Deletes character at specified index in a text node buffer.
- * @param n DOM Node row.
- * @param at Byte index of character to remove.
- */
-export void input_delete_at(borrow NodeRow n, i32 at) {
-    i32 len = n.len;
-    if (at < 0) { return; }
-    if (at >= len) { return; }
-    Blob buf = n.text;
-    i32 i = at;
-    while (i < len - 1) {
-        buf.put(i, buf.at(i + 1));
-        i++;
-    }
-    buf.put(len - 1, (char)0);
-    n.len = (u16)(len - 1);
-}
-
-/**
- * Handles default editing keyboard events for a single-line TextInput node.
- * @param n TextInput node row.
- * @param type KeyEventType value from the shared keyboard contract.
- * @param code Key code or ASCII character.
- * @return EditResult enum indicating outcome (Changed, Moved, Unhandled).
- */
-export EditResult input_handle(borrow NodeRow n, i32 type, i32 code) {
-    i32 cur = n.cursor;
-    i32 len = n.len;
-    if (type == KeyEventType::CHAR) {
-        if (ascii.is_printable(code)) {
-            input_insert(&n, code);
-            return EditResult::Changed;
-        }
-        return EditResult::Unhandled;
-    }
-    if (type != KeyEventType::DOWN) { return EditResult::Unhandled; }
-    if (code == KeyCode::BACKSPACE) {
-        if (cur > 0) {
-            input_delete_at(&n, cur - 1);
-            n.cursor = (u16)(cur - 1);
-            return EditResult::Changed;
-        }
-        return EditResult::Unhandled;
-    }
-    if (code == KeyCode::DELETE) {
-        if (cur < len) { input_delete_at(&n, cur); return EditResult::Changed; }
-        return EditResult::Unhandled;
-    }
-    if (code == KeyCode::LEFT) {
-        if (cur > 0) { n.cursor = (u16)(cur - 1); }
-        return EditResult::Moved;
-    }
-    if (code == KeyCode::RIGHT) {
-        if (cur < len) { n.cursor = (u16)(cur + 1); }
-        return EditResult::Moved;
-    }
-    if (code == KeyCode::HOME) { n.cursor = 0; return EditResult::Moved; }
-    if (code == KeyCode::END) { n.cursor = (u16)len; return EditResult::Moved; }
-    return EditResult::Unhandled;
-}
-
-// Route one keyboard event (type = keyboard.EVT_*, code = key code or
-// character) to the focused node; text inputs get their default editing
-// behaviour.
-// --- multi-line text (TextArea) ---
-// The buffer holds the whole document with '\n' separators; `cursor` is a
-// byte index, `scroll` the first visible line. Editing shares the insert/
-// delete helpers with TextInput and adds newline, vertical movement and
-// keeping the caret's line in view.
-
-/**
- * Checks whether a node has the READONLY style bit set.
- * @param n DOM Node row.
- * @return True if read-only, false otherwise.
- */
-export bool is_readonly(borrow NodeRow n) {
-    return (n.style & NodeStyle::READONLY) != 0;
-}
-
-/**
- * Finds the 0-based line index containing byte offset `at` in a text buffer.
- * @param n TextArea node row.
- * @param at Byte offset in text buffer.
- * @return 0-based line number.
- */
-export i32 line_of(borrow NodeRow n, i32 at) {
-    Blob buf = n.text;
-    i32 line = 0;
-    i32 i = 0;
-    while (i < at) {
-        if (buf.at(i) == 10) { line++; }
-        i++;
-    }
-    return line;
-}
-
-/**
- * Returns the byte offset corresponding to the start of a given line index.
- * @param n TextArea node row.
- * @param line 0-based line index.
- * @return Byte offset of line start.
- */
-export i32 line_start(borrow NodeRow n, i32 line) {
-    Blob buf = n.text;
-    i32 len = n.len;
-    i32 i = 0;
-    i32 cur = 0;
-    while (cur < line) {
-        if (i >= len) { return len; }
-        if (buf.at(i) == 10) { cur++; }
-        i++;
-    }
-    return i;
-}
-
-/**
- * Computes byte length of a line starting at `start` (excluding newline).
- * @param n TextArea node row.
- * @param start Byte offset of line start.
- * @return Line length in bytes.
- */
-export i32 line_len_at(borrow NodeRow n, i32 start) {
-    Blob buf = n.text;
-    i32 len = n.len;
-    i32 i = start;
-    while (i < len) {
-        if (buf.at(i) == 10) { return i - start; }
-        i++;
-    }
-    return len - start;
-}
-
-/**
- * Calculates number of visible lines fitting inside a TextArea or List.
- * @param n DOM Node row.
- * @return Number of visible text lines.
- */
-export i32 visible_lines(borrow NodeRow n) {
-    i32 s = dom.ui_scale();
-    i32 pad = 8 * s;
-    i32 lh = ui_metrics.text_height(0, s);
-    i32 rows = (n.h - 2 * pad) / lh;
-    if (rows < 1) { rows = 1; }
-    return rows;
-}
-
-/**
- * Adjusts TextArea scroll offset to ensure the cursor line is visible.
- * @param n TextArea node row.
- */
-export void text_area_reveal_cursor(borrow NodeRow n) {
-    i32 line = line_of(&n, n.cursor);
-    i32 rows = visible_lines(&n);
-    i32 scroll = n.scroll;
-    if (line < scroll) { scroll = line; }
-    if (line >= scroll + rows) { scroll = line - rows + 1; }
-    n.scroll = (u16)scroll;
-}
-
-/**
- * Moves TextArea cursor to the same column on target line.
- * @param n TextArea node row.
- * @param line Target line index.
- */
-export void text_area_goto_line(borrow NodeRow n, i32 line) {
-    i32 total = line_of(&n, n.len) + 1;
-    if (line < 0) { line = 0; }
-    if (line >= total) { line = total - 1; }
-    i32 cur_start = line_start(&n, line_of(&n, n.cursor));
-    i32 col = n.cursor - cur_start;
-    i32 start = line_start(&n, line);
-    i32 llen = line_len_at(&n, start);
-    if (col > llen) { col = llen; }
-    n.cursor = (u16)(start + col);
-}
-
-/**
- * Handles multi-line editing and navigation keyboard events for a TextArea node.
- * @param n TextArea node row.
- * @param type KeyEventType value from the shared keyboard contract.
- * @param code Key code or ASCII character.
- * @param mods Active modifier keys bitmask.
- * @return EditResult enum indicating outcome (Changed, Moved, Unhandled).
- */
-export EditResult text_area_handle(borrow NodeRow n, i32 type, i32 code, i32 mods) {
-    bool ro = is_readonly(&n);
-    i32 cur = n.cursor;
-    i32 len = n.len;
-    if (type == KeyEventType::CHAR) {
-        if (ro) { return EditResult::Unhandled; }
-        if (ascii.is_printable(code)) {
-            input_insert(&n, code);
-            text_area_reveal_cursor(&n);
-            return EditResult::Changed;
-        }
-        return EditResult::Unhandled;
-    }
-    if (type != KeyEventType::DOWN) { return EditResult::Unhandled; }
-    if (code == KeyCode::ENTER) {
-        if (ro) { return EditResult::Unhandled; }
-        input_insert(&n, 10);
-        text_area_reveal_cursor(&n);
-        return EditResult::Changed;
-    }
-    if (code == KeyCode::BACKSPACE) {
-        if (ro) { return EditResult::Unhandled; }
-        if (cur > 0) {
-            input_delete_at(&n, cur - 1);
-            n.cursor = (u16)(cur - 1);
-            text_area_reveal_cursor(&n);
-            return EditResult::Changed;
-        }
-        return EditResult::Unhandled;
-    }
-    if (code == KeyCode::DELETE) {
-        if (ro) { return EditResult::Unhandled; }
-        if (cur < len) {
-            input_delete_at(&n, cur);
-            return EditResult::Changed;
-        }
-        return EditResult::Unhandled;
-    }
-    if (code == KeyCode::LEFT) {
-        if (cur > 0) { n.cursor = (u16)(cur - 1); }
-        text_area_reveal_cursor(&n);
-        return EditResult::Moved;
-    }
-    if (code == KeyCode::RIGHT) {
-        if (cur < len) { n.cursor = (u16)(cur + 1); }
-        text_area_reveal_cursor(&n);
-        return EditResult::Moved;
-    }
-    if (code == KeyCode::UP) {
-        text_area_goto_line(&n, line_of(&n, cur) - 1);
-        text_area_reveal_cursor(&n);
-        return EditResult::Moved;
-    }
-    if (code == KeyCode::DOWN) {
-        text_area_goto_line(&n, line_of(&n, cur) + 1);
-        text_area_reveal_cursor(&n);
-        return EditResult::Moved;
-    }
-    if (code == KeyCode::PAGE_UP) {
-        text_area_goto_line(&n, line_of(&n, cur) - visible_lines(&n));
-        text_area_reveal_cursor(&n);
-        return EditResult::Moved;
-    }
-    if (code == KeyCode::PAGE_DOWN) {
-        text_area_goto_line(&n, line_of(&n, cur) + visible_lines(&n));
-        text_area_reveal_cursor(&n);
-        return EditResult::Moved;
-    }
-    if (code == KeyCode::HOME) {
-        n.cursor = (u16)line_start(&n, line_of(&n, cur));
-        return EditResult::Moved;
-    }
-    if (code == KeyCode::END) {
-        i32 start = line_start(&n, line_of(&n, cur));
-        n.cursor = (u16)(start + line_len_at(&n, start));
-        return EditResult::Moved;
-    }
-    return EditResult::Unhandled;
-}
-
-/**
- * Appends a string to a TextArea, dropping its oldest lines if capacity is exceeded.
- * @param id DOM Node ID of TextArea.
- * @param s Text to append.
- */
-export void append_text(NodeId id, str s) {
-    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
-    if (n.kind != NodeKind::TEXT_AREA) { return; }
-    Blob buf = n.text;
-    i32 cap = n.cap;
-    i32 add = s.length;
-    i32 len = n.len;
-    if (len + add + 1 > cap) {
-        // Drop whole lines from the front until it fits (or everything).
-        i32 need = len + add + 1 - cap;
-        i32 drop = 0;
-        while (drop < len) {
-            if (drop >= need) {
-                if (buf.at(drop - 1) == 10) { break; }
-            }
-            drop++;
-        }
-        i32 i = 0;
-        while (drop + i < len) {
-            buf.put(i, buf.at(drop + i));
-            i++;
-        }
-        len = len - drop;
-        if (len < 0) { len = 0; }
-    }
-    i32 i = 0;
-    while (i < add) {
-        if (len + 1 >= cap) { break; }
-        buf.put(len, byte_of(s, i));
-        len++;
-        i++;
-    }
-    buf.put(len, (char)0);
-    n.len = (u16)len;
-    n.cursor = (u16)len;
-    text_area_reveal_cursor(&n);
-    dom.damage_row(&n);
-    dom.touch();
-}
-
-/**
- * Appends bytes to a TextArea, filtering non-printable ASCII.
- * @param id DOM Node ID of TextArea.
- * @param bytes Source bytes.
- */
-export void append_bytes(NodeId id, str bytes) {
-    Text<64> tmp = Text<64> {};
-    tmp.clear();
-    i32 i = 0;
-    while (i < bytes.length) {
-        i32 c = byte_of(bytes, i);
-        bool keep = c == '\n' || ascii.is_printable(c);
-        if (keep) {
-            if (!tmp.push((u8)c)) {
-                append_text(id, tmp.as_str());
-                tmp.clear();
-                tmp.push((u8)c);
-            }
-        }
-        i++;
-    }
-    if (!tmp.is_empty()) { append_text(id, tmp.as_str()); }
-}
-
-/**
- * Empties all text content and resets cursor and scroll position in a TextArea.
- * @param id DOM Node ID of TextArea.
- */
-export void clear_text_area(NodeId id) {
-    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
-    if (!n.text.is_live()) { return; }
-    Blob buf = n.text;
-    buf.put(0, (char)0);
-    n.len = 0;
-    n.cursor = 0;
-    n.scroll = 0;
-    n.sel = None;
-    dom.damage_row(&n);
-    dom.touch();
-}
-
-/**
- * Scrolls a TextArea or List node by a relative number of lines.
- * @param id DOM Node ID.
- * @param lines Line delta (negative = scroll up, positive = scroll down).
- */
-export void scroll_by(NodeId id, i32 lines) {
-    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
-    if (n.kind != NodeKind::TEXT_AREA) { if (n.kind != NodeKind::LIST) { return; } }
-    i32 total = line_of(&n, n.len) + 1;
-    i32 rows = visible_lines(&n);
-    i32 max_scroll = total - rows;
-    if (max_scroll < 0) { max_scroll = 0; }
-    i32 scroll = n.scroll + lines;
-    if (scroll < 0) { scroll = 0; }
-    if (scroll > max_scroll) { scroll = max_scroll; }
-    if (scroll != n.scroll) {
-        n.scroll = (u16)scroll;
-        dom.damage_row(&n);
-    }
-}
-
-/**
- * Handles mouse wheel scroll events over a node.
- * @param id DOM Node ID.
- * @param steps Scroll step count (positive = wheel forward/up).
- */
-export void dispatch_wheel(NodeId id, i32 steps) {
-    if (steps == 0) { return; }
-    scroll_by(id, -steps * 3);
-}
-
 // --- List ---
 // Items are newline-separated in the node's buffer; `sel` is the selected
 // row. A click selects a row (on_change); clicking the selected row again
@@ -662,7 +249,7 @@ export Result<i32, UiError> list_count(NodeId id) {
     borrow NodeRow n = dom.require_row(id)?;
     if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
     if (n.len == 0) { return Ok(0); }
-    return Ok(line_of(&n, n.len) + 1);
+    return Ok(dom_text_edit.line_of(&n, n.len) + 1);
 }
 
 /**
@@ -672,13 +259,13 @@ export Result<i32, UiError> list_count(NodeId id) {
  */
 export void list_select(NodeId id, i32 index) {
     borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
-    i32 count = line_of(&n, n.len) + 1;
+    i32 count = dom_text_edit.line_of(&n, n.len) + 1;
     if (n.len == 0) { count = 0; }
     if (index < 0 || index >= count) { n.sel = None; }
     else {
         n.sel = Some(index);
         // keep it in view
-        i32 rows = visible_lines(&n);
+        i32 rows = dom_text_edit.visible_lines(&n);
         i32 scroll = n.scroll;
         if (index < scroll) { scroll = index; }
         if (index >= scroll + rows) { scroll = index - rows + 1; }
@@ -705,7 +292,7 @@ export Option<i32> list_row_at(NodeId id, i32 px, i32 py) {
     i32 row = rel / lh + n.scroll;
     // A popup menu lays its items out like a List (see open_menu).
     if (n.kind != NodeKind::LIST && n.kind != NodeKind::MENU) { return None; }
-    i32 count = line_of(&n, n.len) + 1;
+    i32 count = dom_text_edit.line_of(&n, n.len) + 1;
     if (n.len == 0) { count = 0; }
     if (row >= count) { return None; }
     return Some(row);
@@ -739,7 +326,7 @@ export void list_click(NodeId id, i32 px, i32 py) {
 export EditResult list_handle(borrow NodeRow n, i32 type, i32 code) {
     if (type != KeyEventType::DOWN) { return EditResult::Unhandled; }
     NodeId id = n.id;
-    i32 count = line_of(&n, n.len) + 1;
+    i32 count = dom_text_edit.line_of(&n, n.len) + 1;
     if (n.len == 0) { count = 0; }
     if (count == 0) { return EditResult::Unhandled; }
     if (code == KeyCode::UP) {
@@ -1029,7 +616,7 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
     NodeId id = n.id;
     i32 kind = n.kind;
     if (kind == NodeKind::TEXT_INPUT) {
-        EditResult r = input_handle(&n, type, code);
+        EditResult r = dom_text_edit.input_handle(&n, type, code);
         case r of {
             EditResult::Changed -> ({
                 dom.damage_row(&n);
@@ -1045,7 +632,7 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
         return;
     }
     if (kind == NodeKind::TEXT_AREA) {
-        EditResult r = text_area_handle(&n, type, code, mods);
+        EditResult r = dom_text_edit.text_area_handle(&n, type, code, mods);
         case r of {
             EditResult::Changed -> ({
                 dom.damage_row(&n);
@@ -1073,32 +660,6 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
             if (code == KeyCode::SPACE) { dom.dispatch_click(id); return; }
         }
     }
-}
-
-/**
- * Sets text content of a TextInput or TextArea node, updating length, cursor and redrawing.
- * @param id DOM Node ID of the node.
- * @param s Replacement string.
- */
-export void set_input_text(NodeId id, str s) {
-    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
-    if (n.kind == NodeKind::TEXT_AREA) {
-        clear_text_area(id);
-        append_text(id, s);
-        return;
-    }
-    if (n.kind != NodeKind::TEXT_INPUT) { return; }
-    Blob buf = n.text;
-    i32 cap = n.cap;
-    i32 i = 0;
-    for (; i < s.length && i + 1 < cap; i++) {
-        buf.put(i, byte_of(s, i));
-    }
-    buf.put(i, (char)0);
-    n.len = (u16)i;
-    n.cursor = (u16)i;
-    dom.damage_row(&n);
-    dom.touch();
 }
 
 // --- timers --------------------------------------------------------------------------------------

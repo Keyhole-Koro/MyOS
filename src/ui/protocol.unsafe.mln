@@ -14,6 +14,7 @@ import { Result } from "@std/core/result.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import dom from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
+import dom_text_edit from "dom/dom_text_edit.mln";
 import irq from "@kernel/arch/irq.mln";
 import protocol_elements from "protocol_elements.mln";
 import { NodeRow } from "dom/dom_model.mln";
@@ -130,7 +131,7 @@ void set_checked(NodeId id, i32 on) { dom.set_checked(id, on); }
  * @param id UI node ID.
  * @param s Input text.
  */
-void input_set(NodeId id, char *s) { dom_widgets.set_input_text(id, str.from_c(s)); }
+void input_set(NodeId id, char *s) { dom_text_edit.set_input_text(id, str.from_c(s)); }
 
 /**
  * Appends text to a multi-line text area with IRQ protection.
@@ -144,7 +145,7 @@ void input_set(NodeId id, char *s) { dom_widgets.set_input_text(id, str.from_c(s
 void area_append(NodeId id, char *s) {
     i32 was = irq.save_disable();
     defer irq.restore(was);
-    dom_widgets.append_text(id, str.from_c(s));
+    dom_text_edit.append_text(id, str.from_c(s));
 }
 
 /**
@@ -152,7 +153,7 @@ void area_append(NodeId id, char *s) {
  *
  * @param id UI node ID.
  */
-void area_clear(NodeId id) { dom_widgets.clear_text_area(id); }
+void area_clear(NodeId id) { dom_text_edit.clear_text_area(id); }
 
 /**
  * Replaces the item list of a list widget with newline-separated strings.

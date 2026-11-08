@@ -26,7 +26,7 @@ import str from "@std/text/str.mln";
 import { Text } from "@std/text/text.mln";
 import consoles from "consoles.mln";
 import { Console, ConsoleRow } from "consoles.mln";
-import dom_widgets from "@os/ui/dom/dom_widgets.mln";
+import dom_text_edit from "@os/ui/dom/dom_text_edit.mln";
 import dom from "@os/ui/dom/dom.mln";
 import { NodeId } from "@contracts/ui/widget.contract.mln";
 
@@ -205,7 +205,7 @@ i32 on_write(Pid pid, UserAddress buf, i32 count) {
         }
         return count;
     }
-    dom_widgets.append_bytes(NodeId(out), user_memory.view(buf, count));
+    dom_text_edit.append_bytes(NodeId(out), user_memory.view(buf, count));
     return count;
 }
 
