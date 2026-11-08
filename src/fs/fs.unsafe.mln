@@ -1021,6 +1021,8 @@ export Result<i32, FsError> write(i32 fd, i32 buf, i32 size) {
  * @return Ok(_) on success, or Err(FsError).
  */
 export Result<_, FsError> remove(str path) {
+    // Before init there is no block buffer for the path lookup to read into.
+    if (!g_enabled) { return Err(FsError::Disabled); }
     i32 idx = case find_entry_by_path(path) of {
         Some(v) -> v;
         None -> ({ return Err(FsError::NotFound); });
@@ -1120,6 +1122,8 @@ export void list() {
  * @return Ok(Some(index)) when found, Ok(None) at end, or Err(FsError).
  */
 export Result<Option<i32>, FsError> dir_next_at(str path, i32 start, borrow Text<16> out) {
+    // Before init there is no block buffer for the path lookup to read into.
+    if (!g_enabled) { return Err(FsError::Disabled); }
     i32 code = dir_code_of(path)?;
     return dir_next_in(code, start, &out);
 }

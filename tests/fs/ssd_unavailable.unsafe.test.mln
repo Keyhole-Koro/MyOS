@@ -6,6 +6,8 @@ import fs_config from "@os/fs/fs_config.mln";
 import ssd from "@os/fs/ssd.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
 import { Result } from "@std/core/result.mln";
+import { Option } from "@std/core/option.mln";
+import { Text } from "@std/text/text.mln";
 import { SsdError } from "@os/fs/ssd.mln";
 
 i32 g_failed_reads = 0;
@@ -40,4 +42,41 @@ void fs_disabled_when_ssd_init_read_fails() {
     assert.assert_true(mock.calls(ssd.read_block) == 1, "fs init reads superblock once");
     assert.assert_true(mock.called_with(ssd.read_block, fs_config.SB_BLOCK, mock.any()),
                        "fs init reads the superblock");
+}
+
+Result<_, SsdError> refuse_read(i32 block, i32 buffer) {
+    return Err(SsdError::DeviceError);
+}
+
+i32 is_disabled(FsError cause) {
+    return case cause of { FsError::Disabled -> 1; _ -> 0; };
+}
+
+// Before fs.init there is no block buffer: a call that looked its path up
+// would have the SSD write a whole block of the entry table to address 0.
+// Every call that takes a path must report the filesystem disabled without
+// reading a block (the fake read keeps a regression from writing anywhere).
+/*@Test "path calls before fs.init read no block" { step: 1000000; }*/
+void path_calls_before_init_read_no_block() {
+    heap.init();
+    mock.spy(ssd.read_block).when(mock.any(), mock.any()).call(refuse_read);
+
+    Text<16> name = Text<16> {};
+    Result<Option<i32>, FsError> listed = fs.dir_next_at("apps", 0, &name);
+    i32 list_disabled = case listed of { Ok(_) -> 0; Err(cause) -> is_disabled(cause); };
+    Result<_, FsError> removed = fs.remove("readme.txt");
+    i32 remove_disabled = case removed of { Ok(_) -> 0; Err(cause) -> is_disabled(cause); };
+    Result<i32, FsError> opened = fs.open("readme.txt");
+    i32 open_disabled = case opened of { Ok(_) -> 0; Err(cause) -> is_disabled(cause); };
+    Result<i32, FsError> created = fs.create("docs/new.txt");
+    i32 create_disabled = case created of { Ok(_) -> 0; Err(cause) -> is_disabled(cause); };
+    Result<i32, FsError> made = fs.mkdir("docs/sub");
+    i32 mkdir_disabled = case made of { Ok(_) -> 0; Err(cause) -> is_disabled(cause); };
+
+    assert.assert_true(list_disabled == 1, "dir_next_at reports Disabled");
+    assert.assert_true(remove_disabled == 1, "remove reports Disabled");
+    assert.assert_true(open_disabled == 1, "open reports Disabled");
+    assert.assert_true(create_disabled == 1, "create reports Disabled");
+    assert.assert_true(mkdir_disabled == 1, "mkdir reports Disabled");
+    assert.assert_true(mock.never(ssd.read_block), "no block is read before fs.init");
 }
