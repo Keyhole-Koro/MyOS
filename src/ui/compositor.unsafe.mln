@@ -80,7 +80,7 @@ fn(i32 index) -> void g_desktop_menu_handler = no_desktop_menu;
 
 /**
  * Registers the desktop wallpaper context menu items and click handler.
- * @param items Null-separated, double-null-terminated menu item string.
+ * @param items Menu items separated by newlines, as open_menu takes them; a C string.
  * @param handler Callback function pointer invoked with selected menu index.
  */
 export void set_desktop_menu(char *items, fn(i32 index) -> void handler) {
