@@ -8,6 +8,7 @@ import dom from "dom/dom.mln";
 import dom_hit_test from "dom/dom_hit_test.mln";
 import { NodeKind } from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
+import dom_list from "dom/dom_list.mln";
 import dom_text_edit from "dom/dom_text_edit.mln";
 import dom_window_chrome from "dom/dom_window_chrome.mln";
 import dom_render from "dom/dom_render.mln";
@@ -187,7 +188,7 @@ void on_press(i32 ex, i32 ey) {
         NodeKind::TEXT_AREA  -> ({ dom_widgets.set_focus(hit); return; });
         NodeKind::LIST       -> ({
             dom_widgets.set_focus(hit);
-            dom_widgets.list_click(hit, ex, ey);
+            dom_list.list_click(hit, ex, ey);
             return;
         });
         _ -> 0;

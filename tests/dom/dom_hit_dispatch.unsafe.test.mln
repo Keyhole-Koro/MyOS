@@ -5,6 +5,7 @@ import desktop from "@os/ui/desktop.mln";
 import dom_elements from "@os/ui/dom/dom_elements.mln";
 import dom_widgets from "@os/ui/dom/dom_widgets.mln";
 import dom_text_edit from "@os/ui/dom/dom_text_edit.mln";
+import dom_list from "@os/ui/dom/dom_list.mln";
 import dom_window_chrome from "@os/ui/dom/dom_window_chrome.mln";
 import dom_render from "@os/ui/dom/dom_render.mln";
 import graphics from "@os/ui/graphics.mln";
@@ -246,22 +247,22 @@ void dom_hit_dispatch() {
     // the end is encoded as a negative integer.
     NodeId list = require_node(dom_elements.create_list("rows", 10, 170, 200, 80, 64));
     require_append(dom.append_child(win2, list));
-    dom_widgets.list_set_items(list, "first\nsecond");
+    dom_list.list_set_items(list, "first\nsecond");
     borrow NodeRow list_row = dom.row_of(list);
     assert.assert_true(list_row.sel.is_none(), "a new list has no selection");
 
-    dom_widgets.list_select(list, 1);
+    dom_list.list_select(list, 1);
     i32 selected_row = case list_row.sel of { Some(row) -> row; None -> 99; };
     assert.assert_true(selected_row == 1, "a selected row is Some(1)");
 
-    dom_widgets.list_select(list, 9);
+    dom_list.list_select(list, 9);
     assert.assert_true(list_row.sel.is_none(), "a row past the end selects nothing");
 
-    Result<i32, UiError> counted = dom_widgets.list_count(list);
+    Result<i32, UiError> counted = dom_list.list_count(list);
     i32 rows = case counted of { Ok(value) -> value; Err(_) -> 0; };
     assert.assert_true(rows == 2, "a list counts its rows");
 
-    Result<i32, UiError> missing_list = dom_widgets.list_count(NodeId(99999));
+    Result<i32, UiError> missing_list = dom_list.list_count(NodeId(99999));
     i32 missing_node = case missing_list of {
         Ok(_) -> 0;
         Err(cause) -> case cause of { UiError::NodeNotFound(value) -> value == NodeId(99999); _ -> 0; };

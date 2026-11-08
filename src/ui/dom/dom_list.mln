@@ -1,0 +1,150 @@
+package dom_list;
+
+import dom from "dom.mln";
+import { NodeRow } from "dom_model.mln";
+import { Blob } from "@std/memory/blob.mln";
+import ui_metrics from "@os/ui/ui_metrics.mln";
+import dom_text_edit from "dom_text_edit.mln";
+import { EditResult } from "dom_text_edit.mln";
+import { NodeKind } from "dom.mln";
+import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
+import str from "@std/text/str.mln";
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
+import { KeyEventType, KeyCode } from "@contracts/input/keyboard.contract.mln";
+
+// The List control. Items are newline-separated in the node's buffer; `sel`
+// is the selected row. A click selects a row (on_change); clicking the
+// selected row again or pressing Enter activates it (on_click). Rows are
+// counted and scrolled with dom_text_edit's line helpers.
+
+/**
+ * Populates a List node with newline-separated item strings.
+ * @param id DOM Node ID of List.
+ * @param items Newline-separated list of items.
+ */
+export void list_set_items(NodeId id, str items) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    if (n.kind != NodeKind::LIST) { return; }
+    Blob buf = n.text;
+    i32 cap = n.cap;
+    i32 i = 0;
+    for (; i < items.length && i + 1 < cap; i++) {
+        buf.put(i, items.byte(i));
+    }
+    buf.put(i, (char)0);
+    n.len = (u16)i;
+    n.scroll = 0;
+    dom.damage_row(&n);
+    dom.touch();
+}
+
+/**
+ * Returns total row count of a List node.
+ * @param id DOM Node ID of List.
+ * @return Ok(row count), or Err when the node is missing or is not a List.
+ */
+export Result<i32, UiError> list_count(NodeId id) {
+    borrow NodeRow n = dom.require_row(id)?;
+    if (n.kind != NodeKind::LIST) { return Err(UiError::WrongNodeKind(id)); }
+    if (n.len == 0) { return Ok(0); }
+    return Ok(dom_text_edit.line_of(&n, n.len) + 1);
+}
+
+/**
+ * Sets the active selected row in a List node, scrolling it into view.
+ * @param id DOM Node ID of List.
+ * @param index 0-based item index to select.
+ */
+export void list_select(NodeId id, i32 index) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    i32 count = dom_text_edit.line_of(&n, n.len) + 1;
+    if (n.len == 0) { count = 0; }
+    if (index < 0 || index >= count) { n.sel = None; }
+    else {
+        n.sel = Some(index);
+        // keep it in view
+        i32 rows = dom_text_edit.visible_lines(&n);
+        i32 scroll = n.scroll;
+        if (index < scroll) { scroll = index; }
+        if (index >= scroll + rows) { scroll = index - rows + 1; }
+        n.scroll = (u16)scroll;
+    }
+    dom.damage_row(&n);
+    dom.touch();
+}
+
+/**
+ * Determines which row of a List is located at display point (px, py).
+ * @param id DOM Node ID of List.
+ * @param px Target X coordinate.
+ * @param py Target Y coordinate.
+ * @return Option containing 0-based row index, or None.
+ */
+export Option<i32> list_row_at(NodeId id, i32 px, i32 py) {
+    borrow NodeRow n = dom.find_row(id)?;
+    i32 s = dom.ui_scale();
+    i32 pad = 8 * s;
+    i32 lh = ui_metrics.text_height(0, s);
+    i32 rel = py - n.y - pad;
+    if (rel < 0) { return None; }
+    i32 row = rel / lh + n.scroll;
+    // A popup menu lays its items out like a List (see open_menu).
+    if (n.kind != NodeKind::LIST && n.kind != NodeKind::MENU) { return None; }
+    i32 count = dom_text_edit.line_of(&n, n.len) + 1;
+    if (n.len == 0) { count = 0; }
+    if (row >= count) { return None; }
+    return Some(row);
+}
+
+/**
+ * Handles mouse click on a List control: selects the row or triggers activation if re-clicked.
+ * @param id DOM Node ID of List.
+ * @param px Click X coordinate.
+ * @param py Click Y coordinate.
+ */
+export void list_click(NodeId id, i32 px, i32 py) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    i32 row = case list_row_at(id, px, py) of { Some(v) -> v; None -> ({ return; }); };
+    bool again = case n.sel of { Some(was) -> was == row; None -> false; };
+    list_select(id, row);
+    if (again) {
+        dom.fire_activate(&n);
+    } else {
+        dom.fire_change(&n);
+    }
+}
+
+/**
+ * Handles keyboard navigation (arrows/Home/End/Enter) on a focused List control.
+ * @param n List node row.
+ * @param type Keyboard event type.
+ * @param code Key code.
+ * @return EditResult enum indicating outcome (Moved or Unhandled).
+ */
+export EditResult list_handle(borrow NodeRow n, i32 type, i32 code) {
+    if (type != KeyEventType::DOWN) { return EditResult::Unhandled; }
+    NodeId id = n.id;
+    i32 count = dom_text_edit.line_of(&n, n.len) + 1;
+    if (n.len == 0) { count = 0; }
+    if (count == 0) { return EditResult::Unhandled; }
+    if (code == KeyCode::UP) {
+        i32 above = case n.sel of { Some(row) -> row - 1; None -> 0; };
+        list_select(id, above > 0 ? above : 0);
+        dom.fire_change(&n);
+        return EditResult::Moved;
+    }
+    if (code == KeyCode::DOWN) {
+        i32 below = case n.sel of { Some(row) -> row + 1; None -> 0; };
+        if (below < count) { list_select(id, below); }
+        dom.fire_change(&n);
+        return EditResult::Moved;
+    }
+    if (code == KeyCode::HOME) { list_select(id, 0); dom.fire_change(&n); return EditResult::Moved; }
+    if (code == KeyCode::END) { list_select(id, count - 1); dom.fire_change(&n); return EditResult::Moved; }
+    if (code == KeyCode::ENTER) {
+        if (n.sel.is_some()) { dom.fire_activate(&n); }
+        return EditResult::Moved;
+    }
+    return EditResult::Unhandled;
+}
