@@ -222,10 +222,7 @@ Option<i32> alloc_block() {
     ssd.read_block(fs_config.BITMAP_BLOCK, g_buf).ok()?;
     char *bits = (char *)g_buf;
 
-    i32 b = case bitset.find_clear(bits, fs_config.BLOCK_COUNT, fs_config.DATA_START) of {
-        Some(v) -> v;
-        None -> ({ return None; });
-    };
+    i32 b = bitset.find_clear(bits, fs_config.BLOCK_COUNT, fs_config.DATA_START)?;
 
     bitset.set(bits, b);
     ssd.write_block(fs_config.BITMAP_BLOCK, g_buf).ok()?;

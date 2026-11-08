@@ -3,7 +3,6 @@ package app;
 import debug from "@kernel/debug/debug.mln";
 import str from "@std/text/str.mln";
 import ascii from "@std/text/ascii.mln";
-import { ParseIntError } from "@std/text/str.mln";
 import { Text } from "@std/text/text.mln";
 import dom from "@os/ui/dom/dom.mln";
 import { NodeRow } from "@os/ui/dom/dom_model.mln";
@@ -539,15 +538,8 @@ Option<i32> named_key(str word) {
     if (word_is(word, "pagedown")) { return Some(KeyCode::PAGE_DOWN); }
     if (word.length >= 2) {
         if (ascii.to_lower(word.byte(0)) == 'f') {
-            str digits = case word.slice(1, word.length) of {
-                Some(value) -> value;
-                None -> ({ return None; });
-            };
-            Result<i32, ParseIntError> parsed = str.atoi(digits);
-            i32 f = case parsed of {
-                Ok(value) -> value;
-                Err(_) -> ({ return None; });
-            };
+            str digits = word.slice(1, word.length)?;
+            i32 f = str.atoi(digits).ok()?;
             if (f >= 1) { if (f <= 12) { return Some(KeyCode::F1 + f - 1); } }
         }
     }
