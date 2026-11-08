@@ -282,3 +282,45 @@ void dom_hit_dispatch() {
     // headless emulator as well as the tree-only assertions.
     dom_render.render_all();
 }
+
+i32 pixel_at(i32 x, i32 y) {
+    return case graphics.get_pixel(x, y) of {
+        Some(value) -> value;
+        None -> ({ assert.assert_true(false, "pixel is on the display"); 0; });
+    };
+}
+
+// Repainting an area whose top edge lies just below a window's title bar,
+// within the reach of the bar's rounded corners, must leave the bar as it
+// was. The bar's clip and that area share no row, and the bar used to be
+// filled flat over its buttons, title and gradient.
+/*@Test "a repaint just below a title bar leaves the bar alone" {
+    step: 20000000;
+}*/
+void title_bar_survives_a_repaint_below_it() {
+    heap.init();
+    allocator.configure(heap.alloc, heap.free);
+    desktop.init();
+
+    NodeId win = require_node(dom_elements.create_window("W", 100, 100, 400, 300));
+    require_append(dom.append_child(dom.desktop_id(), win));
+    // Two logical pixels below the bar, closer than WINDOW_RADIUS.
+    NodeId below = require_node(dom_elements.create_button("B", 10, 2, 100, 30));
+    require_append(dom.append_child(win, below));
+    dom_widgets.focus_window(win);
+    dom_render.render_all();
+
+    borrow NodeRow w = dom.row_of(win);
+    i32 s = dom.ui_scale();
+    i32 close_x = dom_window_chrome.button_cx(&w, 1);
+    i32 close_y = dom_window_chrome.button_cy(&w);
+    i32 bar_x = w.x + w.w - 40 * s;   // right of the title
+    i32 bar_y = w.y + theme.TITLEBAR_H * s - 4 * s;
+    i32 close_before = pixel_at(close_x, close_y);
+    i32 bar_before = pixel_at(bar_x, bar_y);
+
+    dom.damage_node(below);
+    dom_render.render_scene();
+    assert.assert_true(pixel_at(close_x, close_y) == close_before, "the close button is still drawn");
+    assert.assert_true(pixel_at(bar_x, bar_y) == bar_before, "the bar keeps its gradient");
+}

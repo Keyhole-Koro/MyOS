@@ -519,7 +519,8 @@ radius / on_tick / interval / next_due` を追加）。`state` に `STATE_CHECKE
   `render_scene` は矩形ごとに `set_clip` して `paint_desktop()`（壁紙 → 窓 → タスクバー）。
 - Window の damage 範囲は影（`theme.shadow_size/offset`）を含む。
 - Window / Panel は子を自分の矩形にクリップし、`graphics.push_clip/pop_clip` が
-  DMA2D のシザーへ同期される。
+  DMA2D のシザーへ同期される。クリップが空なら何も描かない（シザーは X1 <= X0 で
+  無効になるので、空のクリップはデバイスに渡せない）。
 
 ### snapshot / dump
 

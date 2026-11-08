@@ -411,6 +411,9 @@ void dma_run(i32 cmd) {
 
 /**
  * Tests whether a rectangle is completely outside the current clipping bounds.
+ * An empty clip shows nothing, so every rectangle is outside it. The shape
+ * commands rely on this: they hand the device the unclipped rectangle, and
+ * the device cannot be given an empty scissor (X1 <= X0 switches it off).
  * @param x Left coordinate.
  * @param y Top coordinate.
  * @param w Width in pixels.
@@ -418,6 +421,7 @@ void dma_run(i32 cmd) {
  * @return True if completely outside clip, false if it touches or intersects.
  */
 bool outside_clip(i32 x, i32 y, i32 w, i32 h) {
+    if (clip_is_empty()) { return true; }
     if (x + w <= g_clip.x0) { return true; }
     if (y + h <= g_clip.y0) { return true; }
     if (x >= g_clip.x1) { return true; }

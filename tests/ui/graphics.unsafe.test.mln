@@ -164,6 +164,58 @@ void clipping() {
     assert.assert_false(graphics.clip_is_empty(), "full clip after popping everything");
 }
 
+// Every primitive that can draw a shape, under the current clip.
+void draw_everything(i32 x, i32 y, i32 w, i32 h, i32 color) {
+    graphics.fill_rect(x, y, w, h, color);
+    graphics.fill_round_rect(x, y, w, h, 10, color);
+    graphics.draw_round_rect(x, y, w, h, 10, 2, color);
+    graphics.fill_gradient_v(x, y, w, h, color, color);
+    graphics.fill_gradient_h(x, y, w, h, color, color);
+    graphics.draw_shadow(x, y, w, h, 10, 12, 0, 255);
+    graphics.fill_disc(x + w / 2, y + h / 2, h / 2, color);
+}
+
+/*@Test "an empty clip draws nothing" {
+    step: 5000000;
+}*/
+void empty_clip() {
+    graphics.init();
+    i32 white = graphics.rgb(255, 255, 255);
+    i32 red = graphics.rgb(255, 0, 0);
+    graphics.fill_rect(0, 0, 400, 300, white);
+
+    // A window's title bar repainted for a damaged area just below it: the
+    // two share columns but no row. The title fill is taller than the bar
+    // (the bar's clip squares off its bottom corners), so it reaches into
+    // the damaged rows, and must still draw nothing.
+    graphics.push_clip(100, 100, 100, 40);
+    graphics.push_clip(100, 150, 100, 50);
+    assert.assert_true(graphics.clip_is_empty(), "no row is in both clips");
+    draw_everything(100, 100, 100, 60, red);
+    graphics.pop_clip();
+    graphics.pop_clip();
+    assert.assert_true(required_pixel(150, 120) == white, "the title bar is untouched");
+    assert.assert_true(required_pixel(150, 155) == white, "the damaged rows are untouched");
+    assert.assert_true(required_pixel(95, 130) == white, "no shadow either");
+
+    // The same with columns: the device reads a scissor whose X1 <= X0 as
+    // no scissor at all, so only the guest can keep this one from drawing.
+    graphics.push_clip(100, 100, 100, 40);
+    graphics.push_clip(250, 100, 50, 40);
+    assert.assert_true(graphics.clip_is_empty(), "no column is in both clips");
+    draw_everything(100, 100, 200, 40, red);
+    graphics.pop_clip();
+    graphics.pop_clip();
+    assert.assert_true(required_pixel(150, 120) == white, "the left clip is untouched");
+    assert.assert_true(required_pixel(275, 120) == white, "the right clip is untouched");
+    assert.assert_true(required_pixel(225, 120) == white, "between them is untouched");
+
+    // Drawing works again once the clip has area.
+    assert.assert_false(graphics.clip_is_empty(), "full clip after popping everything");
+    graphics.fill_round_rect(100, 100, 100, 60, 10, red);
+    assert.assert_true(required_pixel(150, 120) == red, "a later shape is drawn");
+}
+
 /*@Test "text metrics and glyph masks" {
     step: 40000000;
 }*/
