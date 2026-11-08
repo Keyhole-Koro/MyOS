@@ -190,7 +190,9 @@ struct OwnerNodes {
 };
 OwnerNodes g_owner_nodes[32];
 
-Option<i32> owner_slot(Pid owner, i32 make) {
+// The owner's slot in g_owner_nodes, or None if it has none. With `make`, an
+// owner without one takes a free slot (None when the table is full).
+Option<i32> owner_slot(Pid owner, bool make) {
     Option<i32> free = None;
     i32 i = 0;
     while (i < 32) {
@@ -200,7 +202,7 @@ Option<i32> owner_slot(Pid owner, i32 make) {
         };
         i++;
     }
-    if (make == 0) { return None; }
+    if (!make) { return None; }
     i32 slot = free?;
     g_owner_nodes[slot] = OwnerNodes { owner: Some(owner), count: 0 };
     return Some(slot);
@@ -392,7 +394,7 @@ export Result<NodeId, UiError> create_node(i32 kind, str name) {
     bool has_owner_slot = false;
     case g_current_owner of {
         Some(owner) -> ({
-            oslot = case owner_slot(owner, 1) of {
+            oslot = case owner_slot(owner, true) of {
                 Some(v) -> ({ has_owner_slot = true; v; });
                 None -> ({ return Err(UiError::OwnerTableFull(owner)); });
             };
@@ -1302,7 +1304,7 @@ export void free_subtree(NodeId id) {
     if (holds(g_menu_id, id)) { g_menu_id = None; }
     case n.owner of {
         Some(owner) -> ({
-            case owner_slot(owner, 0) of {
+            case owner_slot(owner, false) of {
                 Some(oslot) -> ({
                     g_owner_nodes[oslot].count = g_owner_nodes[oslot].count - 1;
                     if (g_owner_nodes[oslot].count <= 0) { g_owner_nodes[oslot].owner = None; }
