@@ -2,7 +2,6 @@ import debug from "@kernel/debug/debug.mln";
 import heap from "@kernel/mm/heap.mln";
 import dom_widgets from "@os/ui/dom/dom_widgets.mln";
 import dom_render from "@os/ui/dom/dom_render.mln";
-import dom from "@os/ui/dom/dom.mln";
 import desktop from "@os/ui/desktop.mln";
 import dom_automation from "@os/ui/dom/dom_automation.mln";
 import graphics from "@os/ui/graphics.mln";
@@ -138,8 +137,8 @@ void kernel_init() {
 
     // Boot counts as an app still starting until the desktop's apps have
     // been launched below (the automation snapshot reports it, so a test
-    // harness waits for a settled desktop; see dom.note_app_starting).
-    dom.note_app_starting(1);
+    // harness waits for a settled desktop; see dom_automation.note_app_starting).
+    dom_automation.note_app_starting(1);
 
     debug.println("kernel: spawning shell task");
     // spawn_kernel_thread returns a Result; bind it so the callee has somewhere to
@@ -161,7 +160,7 @@ void kernel_init() {
     app.launch_named("Counter");
     app.launch_named("Notes");
     app.launch_named("Terminal");
-    dom.note_app_starting(-1);
+    dom_automation.note_app_starting(-1);
 
     debug.println("ui: click the button (window must have focus)");
     compositor.run();

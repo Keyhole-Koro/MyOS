@@ -113,6 +113,17 @@ export void dump() {
 
 bool g_automation_first = true;
 
+// Apps the shell has started whose window has not arrived yet. The snapshot
+// reports it ("starting") so a test harness can tell a desktop that is
+// still booting from a settled one; the shell and boot keep it up to date.
+i32 g_apps_starting = 0;
+
+/**
+ * Adjusts the count of app processes still waiting to create their first window.
+ * @param delta Amount to add or subtract; the stored count is clamped at zero.
+ */
+export void note_app_starting(i32 delta) { g_apps_starting = g_apps_starting + delta; if (g_apps_starting < 0) { g_apps_starting = 0; } }
+
 /**
  * Transmits a raw string to the automation MMIO transport.
  * @param s Text to send.
@@ -191,7 +202,7 @@ void automation_node(NodeId id) {
 export void write_automation_snapshot() {
     g_automation_first = true;
     automation_raw("{\"revision\":"); automation_i32(dom.revision());
-    automation_raw(",\"starting\":"); automation_i32(dom.apps_starting());
+    automation_raw(",\"starting\":"); automation_i32(g_apps_starting);
     automation_raw(",\"nodes\":[");
     automation_node(dom.root_node_id());
     automation_raw("]}");

@@ -9,6 +9,7 @@ import { NodeRow } from "@os/ui/dom/dom_model.mln";
 import dom_widgets from "@os/ui/dom/dom_widgets.mln";
 import dom_menu from "@os/ui/dom/dom_menu.mln";
 import dom_render from "@os/ui/dom/dom_render.mln";
+import dom_automation from "@os/ui/dom/dom_automation.mln";
 import graphics from "@os/ui/graphics.mln";
 import { SpawnError } from "@contracts/process/spawn.contract.mln";
 import { Pid } from "@contracts/process/control.contract.mln";
@@ -193,7 +194,7 @@ Result<Instance, AppError> mount(i32 a) {
     borrow InstanceRow row = instance.row();
     row.app = a;
     row.win = None;
-    dom.note_app_starting(1);
+    dom_automation.note_app_starting(1);
     return Ok(instance);
 }
 
@@ -224,7 +225,7 @@ export void window_ready(Pid owner, NodeId win) {
     };
     borrow InstanceRow row = instance.row();
     if (!has_window(&row)) {
-        dom.note_app_starting(-1);
+        dom_automation.note_app_starting(-1);
         place_window(win);
     }
     dom.set_owner(win, owner);
@@ -347,7 +348,7 @@ export void process_gone(Pid pid) {
     case instances.instance_by_pid(pid) of {
         Some(instance) -> ({
             borrow InstanceRow row = instance.row();
-            if (!has_window(&row)) { dom.note_app_starting(-1); }
+            if (!has_window(&row)) { dom_automation.note_app_starting(-1); }
             instance.delete();
             dom_widgets.activate_topmost();
         });

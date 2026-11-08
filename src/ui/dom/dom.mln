@@ -141,22 +141,6 @@ Option<NodeId> g_focus_id;      // node with keyboard focus (a TextInput)
 // swept with it by remove_owned(). None while the system itself runs.
 Option<Pid> g_current_owner;
 
-// Apps the shell has started whose window has not arrived yet. Reported in
-// the automation snapshot ("starting") so a test harness can tell a
-// desktop that is still booting from a settled one.
-i32 g_apps_starting = 0;
-/**
- * Adjusts the count of app processes still waiting to create their first window.
- * @param delta Amount to add or subtract; the stored count is clamped at zero.
- */
-export void note_app_starting(i32 delta) { g_apps_starting = g_apps_starting + delta; if (g_apps_starting < 0) { g_apps_starting = 0; } }
-
-/**
- * Returns the number of apps still starting their first window.
- * @return Nonnegative count of app launches awaiting a window.
- */
-export i32 apps_starting() { return g_apps_starting; }
-
 // Pending handler calls.
 export const i32 EVENT_MAX = 64;
 struct PendingEvent {
