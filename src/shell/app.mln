@@ -1,7 +1,6 @@
 package app;
 
 import debug from "@kernel/debug/debug.mln";
-import heap from "@kernel/mm/heap.mln";
 import str from "@std/text/str.mln";
 import ascii from "@std/text/ascii.mln";
 import { ParseIntError } from "@std/text/str.mln";
@@ -10,26 +9,20 @@ import dom from "@os/ui/dom/dom.mln";
 import { NodeRow } from "@os/ui/dom/dom_model.mln";
 import dom_widgets from "@os/ui/dom/dom_widgets.mln";
 import dom_render from "@os/ui/dom/dom_render.mln";
-import compositor from "@os/ui/compositor.mln";
 import graphics from "@os/ui/graphics.mln";
-import annotations from "@std/meta/annotations.mln";
-import { Annotations, AnnotationError } from "@std/meta/annotations.mln";
-import fs from "@os/fs/fs.mln";
-import { FsError } from "@contracts/io/fs.contract.mln";
 import { SpawnError } from "@contracts/process/spawn.contract.mln";
 import { Pid } from "@contracts/process/control.contract.mln";
 import { AppError, KeyClaimError } from "@contracts/myapp/lifecycle.contract.mln";
 import console from "@os/proc/console.mln";
-import mbin from "@std/format/mbin.mln";
 import { Result } from "@std/core/result.mln";
 import { NodeId } from "@contracts/ui/widget.contract.mln";
-import { result_take_ok } from "@std/core/result_take.mln";
 import { Option } from "@std/core/option.mln";
 import { Iterator } from "@std/core/iter.mln";
 import instances from "instances.mln";
 import { Instance, InstanceRow, instance_all_Iter } from "instances.mln";
 import { ShellEventKind } from "events.mln";
 import { KeyModifier, KeyCode } from "@contracts/input/keyboard.contract.mln";
+import shell_install from "install.mln";
 
 // The shell: the registry of installed apps and the instances running on
 // the desktop. This is the OS side of the application framework -- apps
@@ -137,34 +130,13 @@ void register_app(str path, str type, bool single, str name, bool opens) {
 }
 
 str label_of(i32 index) {
-    AppRecord *record = &registry[index];
-    return record->name.as_str();
+    borrow AppRecord record = &registry[index];
+    return record.name.as_str();
 }
 
-// Register the app an image declares, if it does: read its header (MBIN,
-// section directory) for its annotation rows, without loading it.
-void register_image(str path, str image) {
-    if (!mbin.is_image(image)) { return; }
-    Annotations rows = annotations.in_image(image);
-    rows.on("app", "");
-    if (!rows.next()) { return; }
-    str type = case rows.type() of {
-        Ok(value) -> value;
-        Err(_) -> ({ return; });
-    };
-    bool single = case rows.flag(0) of {
-        Ok(value) -> value;
-        Err(_) -> ({ return; });
-    };
-    str label = case rows.text(1) of {
-        Ok(value) -> value;
-        Err(_) -> ({ return; });
-    };
-    bool opens = case rows.flag(2) of {
-        Ok(value) -> value;
-        Err(_) -> ({ return; });
-    };
-    register_app(path, type, single, label, opens);
+// The @app row of an executable in /apps: register the app it declares.
+void install_app(str path, str type, bool single, str name, bool opens) {
+    register_app(path, type, single, name, opens);
     debug.print("app: installed ");
     debug.print(type);
     debug.print(" (");
@@ -173,47 +145,8 @@ void register_image(str path, str image) {
 }
 
 // Every executable in /apps that declares @app is an installed app.
-Text<32> scan_path;
-
 void scan_disk() {
-    Text<16> name = Text<16> {};
-    i32 start = 0;
-    while (1) {
-        Result<Option<i32>, FsError> res = fs.dir_next_at("apps", start, &name);
-        Option<i32> entry = None;
-        if (!result_take_ok<Option<i32>, FsError>(&res, &entry)) { return; }
-        i32 idx = case entry of {
-            Some(n) -> n;
-            None -> ({ break; });
-        };
-        start = idx + 1;
-        Result<i32, FsError> size_result = fs.entry_size(idx);
-        i32 size = 0;
-        if (!result_take_ok<i32, FsError>(&size_result, &size)) { continue; }
-        if (size < 36) { continue; }
-        scan_path.clear();
-        scan_path.append("apps/");
-        scan_path.append(name.as_str());
-        Result<i32, FsError> opened = fs.open(scan_path.as_str());
-        i32 fd = 0;
-        if (result_take_ok<i32, FsError>(&opened, &fd)) {
-            i32 image = case heap.alloc(size) of {
-                Ok(pointer) -> pointer;
-                Err(_) -> 0;
-            };
-            if (image != 0) {
-                Result<i32, FsError> read_result = fs.read(fd, image, size);
-                i32 got = 0;
-                bool read_ok = result_take_ok<i32, FsError>(&read_result, &got);
-                if (read_ok && got == size) {
-                    str bytes = str { data: (char*)image, length: size };
-                    register_image(scan_path.as_str(), bytes);
-                }
-                heap.free(image);
-            }
-            fs.close(fd);
-        }
-    }
+    shell_install.each_app(install_app);
 }
 
 // --- instances -------------------------------------------------------------------------------
@@ -245,13 +178,13 @@ Result<Instance, AppError> mount(i32 a) {
             return Err(AppError::NoFreeSlot);
         });
     };
-    AppRecord *record = &registry[a];
-    Result<Pid, SpawnError> spawned = console.spawn_file(None, record->path.as_str());
+    borrow AppRecord record = &registry[a];
+    Result<Pid, SpawnError> spawned = console.spawn_file(None, record.path.as_str());
     Pid pid = case spawned of {
         Ok(value) -> value;
         Err(_) -> ({
             debug.print("app: cannot start ");
-            debug.println(record->path.as_str());
+            debug.println(record.path.as_str());
             instance.delete();
             return Err(AppError::SpawnFailed);
         });
@@ -704,10 +637,10 @@ export Result<i32, KeyClaimError> claim_key(Pid owner, str spec) {
         if (claim_count >= CLAIMS_MAX) { return Err(KeyClaimError::TableFull); }
         claim_count++;
     }
-    KeyClaim *claim = &claims[i];
-    claim->owner = Some(owner);
-    claim->spec.clear();
-    claim->spec.append(spec);
+    borrow KeyClaim claim = &claims[i];
+    claim.owner = Some(owner);
+    claim.spec.clear();
+    claim.spec.append(spec);
     return Ok(i + 1);
 }
 
@@ -736,9 +669,9 @@ export bool dispatch_key(Option<Pid> active_owner, i32 code, i32 mods) {
     };
     i32 i = 0;
     while (i < claim_count) {
-        KeyClaim *claim = &claims[i];
-        if (claimed_by(*claim, owner)) {
-            if (key_spec_matches(claim->spec.as_str(), code, mods)) {
+        borrow KeyClaim claim = &claims[i];
+        if (claimed_by(claim, owner)) {
+            if (key_spec_matches(claim.spec.as_str(), code, mods)) {
                 borrow InstanceRow row = instance.row();
                 NodeId window = case row.win of {
                     Some(value) -> value;
@@ -763,8 +696,7 @@ export bool dispatch_key(Option<Pid> active_owner, i32 code, i32 mods) {
 export void install() {
     scan_disk();
     dom_render.set_launcher(launch_menu);
-    menu_items();
-    compositor.set_desktop_menu(menu_buf.as_ptr(), on_menu);
+    shell_install.set_desktop_menu(menu_items(), on_menu);
     dom.set_key_filter(dispatch_key);
     case dom_widgets.create_timer(50, reap_exited) of {
         Ok(_) -> _;

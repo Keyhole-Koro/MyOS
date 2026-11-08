@@ -283,6 +283,7 @@ SpawnError filesystem_failure(SpawnFsOperation operation, FsError cause) {
  * @param path Path searched as supplied, under bin/, and under apps/.
  * @return Ok(pid) when the process starts, or Err(SpawnError) with the launch failure.
  */
+@safe
 export Result<Pid, SpawnError> spawn_file(Option<Pid> parent, str path) {
     // The file is closed and the image buffer freed on every path out.
     FileHandle file = FileHandle { fd: open_executable(path)? };
@@ -458,6 +459,7 @@ bool release(Pid pid) {
  * the shell's apps, whose exit status nobody wants. A child with a living parent
  * stays Released until that parent reaps it. Call on the server task.
  */
+@safe
 export void sweep() {
     i32 slot = 0;
     while (slot < kernel_config.MAX_PROCS) {
