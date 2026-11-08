@@ -16,8 +16,6 @@ import thread from "@kernel/kernel/thread.mln";
 import { ProcessState } from "@kernel/kernel/process.mln";
 import { LoaderError } from "@contracts/process/loader.contract.mln";
 import { Result } from "@std/core/result.mln";
-import { result_take_ok } from "@std/core/result_take.mln";
-import { AllocationError } from "@std/memory/allocator.mln";
 import { Option } from "@std/core/option.mln";
 import { SpawnError, SpawnFsOperation, SpawnFilesystemError, SpawnReadMismatch } from "@contracts/process/spawn.contract.mln";
 import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
@@ -296,11 +294,10 @@ export Result<Pid, SpawnError> spawn_file(Option<Pid> parent, str path) {
         Ok(_) -> _;
         Err(e) -> ({ return Err(filesystem_failure(SpawnFsOperation::Rewind, e)); });
     };
-    Result<i32, AllocationError> allocation = heap.alloc(size);
-    i32 buf = 0;
-    if (!result_take_ok<i32, AllocationError>(&allocation, &buf)) {
-        return Err(SpawnError::BufferAllocationFailed(size));
-    }
+    i32 buf = case heap.alloc(size) of {
+        Ok(v) -> v;
+        Err(_) -> ({ return Err(SpawnError::BufferAllocationFailed(size)); });
+    };
     HeapBlock image = HeapBlock { addr: buf }; // the loader copies the segments out
     i32 got = case fs.read(file.fd, image.addr, size) of {
         Ok(v) -> v;
