@@ -136,10 +136,6 @@ Option<NodeId> g_active_window; // window with STATE_FOCUSED (front-most, gets k
 Option<NodeId> g_focus_id;      // node with keyboard focus (a TextInput)
 void no_launcher() { }
 fn() -> void g_launcher = no_launcher; // taskbar launcher button
-Option<NodeId> g_menu_id;       // the open popup menu
-void no_menu_action(i32 index) { }
-fn(i32 index) -> void g_menu_handler = no_menu_action;
-Option<NodeId> g_menu_target;   // the window a window-menu acts on (None for the desktop menu)
 
 // The app instance whose code is running right now (a handler drained from
 // the event queue, or a view() being mounted); create_node stamps it into
@@ -1287,7 +1283,6 @@ export void free_subtree(NodeId id) {
     n.name.free();
     n.text.free();
     n.test_id.free();
-    if (holds(g_menu_id, id)) { g_menu_id = None; }
     case n.owner of {
         Some(owner) -> ({
             case owner_slot(owner, false) of {
@@ -1386,12 +1381,11 @@ export Option<NodeId> enclosing_window(NodeId id) {
 
 // --- subsystem state -------------------------------------------------------------------------
 
-/** Starts with no taskbar, active window, focus or menu. */
+/** Starts with no taskbar, active window or focus. */
 export void init() {
     g_taskbar_id = None;
     g_active_window = None;
     g_focus_id = None;
-    clear_menu_state();
 }
 
 /** Selects the root node created during desktop initialization. */
@@ -1420,29 +1414,6 @@ export fn() -> void launcher_handler() { return g_launcher; }
 
 /** Installs the taskbar launcher callback address. */
 export void set_launcher_handler(fn() -> void handler) { g_launcher = handler; }
-
-/** Returns the open popup menu ID, if one is open. */
-export Option<NodeId> menu_id() { return g_menu_id; }
-
-/** Returns the callback attached to the open popup menu. */
-export fn(i32 index) -> void menu_handler() { return g_menu_handler; }
-
-/** Returns the node targeted by the open popup menu. */
-export Option<NodeId> menu_target() { return g_menu_target; }
-
-/** Records all state belonging to a newly opened popup menu. */
-export void set_menu_state(NodeId id, fn(i32 index) -> void handler, Option<NodeId> target) {
-    g_menu_id = Some(id);
-    g_menu_handler = handler;
-    g_menu_target = target;
-}
-
-/** Clears popup state before its node is removed. */
-export void clear_menu_state() {
-    g_menu_id = None;
-    g_menu_handler = no_menu_action;
-    g_menu_target = None;
-}
 
 /** Returns the number of registered timer nodes. */
 export i32 timer_count() { return g_timer_count; }

@@ -7,6 +7,7 @@ import { Text } from "@std/text/text.mln";
 import dom from "@os/ui/dom/dom.mln";
 import { NodeRow } from "@os/ui/dom/dom_model.mln";
 import dom_widgets from "@os/ui/dom/dom_widgets.mln";
+import dom_menu from "@os/ui/dom/dom_menu.mln";
 import dom_render from "@os/ui/dom/dom_render.mln";
 import graphics from "@os/ui/graphics.mln";
 import { SpawnError } from "@contracts/process/spawn.contract.mln";
@@ -494,7 +495,7 @@ export void launch_menu() {
     if (rows < 1) { rows = 1; }
     i32 y = graphics.display_height() - dom_widgets.taskbar_node_height() - (rows * 34 + 20) * s;
     str items = menu_items();
-    case dom_widgets.open_menu(8 * s, y, items, on_menu, None) of {
+    case dom_menu.open_menu(8 * s, y, items, on_menu, None) of {
         Ok(_) -> _;
         Err(_) -> _;
     };

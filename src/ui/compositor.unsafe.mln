@@ -9,6 +9,7 @@ import dom_hit_test from "dom/dom_hit_test.mln";
 import { NodeKind } from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
 import dom_list from "dom/dom_list.mln";
+import dom_menu from "dom/dom_menu.mln";
 import dom_text_edit from "dom/dom_text_edit.mln";
 import dom_window_chrome from "dom/dom_window_chrome.mln";
 import dom_render from "dom/dom_render.mln";
@@ -102,7 +103,7 @@ enum WindowMenuAction {
  * @param action Chosen WindowMenuAction item.
  */
 void on_window_menu(WindowMenuAction action) {
-    NodeId win = case dom_widgets.menu_target() of { Some(id) -> id; None -> ({ return; }); };
+    NodeId win = case dom_menu.menu_target() of { Some(id) -> id; None -> ({ return; }); };
     case action of {
         WindowMenuAction::MINIMIZE -> dom_widgets.minimize_window(win);
         WindowMenuAction::MAXIMIZE -> dom_widgets.maximize_window(win);
@@ -118,10 +119,10 @@ void on_window_menu(WindowMenuAction action) {
 void on_press(i32 ex, i32 ey) {
     // A click while a menu is open either picks an item or dismisses the
     // menu; either way it goes no further.
-    Option<NodeId> menu = dom_widgets.menu_id();
+    Option<NodeId> menu = dom_menu.menu_id();
     if (menu.is_some()) {
-        if (dom.same_node(dom_hit_test.find_at(ex, ey), menu)) { dom_widgets.menu_click(ex, ey); }
-        else { dom_widgets.close_menu(); }
+        if (dom.same_node(dom_hit_test.find_at(ex, ey), menu)) { dom_menu.menu_click(ex, ey); }
+        else { dom_menu.close_menu(); }
         return;
     }
 
@@ -203,8 +204,8 @@ void on_press(i32 ex, i32 ey) {
  * @param ey Vertical mouse pointer coordinate in logical pixels.
  */
 void on_right_press(i32 ex, i32 ey) {
-    if (dom_widgets.menu_id().is_some()) {
-        dom_widgets.close_menu();
+    if (dom_menu.menu_id().is_some()) {
+        dom_menu.close_menu();
         return;
     }
     NodeId hit = case dom_hit_test.find_at(ex, ey) of {
@@ -212,7 +213,7 @@ void on_right_press(i32 ex, i32 ey) {
         None -> ({
             if (g_desktop_menu_items != 0) {
                 str desktop_items = str.from_c(g_desktop_menu_items);
-                case dom_widgets.open_menu(ex, ey, desktop_items, g_desktop_menu_handler, None) of { Ok(_) -> _; Err(_) -> _; };
+                case dom_menu.open_menu(ex, ey, desktop_items, g_desktop_menu_handler, None) of { Ok(_) -> _; Err(_) -> _; };
             }
             return;
         });
@@ -223,9 +224,9 @@ void on_right_press(i32 ex, i32 ey) {
         Some(win) -> ({
             dom_widgets.focus_window(win);
             if (dom_widgets.is_maximized(win)) {
-                case dom_widgets.open_menu(ex, ey, "Minimize\nRestore\nClose", on_window_menu, enclosing) of { Ok(_) -> _; Err(_) -> _; };
+                case dom_menu.open_menu(ex, ey, "Minimize\nRestore\nClose", on_window_menu, enclosing) of { Ok(_) -> _; Err(_) -> _; };
             } else {
-                case dom_widgets.open_menu(ex, ey, "Minimize\nMaximize\nClose", on_window_menu, enclosing) of { Ok(_) -> _; Err(_) -> _; };
+                case dom_menu.open_menu(ex, ey, "Minimize\nMaximize\nClose", on_window_menu, enclosing) of { Ok(_) -> _; Err(_) -> _; };
             }
         });
         None -> _;
@@ -370,7 +371,7 @@ export void run() {
                 case hit of { Some(id) -> dom.set_hovered(id, 1); None -> _; };
                 g_hot_id = hit;
             }
-            dom_widgets.menu_hover(mx, my);
+            dom_menu.menu_hover(mx, my);
 
             // Timers (clock, animations) run on this task between events.
             dom_widgets.tick();

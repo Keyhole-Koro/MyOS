@@ -4,6 +4,7 @@ import blob from "@std/memory/blob.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
 import graphics from "@os/ui/graphics.mln";
 import theme from "@os/ui/theme.mln";
+import dom_menu from "dom_menu.mln";
 import dom_text_edit from "dom_text_edit.mln";
 import dom_window_chrome from "dom_window_chrome.mln";
 import dom from "dom.mln";
@@ -780,7 +781,7 @@ export void paint_desktop() {
     graphics.fill_gradient_v(0, 0, dw, dh, top, bottom);
 
     Option<NodeId> taskbar = dom.taskbar_id();
-    Option<NodeId> menu = dom.menu_id();
+    Option<NodeId> menu = dom_menu.menu_id();
     for (NodeId child_id in dom.children(dom.desktop_id())) {
         if (!dom.holds(taskbar, child_id) && !dom.holds(menu, child_id)) {
             render(&dom.row_of(child_id));

@@ -1,0 +1,182 @@
+package dom_menu;
+
+import dom from "dom.mln";
+import { NodeRow } from "dom_model.mln";
+import blob from "@std/memory/blob.mln";
+import { Blob } from "@std/memory/blob.mln";
+import ui_metrics from "@os/ui/ui_metrics.mln";
+import dom_list from "dom_list.mln";
+import { NodeKind, NodeRole, NodeState, NewNode } from "dom.mln";
+import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
+import str from "@std/text/str.mln";
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
+
+// The popup menu. One menu at a time, a top-level node on the desktop drawn
+// above everything. Items are newline-separated; hovering highlights a row,
+// clicking one calls handler(index) after closing. Escape or a click
+// elsewhere closes it. Its rows are laid out like a List's (dom_list).
+
+// The open menu, the handler its items call, and the window a window menu
+// acts on (None for the desktop menu). A menu node removed by anything but
+// close_menu leaves a dead ID behind, which menu_id() reports as no menu.
+Option<NodeId> g_menu_id;
+void no_menu_action(i32 index) { }
+fn(i32 index) -> void g_menu_handler = no_menu_action;
+Option<NodeId> g_menu_target;
+
+/**
+ * Returns the DOM Node ID of the open popup menu, if one is open.
+ * @return Menu DOM Node ID, or None when no menu is open.
+ */
+export Option<NodeId> menu_id() {
+    NodeId id = g_menu_id?;
+    if (!dom.node_exists(id)) { return None; }
+    return Some(id);
+}
+
+/**
+ * Returns the node the open popup menu acts on.
+ * @return The window a window menu acts on, or None for the desktop menu.
+ */
+export Option<NodeId> menu_target() { return g_menu_target; }
+
+/**
+ * Closes and removes the currently open popup menu from the desktop.
+ */
+export void close_menu() {
+    case menu_id() of {
+        Some(id) -> ({
+            g_menu_id = None;
+            g_menu_handler = no_menu_action;
+            g_menu_target = None;
+            dom.remove_node(id);
+            dom.touch();
+        });
+        None -> _;
+    };
+}
+
+/**
+ * Opens a popup menu at display coordinates (x, y) with newline-separated items.
+ * @param x Display X position.
+ * @param y Display Y position.
+ * @param items Newline-separated list of menu options.
+ * @param handler Callback function pointer invoked on selection: fn(index).
+ * @param target Associated target Node ID, if the menu acts on one.
+ * @return Menu DOM Node ID.
+ */
+export Result<NodeId, UiError> open_menu(i32 x, i32 y, str items,
+                                         fn(i32 index) -> void handler, Option<NodeId> target) {
+    close_menu();
+    i32 s = dom.ui_scale();
+    i32 count = 1;
+    i32 i = 0;
+    i32 widest = 0;
+    i32 line_w = 0;
+    while (i < items.length) {
+        if (items.byte(i) == 10) {
+            count++;
+            line_w = 0;
+        } else {
+            line_w++;
+        }
+        i++;
+    }
+    i32 lh = ui_metrics.text_height(0, s);
+    i32 pad = 8 * s;
+    i32 h = count * lh + 2 * pad;
+    i32 w = ui_metrics.text_width(items, 0, s);
+    // text_width measures the whole string; a rough width from the longest
+    // item is enough for a menu, so measure per line instead.
+    w = 0;
+    i32 start = 0;
+    i32 j = 0;
+    while (j <= items.length) {
+        if (j == items.length || items.byte(j) == 10) {
+            str line = case items.slice(start, j) of { Some(view) -> view; None -> ""; };
+            i32 lw = ui_metrics.text_width(line, 0, s);
+            if (lw > w) { w = lw; }
+            start = j + 1;
+        }
+        j++;
+    }
+    w = w + 4 * pad;
+    if (w < 140 * s) { w = 140 * s; }
+    i32 dw = ui_metrics.display_width();
+    i32 dh = ui_metrics.display_height();
+    if (x + w > dw) { x = dw - w; }
+    if (y + h > dh) { y = dh - h; }
+    if (x < 0) { x = 0; }
+    if (y < 0) { y = 0; }
+
+    NewNode node = NewNode { id: dom.create_node(NodeKind::MENU, "menu")? };
+    NodeId id = node.id;
+    dom.set_role(id, NodeRole::MENU);
+    borrow NodeRow n = dom.row_of(id);
+    i32 cap = i + 2;
+    Blob buf = case blob.blob_new(cap) of {
+        Some(value) -> value;
+        None -> ({ return Err(UiError::AllocationFailed(cap)); });
+    };
+    i32 k = 0;
+    while (k < i) { buf.put(k, items.byte(k)); k++; }
+    buf.put(i, (char)0);
+    n.text = buf;
+    n.cap = (u16)cap;
+    n.len = (u16)i;
+    n.x = (u16)x;
+    n.y = (u16)y;
+    n.w = (u16)w;
+    n.h = (u16)h;
+    n.on_change = 0;
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
+    // Appended to the desktop like a window, but painted last (see
+    // paint_desktop) and hit-tested first (see dom_hit_test.find_at).
+    dom.append_child(dom.desktop_id(), id)?;
+    // append_child translated by the desktop origin (0,0): bounds stand.
+    g_menu_id = Some(id);
+    g_menu_handler = handler;
+    g_menu_target = target;
+    dom.touch();
+    return Ok(node.keep());
+}
+
+// Whether two optional rows name the same row, or both none.
+bool same_row(Option<i32> a, Option<i32> b) {
+    return case a of {
+        Some(x) -> case b of { Some(y) -> x == y; None -> false; };
+        None -> b.is_none();
+    };
+}
+
+/**
+ * Updates highlighted row in active popup menu based on mouse hover position.
+ * @param px Cursor display X coordinate.
+ * @param py Cursor display Y coordinate.
+ */
+export void menu_hover(i32 px, i32 py) {
+    borrow NodeRow n = case dom.row_in(menu_id()) of { Some(row) -> row; None -> ({ return; }); };
+    Option<i32> next = dom_list.list_row_at(n.id, px, py);
+    if (!same_row(next, n.sel)) {
+        n.sel = next;
+        dom.damage_row(&n);
+    }
+}
+
+/**
+ * Handles mouse click on active popup menu, invoking callback and closing menu.
+ * @param px Cursor display X coordinate.
+ * @param py Cursor display Y coordinate.
+ */
+export void menu_click(i32 px, i32 py) {
+    NodeId id = case menu_id() of { Some(value) -> value; None -> ({ return; }); };
+    Option<i32> row = dom_list.list_row_at(id, px, py);
+    fn(i32 index) -> void handler = g_menu_handler;
+    close_menu();
+    case row of {
+        Some(r) -> handler(r);
+        None -> _;
+    };
+}

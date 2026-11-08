@@ -1,6 +1,7 @@
 package dom_hit_test;
 
 import dom from "dom.mln";
+import dom_menu from "dom_menu.mln";
 import { NodeRow } from "dom_model.mln";
 import { Blob } from "@std/memory/blob.mln";
 import { NodeState, Children } from "dom.mln";
@@ -49,7 +50,7 @@ Option<NodeId> hit_test(Option<NodeId> node, i32 px, i32 py) {
 
 /** Finds the topmost interactive UI node at a display position. */
 export Option<NodeId> find_at(i32 x, i32 y) {
-    Option<NodeId> menu = dom.menu_id();
+    Option<NodeId> menu = dom_menu.menu_id();
     Option<NodeId> menu_hit = hit_test(menu, x, y);
     if (menu_hit.is_some()) { return menu_hit; }
 

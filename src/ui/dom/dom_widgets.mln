@@ -1,6 +1,5 @@
 package dom_widgets;
 import debug from "@kernel/debug/debug.mln";
-import blob from "@std/memory/blob.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
 import ui_metrics from "@os/ui/ui_metrics.mln";
 import dom from "dom.mln";
@@ -9,12 +8,12 @@ import { Blob } from "@std/memory/blob.mln";
 import { UiEventKind } from "@os/ui/events.mln";
 import ui_config from "@os/ui/config.mln";
 import dom_list from "dom_list.mln";
+import dom_menu from "dom_menu.mln";
 import dom_text_edit from "dom_text_edit.mln";
 import { EditResult } from "dom_text_edit.mln";
-import { NodeKind, NodeRole, NodeState, Children, NewNode } from "dom.mln";
+import { NodeKind, NodeState, Children, NewNode } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
-import str from "@std/text/str.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import { Pid } from "@contracts/process/control.contract.mln";
 import { KeyEventType, KeyModifier, KeyCode } from "@contracts/input/keyboard.contract.mln";
@@ -100,11 +99,6 @@ export void focus_window(NodeId win) {
         dom.damage_taskbar(); // the active entry's highlight moved
     }
     dom.bring_to_front(win);
-}
-
-// The byte at `index`, or zero past the end.
-i32 byte_of(str s, i32 index) {
-    return s.byte(index);
 }
 
 /**
@@ -215,163 +209,6 @@ export void maximize_window(NodeId win) {
     dom.set_state_flag(win, NodeState::MAXIMIZED, 1);
 }
 
-// --- popup menu ---
-// One menu at a time, a top-level node on the desktop drawn above everything.
-// Items are newline-separated; hovering highlights a row, clicking one calls
-// handler(index) after closing. Escape or a click elsewhere closes it.
-
-/**
- * Closes and removes the currently open popup menu from the desktop.
- */
-export void close_menu() {
-    case dom.menu_id() of {
-        Some(id) -> ({
-            dom.clear_menu_state();
-            dom.remove_node(id);
-            dom.touch();
-        });
-        None -> _;
-    };
-}
-
-/**
- * Returns the DOM Node ID of the active popup menu, if one is open.
- * @return Menu DOM Node ID.
- */
-export Option<NodeId> menu_id() {
-    return dom.menu_id();
-}
-
-/**
- * Returns the target Node ID associated with the open popup menu.
- * @return Target DOM Node ID.
- */
-export Option<NodeId> menu_target() {
-    return dom.menu_target();
-}
-
-/**
- * Opens a popup menu at display coordinates (x, y) with newline-separated items.
- * @param x Display X position.
- * @param y Display Y position.
- * @param items Newline-separated list of menu options.
- * @param handler Callback function pointer invoked on selection: fn(index).
- * @param target Associated target Node ID, if the menu acts on one.
- * @return Menu DOM Node ID.
- */
-export Result<NodeId, UiError> open_menu(i32 x, i32 y, str items,
-                                         fn(i32 index) -> void handler, Option<NodeId> target) {
-    close_menu();
-    i32 s = dom.ui_scale();
-    i32 count = 1;
-    i32 i = 0;
-    i32 widest = 0;
-    i32 line_w = 0;
-    while (i < items.length) {
-        if (byte_of(items, i) == 10) {
-            count++;
-            line_w = 0;
-        } else {
-            line_w++;
-        }
-        i++;
-    }
-    i32 lh = ui_metrics.text_height(0, s);
-    i32 pad = 8 * s;
-    i32 h = count * lh + 2 * pad;
-    i32 w = ui_metrics.text_width(items, 0, s);
-    // text_width measures the whole string; a rough width from the longest
-    // item is enough for a menu, so measure per line instead.
-    w = 0;
-    i32 start = 0;
-    i32 j = 0;
-    while (j <= items.length) {
-        if (j == items.length || byte_of(items, j) == 10) {
-            str line = case items.slice(start, j) of { Some(view) -> view; None -> ""; };
-            i32 lw = ui_metrics.text_width(line, 0, s);
-            if (lw > w) { w = lw; }
-            start = j + 1;
-        }
-        j++;
-    }
-    w = w + 4 * pad;
-    if (w < 140 * s) { w = 140 * s; }
-    i32 dw = ui_metrics.display_width();
-    i32 dh = ui_metrics.display_height();
-    if (x + w > dw) { x = dw - w; }
-    if (y + h > dh) { y = dh - h; }
-    if (x < 0) { x = 0; }
-    if (y < 0) { y = 0; }
-
-    NewNode node = NewNode { id: dom.create_node(NodeKind::MENU, "menu")? };
-    NodeId id = node.id;
-    dom.set_role(id, NodeRole::MENU);
-    borrow NodeRow n = dom.row_of(id);
-    i32 cap = i + 2;
-    Blob buf = case blob.blob_new(cap) of {
-        Some(value) -> value;
-        None -> ({ return Err(UiError::AllocationFailed(cap)); });
-    };
-    i32 k = 0;
-    while (k < i) { buf.put(k, byte_of(items, k)); k++; }
-    buf.put(i, (char)0);
-    n.text = buf;
-    n.cap = (u16)cap;
-    n.len = (u16)i;
-    n.x = (u16)x;
-    n.y = (u16)y;
-    n.w = (u16)w;
-    n.h = (u16)h;
-    n.on_change = 0;
-    dom.set_state_flag(id, NodeState::VISIBLE, 1);
-    dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
-    // Appended to the desktop like a window, but painted last (see
-    // paint_desktop) and hit-tested first (see dom_hit_test.find_at).
-    dom.append_child(dom.desktop_id(), id)?;
-    // append_child translated by the desktop origin (0,0): bounds stand.
-    dom.set_menu_state(id, handler, target);
-    dom.touch();
-    return Ok(node.keep());
-}
-
-// Whether two optional rows name the same row, or both none.
-bool same_row(Option<i32> a, Option<i32> b) {
-    return case a of {
-        Some(x) -> case b of { Some(y) -> x == y; None -> false; };
-        None -> b.is_none();
-    };
-}
-
-/**
- * Updates highlighted row in active popup menu based on mouse hover position.
- * @param px Cursor display X coordinate.
- * @param py Cursor display Y coordinate.
- */
-export void menu_hover(i32 px, i32 py) {
-    borrow NodeRow n = case dom.row_in(dom.menu_id()) of { Some(row) -> row; None -> ({ return; }); };
-    Option<i32> next = dom_list.list_row_at(n.id, px, py);
-    if (!same_row(next, n.sel)) {
-        n.sel = next;
-        dom.damage_row(&n);
-    }
-}
-
-/**
- * Handles mouse click on active popup menu, invoking callback and closing menu.
- * @param px Cursor display X coordinate.
- * @param py Cursor display Y coordinate.
- */
-export void menu_click(i32 px, i32 py) {
-    NodeId id = case dom.menu_id() of { Some(value) -> value; None -> ({ return; }); };
-    Option<i32> row = dom_list.list_row_at(id, px, py);
-    fn(i32 index) -> void handler = dom.menu_handler();
-    close_menu();
-    case row of {
-        Some(r) -> handler(r);
-        None -> _;
-    };
-}
-
 // --- Tab focus ---
 // Focusable controls are visited in tree order within the active window.
 
@@ -464,7 +301,7 @@ export void focus_next(i32 backwards) {
 export void dispatch_key_event(i32 type, i32 code, i32 mods) {
     if (type == KeyEventType::DOWN) {
         if (code == KeyCode::ESCAPE) {
-            if (dom.menu_id().is_some()) { close_menu(); return; }
+            if (dom_menu.menu_id().is_some()) { dom_menu.close_menu(); return; }
         }
         if (code == KeyCode::TAB) {
             focus_next(mods & KeyModifier::SHIFT);
