@@ -4,6 +4,7 @@ import dom_hit_test from "@os/ui/dom/dom_hit_test.mln";
 import desktop from "@os/ui/desktop.mln";
 import dom_elements from "@os/ui/dom/dom_elements.mln";
 import dom_widgets from "@os/ui/dom/dom_widgets.mln";
+import dom_focus from "@os/ui/dom/dom_focus.mln";
 import dom_text_edit from "@os/ui/dom/dom_text_edit.mln";
 import dom_list from "@os/ui/dom/dom_list.mln";
 import dom_window_chrome from "@os/ui/dom/dom_window_chrome.mln";
@@ -194,7 +195,7 @@ void dom_hit_dispatch() {
     Option<NodeId> overlap = dom_hit_test.find_at(350 * scale, (tb + 250) * scale);
     assert.assert_true(dom.holds(overlap, win2), "later window is on top");
     dom_widgets.focus_window(win);
-    assert.assert_true(dom.holds(dom_widgets.active_window(), win), "focus_window activates");
+    assert.assert_true(dom.holds(dom.active_window_id(), win), "focus_window activates");
     assert.assert_true(dom.get_state_flag(win, 16), "active window has STATE_FOCUSED");
     overlap = dom_hit_test.find_at(350 * scale, (tb + 250) * scale);
     assert.assert_true(dom.holds(overlap, win), "focused window was raised");
@@ -219,7 +220,7 @@ void dom_hit_dispatch() {
     NodeId field = require_node(dom_elements.create_text_input("type", 10, 130, 200, 30, 16));
     dom.set_on_change(field, on_change);
     require_append(dom.append_child(win2, field));
-    dom_widgets.set_focus(field);
+    dom_focus.set_focus(field);
     dom_widgets.dispatch_key_event(3, 'h', 0);
     dom_widgets.dispatch_key_event(3, 'i', 0);
     dom_widgets.dispatch_key_event(1, 8, 0);   // backspace
@@ -275,7 +276,7 @@ void dom_hit_dispatch() {
     dom_widgets.close_window(win2);
     assert.assert_true(dom.node_exists(win2) == 0, "closed window is gone");
     assert.assert_true(dom.node_exists(field) == 0, "its children are gone too");
-    assert.assert_true(dom.holds(dom_widgets.active_window(), win), "remaining window becomes active");
+    assert.assert_true(dom.holds(dom.active_window_id(), win), "remaining window becomes active");
 
     // Exercise the renderer (window chrome, panel, buttons, text) in the
     // headless emulator as well as the tree-only assertions.

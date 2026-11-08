@@ -8,6 +8,7 @@ import dom from "dom/dom.mln";
 import dom_hit_test from "dom/dom_hit_test.mln";
 import { NodeKind } from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
+import dom_focus from "dom/dom_focus.mln";
 import dom_list from "dom/dom_list.mln";
 import dom_menu from "dom/dom_menu.mln";
 import dom_text_edit from "dom/dom_text_edit.mln";
@@ -128,7 +129,7 @@ void on_press(i32 ex, i32 ey) {
 
     NodeId hit = case dom_hit_test.find_at(ex, ey) of {
         Some(id) -> id;
-        None -> ({ dom_widgets.clear_focus(); return; });
+        None -> ({ dom_focus.clear_focus(); return; });
     };
 
     // Anything inside a window activates that window first.
@@ -185,10 +186,10 @@ void on_press(i32 ex, i32 ey) {
         None -> ({ return; });
     };
     case kind of {
-        NodeKind::TEXT_INPUT -> ({ dom_widgets.set_focus(hit); return; });
-        NodeKind::TEXT_AREA  -> ({ dom_widgets.set_focus(hit); return; });
+        NodeKind::TEXT_INPUT -> ({ dom_focus.set_focus(hit); return; });
+        NodeKind::TEXT_AREA  -> ({ dom_focus.set_focus(hit); return; });
         NodeKind::LIST       -> ({
-            dom_widgets.set_focus(hit);
+            dom_focus.set_focus(hit);
             dom_list.list_click(hit, ex, ey);
             return;
         });

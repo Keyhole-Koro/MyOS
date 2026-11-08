@@ -1,22 +1,26 @@
 package dom_widgets;
-import debug from "@kernel/debug/debug.mln";
+
 import scheduler from "@kernel/kernel/scheduler.mln";
 import ui_metrics from "@os/ui/ui_metrics.mln";
 import dom from "dom.mln";
 import { NodeRow } from "dom_model.mln";
 import { Blob } from "@std/memory/blob.mln";
 import { UiEventKind } from "@os/ui/events.mln";
-import ui_config from "@os/ui/config.mln";
+import dom_focus from "dom_focus.mln";
 import dom_list from "dom_list.mln";
 import dom_menu from "dom_menu.mln";
 import dom_text_edit from "dom_text_edit.mln";
 import { EditResult } from "dom_text_edit.mln";
-import { NodeKind, NodeState, Children, NewNode } from "dom.mln";
+import { NodeKind, NodeState, NewNode } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import { Pid } from "@contracts/process/control.contract.mln";
 import { KeyEventType, KeyModifier, KeyCode } from "@contracts/input/keyboard.contract.mln";
+
+// Window management, key dispatch and timers. The controls themselves live
+// beside this module: text editing in dom_text_edit, lists in dom_list, the
+// popup menu in dom_menu and keyboard focus in dom_focus.
 
 fn(Option<Pid> owner, NodeId id, i32 arg) -> void close_handler_or_zero(NodeId id) {
     return case dom.on_close_of(id) of {
@@ -26,7 +30,7 @@ fn(Option<Pid> owner, NodeId id, i32 arg) -> void close_handler_or_zero(NodeId i
     };
 }
 
-// --- focus / window management -----------------------------------------------------------
+// --- window management ---------------------------------------------------------------------
 
 /**
  * Returns the height of the taskbar node in display pixels, as laid out.
@@ -35,46 +39,6 @@ fn(Option<Pid> owner, NodeId id, i32 arg) -> void close_handler_or_zero(NodeId i
  */
 export i32 taskbar_node_height() {
     return case dom.row_in(dom.taskbar_id()) of { Some(n) -> n.h; None -> 0; };
-}
-
-/**
- * Returns the DOM Node ID of the active window.
- * @return Active window Node ID.
- */
-export Option<NodeId> active_window() {
-    return dom.active_window_id();
-}
-
-/**
- * Takes keyboard focus away from the focused node, if there is one.
- */
-export void clear_focus() {
-    case dom.focus_id() of {
-        Some(id) -> dom.set_state_flag(id, NodeState::FOCUSED, 0);
-        None -> _;
-    };
-    dom.set_focus_id(None);
-}
-
-// Whether the focused node, if any, is inside a window.
-bool focus_is_in(NodeId win) {
-    return case dom.focus_id() of {
-        Some(id) -> dom.holds(dom.enclosing_window(id), win);
-        None -> false;
-    };
-}
-
-/**
- * Sets keyboard focus to a node, updating FOCUSED state flags. A dead ID
- * clears focus.
- * @param id DOM Node ID to focus.
- */
-export void set_focus(NodeId id) {
-    if (dom.holds(dom.focus_id(), id)) { return; }
-    clear_focus();
-    if (!dom.node_exists(id)) { return; }
-    dom.set_focus_id(Some(id));
-    dom.set_state_flag(id, NodeState::FOCUSED, 1);
 }
 
 /**
@@ -95,7 +59,7 @@ export void focus_window(NodeId win) {
         };
         dom.set_active_window_id(Some(win));
         dom.set_state_flag(win, NodeState::FOCUSED, 1);
-        if (!focus_is_in(win)) { clear_focus(); }
+        if (!dom_focus.focus_is_in(win)) { dom_focus.clear_focus(); }
         dom.damage_taskbar(); // the active entry's highlight moved
     }
     dom.bring_to_front(win);
@@ -165,7 +129,7 @@ export void minimize_window(NodeId win) {
     if (!dom.node_exists(win)) { return; }
     dom.set_state_flag(win, NodeState::MINIMIZED, 1);
     dom.set_state_flag(win, NodeState::VISIBLE, 0);
-    if (focus_is_in(win)) { clear_focus(); }
+    if (dom_focus.focus_is_in(win)) { dom_focus.clear_focus(); }
     if (dom.holds(dom.active_window_id(), win)) {
         dom.set_state_flag(win, NodeState::FOCUSED, 0);
         dom.set_active_window_id(None);
@@ -209,89 +173,6 @@ export void maximize_window(NodeId win) {
     dom.set_state_flag(win, NodeState::MAXIMIZED, 1);
 }
 
-// --- Tab focus ---
-// Focusable controls are visited in tree order within the active window.
-
-/**
- * Tests whether a DOM node can accept keyboard focus.
- * @param n DOM Node row.
- * @return True if focusable, false otherwise.
- */
-export bool is_focusable(borrow NodeRow n) {
-    if (!(n.state & NodeState::VISIBLE)) { return false; }
-    i32 k = n.kind;
-    if (k == NodeKind::TEXT_INPUT) { return true; }
-    if (k == NodeKind::TEXT_AREA) { return true; }
-    if (k == NodeKind::BUTTON) { return true; }
-    if (k == NodeKind::CHECKBOX) { return true; }
-    if (k == NodeKind::LIST) { return true; }
-    return false;
-}
-
-// Depth-first walk collecting focusable ids into g_focus_ring.
-NodeId g_focus_ring[64];
-i32 g_focus_ring_count = 0;
-
-/**
- * Recursively collects all focusable node IDs in a subtree into the focus ring.
- * @param id Root DOM Node ID of subtree.
- */
-export void collect_focusable(NodeId id) {
-    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
-    if (is_focusable(&n)) {
-        if (g_focus_ring_count < ui_config.FOCUS_MAX) {
-            g_focus_ring[g_focus_ring_count] = id;
-            g_focus_ring_count++;
-        }
-    }
-    for (NodeId child in dom.children(id)) {
-        collect_focusable(child);
-    }
-}
-
-/**
- * Moves keyboard focus to next or previous focusable control in the active window.
- * @param backwards Non-zero to move focus backward (Shift-Tab), 0 forward (Tab).
- */
-export void focus_next(i32 backwards) {
-    NodeId win = case dom.active_window_id() of { Some(id) -> id; None -> ({ return; }); };
-    g_focus_ring_count = 0;
-    collect_focusable(win);
-    if (g_focus_ring_count == 0) { return; }
-
-    Option<i32> cur = None;
-    i32 i = 0;
-    while (i < g_focus_ring_count) {
-        if (dom.holds(dom.focus_id(), g_focus_ring[i])) {
-            cur = Some(i);
-            break;
-        }
-        i++;
-    }
-
-    i32 next_idx = 0;
-    case cur of {
-        Some(idx) -> ({
-            if (backwards) {
-                if (idx == 0) { next_idx = g_focus_ring_count - 1; }
-                else { next_idx = idx - 1; }
-            } else {
-                if (idx + 1 >= g_focus_ring_count) { next_idx = 0; }
-                else { next_idx = idx + 1; }
-            }
-        });
-        None -> ({
-            if (backwards) {
-                next_idx = g_focus_ring_count - 1;
-            } else {
-                next_idx = 0;
-            }
-        });
-    };
-
-    set_focus(g_focus_ring[next_idx]);
-}
-
 /**
  * Dispatches a keyboard event to the currently focused node or handles window/menu shortcuts.
  * @param type KeyEventType value from the shared keyboard contract.
@@ -304,7 +185,7 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
             if (dom_menu.menu_id().is_some()) { dom_menu.close_menu(); return; }
         }
         if (code == KeyCode::TAB) {
-            focus_next(mods & KeyModifier::SHIFT);
+            dom_focus.focus_next(mods & KeyModifier::SHIFT);
             return;
         }
         // App shortcuts (@key) for the active window's app go first.
