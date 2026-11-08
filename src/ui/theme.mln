@@ -57,12 +57,9 @@ export const i32 SEPARATOR = 0x1E000000;
 
 export const i32 INPUT_BG = 0xFFFFFF;
 export const i32 INPUT_BORDER = 0x3C000000;
-// INPUT_BORDER_FOCUS and CARET are ACCENT, and INPUT_PLACEHOLDER is
-// TEXT_DISABLED. They repeat the value because an initializer cannot name a
-// constant yet: `= ACCENT` compiles, but to ACCENT's address.
-export const i32 INPUT_BORDER_FOCUS = 0x3B82F6;
-export const i32 INPUT_PLACEHOLDER = 0xA0A6B0;
-export const i32 CARET = 0x3B82F6;
+export const i32 INPUT_BORDER_FOCUS = ACCENT;
+export const i32 INPUT_PLACEHOLDER = TEXT_DISABLED;
+export const i32 CARET = ACCENT;
 export const i32 INPUT_RADIUS = 6;
 export const i32 INPUT_PADDING_X = 8;
 
