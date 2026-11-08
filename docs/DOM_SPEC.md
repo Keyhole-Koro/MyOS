@@ -603,3 +603,32 @@ checked/hitTestableを含める。host側は`MyOS` / strict `Locator` / `expect`
   `Option<Pid>`。`set_owner` と `remove_owned` は `Pid` を取る。アプリ側の runtime の
   `handler(i32 owner, NodeId id, i32 arg)` は別物で、`owner` はインスタンスの番地。
 - `on_key` と `set_on_key` は無くした。キーは `set_key_filter` のフィルタと widget の既定動作だけが受ける。
+
+## 2026-11-08: モジュールの分け方
+
+`dom_widgets.mln` を部品ごとに分け、`dom.mln` にあったシェルとデスクトップの状態をそれを使う
+モジュールへ移した。どれも `dom.mln` を import し、`dom.mln` はどれも import しない。
+
+- `dom.mln`: ノード表、damage、レイアウト、イベントキュー、ロック、所有者ごとのノード数と、
+  `active_window_id()`・`focus_id()`・`taskbar_id()` など木の状態。
+- `dom_text_edit.mln`: TextInput と TextArea の編集、`append_text`・`append_bytes`・
+  `clear_text_area`・`set_input_text`・`scroll_by`・`dispatch_wheel`。行の数え方
+  （`line_of`・`visible_lines` など）は List・Menu・描画も使う。
+- `dom_list.mln`: List（`list_set_items`・`list_select`・`list_click` など）。
+- `dom_menu.mln`: ポップアップメニューとその状態。`menu_id()`・`menu_target()` はここにある。
+  メニューのノードが `close_menu` 以外で消えたときも `menu_id()` は None を返す。
+- `dom_focus.mln`: `set_focus`・`clear_focus` と Tab による移動。
+- `dom_widgets.mln`: ウィンドウ管理（`focus_window`・`close_window`・最小化・最大化・
+  リサイズ）、キーの配送（`dispatch_key_event`）、タイマ（`tick`・`create_timer`）。
+
+移した状態と API:
+
+- キーフィルタは `dom_widgets.set_key_filter(fn)`（呼ぶのは `dispatch_key_event` だけ）。
+- タスクバーのランチャーは `dom_render.set_launcher(fn)` で入れ、compositor が
+  `dom_render.launcher_handler()` で読む。
+- 起動中のアプリの数は `dom_automation.note_app_starting(delta)`。snapshot の `starting` になる。
+- `dom_widgets` の `active_window()`・`menu_id()`・`menu_target()` は `dom` へ渡すだけだったので
+  無くした。`dom.active_window_id()` と `dom_menu.menu_id()`・`dom_menu.menu_target()` を使う。
+- `dom_widgets.taskbar_node_height()` はタスクバーのノードの実際の高さ（表示ピクセル）で、
+  `ui_metrics.taskbar_height()` はテーマの論理値。
+- `node_extent` は範囲を `DamageRect` で返す（以前は `g_ext_*` に書いていた）。
