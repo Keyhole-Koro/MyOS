@@ -1,7 +1,5 @@
 package dom_elements;
-import debug from "@kernel/debug/debug.mln";
 import blob from "@std/memory/blob.mln";
-import scheduler from "@kernel/kernel/scheduler.mln";
 import theme from "@os/ui/theme.mln";
 import ui_metrics from "@os/ui/ui_metrics.mln";
 import dom from "dom.mln";
