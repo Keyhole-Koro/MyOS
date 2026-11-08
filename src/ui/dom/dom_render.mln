@@ -4,7 +4,6 @@ import blob from "@std/memory/blob.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
 import graphics from "@os/ui/graphics.mln";
 import theme from "@os/ui/theme.mln";
-import { halt_cpu } from "@kernel/arch/halt.masm";
 import dom_widgets from "dom_widgets.mln";
 import dom_window_chrome from "dom_window_chrome.mln";
 import dom from "dom.mln";

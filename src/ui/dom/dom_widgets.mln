@@ -3,7 +3,6 @@ import debug from "@kernel/debug/debug.mln";
 import blob from "@std/memory/blob.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
 import ui_metrics from "@os/ui/ui_metrics.mln";
-import { halt_cpu } from "@kernel/arch/halt.masm";
 import dom from "dom.mln";
 import { NodeRow } from "dom_model.mln";
 import { Blob } from "@std/memory/blob.mln";

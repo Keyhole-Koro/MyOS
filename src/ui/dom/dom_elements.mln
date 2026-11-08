@@ -4,7 +4,6 @@ import blob from "@std/memory/blob.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
 import theme from "@os/ui/theme.mln";
 import ui_metrics from "@os/ui/ui_metrics.mln";
-import { halt_cpu } from "@kernel/arch/halt.masm";
 import dom_widgets from "dom_widgets.mln";
 import dom from "dom.mln";
 import { NodeRow } from "dom_model.mln";
