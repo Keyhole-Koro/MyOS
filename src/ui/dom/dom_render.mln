@@ -800,14 +800,14 @@ export void paint_desktop() {
 }
 
 /**
- * Performs an unconditional full screen repaint of the desktop and clears damage.
+ * Performs an unconditional full screen repaint of the desktop. It covers all
+ * damage queued before it starts; damage added while it paints stays queued.
  */
 export void render_all() {
     dom.clear_damage();
     dom.select_full_paint();
     graphics.clear_clip();
     paint_desktop();
-    dom.clear_damage();
 }
 
 /**
@@ -819,10 +819,11 @@ export void render_scene() {
         return;
     }
 
-    // Paint each damaged rectangle under its own clip. The count is
-    // snapshotted so anything damaged while painting waits for the next
-    // frame rather than extending this loop.
-    i32 count = dom.damage_count();
+    // Paint each damaged rectangle under its own clip. The rectangles are
+    // taken off the queue as the paint begins, so anything damaged while
+    // painting (a process's console output arrives on its own task) waits
+    // for the next frame rather than extending this loop or being dropped.
+    i32 count = dom.take_damage();
     i32 i = 0;
     while (i < count) {
         dom.select_damage(i);
@@ -832,6 +833,5 @@ export void render_scene() {
     }
     dom.select_full_paint();
     graphics.clear_clip();
-    dom.clear_damage();
 }
 

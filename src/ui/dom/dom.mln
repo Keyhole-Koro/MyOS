@@ -122,6 +122,13 @@ struct DamageRect {
 DamageRect g_damage[8];
 i32 g_damage_count = 0;
 
+// The frame render_scene is painting: the damage list as it stood when the
+// paint began (take_damage). The list itself starts over then, so damage
+// added while the frame paints is kept for the next one. That happens: a
+// process's console output reaches its TextArea from that process's task
+// (console.on_write), which can run while the compositor is mid-paint.
+DamageRect g_frame[8];
+
 // The rect render_scene is currently repainting, so node_in_damage can test
 // against just that one; g_painting_all short-circuits it for full paints.
 DamageRect g_paint;
@@ -500,8 +507,10 @@ export void drain_events() {
 // The DOM is the UI server's: its task holds this lock for every pass
 // (input, requests, handlers, paint) and gives it up while it sleeps. The
 // only other task that reads the tree is the automation service; it takes
-// the lock around a dump. Apps never touch the DOM -- they send requests.
-// Kernel tasks preempt on the timer, so the test-and-set is done with
+// the lock around a dump. Apps never touch the DOM -- they send requests --
+// except that a process's console output is appended to its TextArea from
+// the process's own syscall, without the lock (see g_frame for the damage it
+// adds). Kernel tasks preempt on the timer, so the test-and-set is done with
 // interrupts off.
 
 bool g_lock = false; // held
@@ -651,6 +660,9 @@ void damage_rect(DamageRect rect) {
     if (rect.x1 <= rect.x0) { return; }
     if (rect.y1 <= rect.y0) { return; }
 
+    // The compositor can be taking the list on another task (take_damage).
+    bool was_enabled = irq.save_disable();
+    defer irq.restore(was_enabled);
     i32 i = 0;
     while (i < g_damage_count) {
         if (rects_touch(rect, g_damage[i])) {
@@ -1391,9 +1403,28 @@ export Result<_, UiError> register_timer(NodeId id) {
 /** Returns the number of damage rectangles awaiting paint. */
 export i32 damage_count() { return g_damage_count; }
 
-/** Selects one queued damage rectangle as the current paint region. */
+/**
+ * Moves the queued damage rectangles into the frame about to be painted and
+ * empties the queue, so damage added while that frame paints waits for the
+ * next one instead of being lost with it.
+ * @return The number of rectangles in the frame, for select_damage.
+ */
+export i32 take_damage() {
+    bool was_enabled = irq.save_disable();
+    defer irq.restore(was_enabled);
+    i32 count = g_damage_count;
+    i32 i = 0;
+    while (i < count) {
+        g_frame[i] = g_damage[i];
+        i++;
+    }
+    g_damage_count = 0;
+    return count;
+}
+
+/** Selects one rectangle of the frame take_damage took as the current paint region. */
 export void select_damage(i32 index) {
-    g_paint = g_damage[index];
+    g_paint = g_frame[index];
     g_painting_all = false;
 }
 

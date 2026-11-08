@@ -516,7 +516,10 @@ radius / on_tick / interval / next_due` を追加）。`state` に `STATE_CHECKE
 ### 再描画
 
 - ダメージは最大 8 矩形のリスト（`damage_rect` が重なるものへ併合）。
-  `render_scene` は矩形ごとに `set_clip` して `paint_desktop()`（壁紙 → 窓 → タスクバー）。
+  `render_scene` は描き始めにリストを取り出して空にし（`take_damage`）、矩形ごとに
+  `set_clip` して `paint_desktop()`（壁紙 → 窓 → タスクバー）。描いている間に足された
+  ダメージ（プロセスのコンソール出力は、そのプロセスのタスクから届く）はリストに残り、
+  次のフレームで描かれる。リストの更新と取り出しは割り込みを止めて行う。
 - Window の damage 範囲は影（`theme.shadow_size/offset`）を含む。
 - Window / Panel は子を自分の矩形にクリップし、`graphics.push_clip/pop_clip` が
   DMA2D のシザーへ同期される。クリップが空なら何も描かない（シザーは X1 <= X0 で

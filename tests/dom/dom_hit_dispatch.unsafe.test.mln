@@ -1,4 +1,5 @@
 import assert from "@std/testing/assert.mln";
+import mock from "../../../../toolchain/MyLangTestKit/runtime/facade.mln";
 import dom from "@os/ui/dom/dom.mln";
 import dom_hit_test from "@os/ui/dom/dom_hit_test.mln";
 import desktop from "@os/ui/desktop.mln";
@@ -323,4 +324,46 @@ void title_bar_survives_a_repaint_below_it() {
     dom_render.render_scene();
     assert.assert_true(pixel_at(close_x, close_y) == close_before, "the close button is still drawn");
     assert.assert_true(pixel_at(bar_x, bar_y) == bar_before, "the bar keeps its gradient");
+}
+
+NodeId g_mid_paint_node;
+i32 g_clips = 0;
+
+// Stands in for graphics.set_clip, which render_scene calls for each damaged
+// rectangle as it paints it. The first call also damages g_mid_paint_node,
+// the way a process's console output lands from its own task mid-paint.
+void set_clip_and_damage(i32 x, i32 y, i32 w, i32 h) {
+    if (g_clips == 0) { dom.damage_node(g_mid_paint_node); }
+    g_clips = g_clips + 1;
+}
+
+/*@Test "damage added during a paint waits for the next frame" {
+    step: 20000000;
+}*/
+void damage_added_during_a_paint_waits() {
+    heap.init();
+    allocator.configure(heap.alloc, heap.free);
+    desktop.init();
+
+    NodeId win = require_node(dom_elements.create_window("W", 0, 0, 400, 300));
+    require_append(dom.append_child(dom.desktop_id(), win));
+    NodeId a = require_node(dom_elements.create_button("A", 10, 10, 100, 50));
+    require_append(dom.append_child(win, a));
+    NodeId b = require_node(dom_elements.create_button("B", 200, 10, 100, 50));
+    require_append(dom.append_child(win, b));
+    dom_render.render_all();
+    assert.assert_false(dom.has_damage(), "a full paint leaves nothing queued");
+
+    g_mid_paint_node = b;
+    mock.of(graphics.set_clip)
+        .when(mock.any(), mock.any(), mock.any(), mock.any())
+        .call(set_clip_and_damage);
+    dom.damage_node(a);
+    dom_render.render_scene();
+    assert.assert_true(g_clips == 1, "the frame paints A's rectangle");
+    assert.assert_true(dom.has_damage(), "B's damage is kept for the next frame");
+
+    dom_render.render_scene();
+    assert.assert_true(g_clips == 2, "the next frame paints B's rectangle");
+    assert.assert_false(dom.has_damage(), "nothing is left after it");
 }
