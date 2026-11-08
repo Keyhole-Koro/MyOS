@@ -224,7 +224,7 @@ export void maximize_window(NodeId win) {
 
 /**
  * Inserts a character into a text buffer at current cursor position.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
  * @param c ASCII character code to insert.
  */
 export void input_insert(borrow NodeRow n, i32 c) {
@@ -246,7 +246,7 @@ export void input_insert(borrow NodeRow n, i32 c) {
 
 /**
  * Deletes character at specified index in a text node buffer.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
  * @param at Byte index of character to remove.
  */
 export void input_delete_at(borrow NodeRow n, i32 at) {
@@ -265,7 +265,7 @@ export void input_delete_at(borrow NodeRow n, i32 at) {
 
 /**
  * Handles default editing keyboard events for a single-line TextInput node.
- * @param n Pointer to TextInput Node.
+ * @param n TextInput node row.
  * @param type KeyEventType value from the shared keyboard contract.
  * @param code Key code or ASCII character.
  * @return EditResult enum indicating outcome (Changed, Moved, Unhandled).
@@ -317,7 +317,7 @@ export EditResult input_handle(borrow NodeRow n, i32 type, i32 code) {
 
 /**
  * Checks whether a node has the READONLY style bit set.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
  * @return True if read-only, false otherwise.
  */
 export bool is_readonly(borrow NodeRow n) {
@@ -326,7 +326,7 @@ export bool is_readonly(borrow NodeRow n) {
 
 /**
  * Finds the 0-based line index containing byte offset `at` in a text buffer.
- * @param n Pointer to TextArea Node.
+ * @param n TextArea node row.
  * @param at Byte offset in text buffer.
  * @return 0-based line number.
  */
@@ -343,7 +343,7 @@ export i32 line_of(borrow NodeRow n, i32 at) {
 
 /**
  * Returns the byte offset corresponding to the start of a given line index.
- * @param n Pointer to TextArea Node.
+ * @param n TextArea node row.
  * @param line 0-based line index.
  * @return Byte offset of line start.
  */
@@ -362,7 +362,7 @@ export i32 line_start(borrow NodeRow n, i32 line) {
 
 /**
  * Computes byte length of a line starting at `start` (excluding newline).
- * @param n Pointer to TextArea Node.
+ * @param n TextArea node row.
  * @param start Byte offset of line start.
  * @return Line length in bytes.
  */
@@ -379,7 +379,7 @@ export i32 line_len_at(borrow NodeRow n, i32 start) {
 
 /**
  * Calculates number of visible lines fitting inside a TextArea or List.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
  * @return Number of visible text lines.
  */
 export i32 visible_lines(borrow NodeRow n) {
@@ -393,7 +393,7 @@ export i32 visible_lines(borrow NodeRow n) {
 
 /**
  * Adjusts TextArea scroll offset to ensure the cursor line is visible.
- * @param n Pointer to TextArea Node.
+ * @param n TextArea node row.
  */
 export void text_area_reveal_cursor(borrow NodeRow n) {
     i32 line = line_of(&n, n.cursor);
@@ -406,7 +406,7 @@ export void text_area_reveal_cursor(borrow NodeRow n) {
 
 /**
  * Moves TextArea cursor to the same column on target line.
- * @param n Pointer to TextArea Node.
+ * @param n TextArea node row.
  * @param line Target line index.
  */
 export void text_area_goto_line(borrow NodeRow n, i32 line) {
@@ -423,7 +423,7 @@ export void text_area_goto_line(borrow NodeRow n, i32 line) {
 
 /**
  * Handles multi-line editing and navigation keyboard events for a TextArea node.
- * @param n Pointer to TextArea Node.
+ * @param n TextArea node row.
  * @param type KeyEventType value from the shared keyboard contract.
  * @param code Key code or ASCII character.
  * @param mods Active modifier keys bitmask.
@@ -510,9 +510,9 @@ export EditResult text_area_handle(borrow NodeRow n, i32 type, i32 code, i32 mod
 }
 
 /**
- * Appends a null-terminated string to a TextArea, dropping oldest lines if capacity is exceeded.
+ * Appends a string to a TextArea, dropping its oldest lines if capacity is exceeded.
  * @param id DOM Node ID of TextArea.
- * @param s Null-terminated string to append.
+ * @param s Text to append.
  */
 export void append_text(NodeId id, str s) {
     borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
@@ -730,7 +730,7 @@ export void list_click(NodeId id, i32 px, i32 py) {
 
 /**
  * Handles keyboard navigation (arrows/Home/End/Enter) on a focused List control.
- * @param n Pointer to List Node.
+ * @param n List node row.
  * @param type Keyboard event type.
  * @param code Key code.
  * @return EditResult enum indicating outcome (Moved or Unhandled).
@@ -924,7 +924,7 @@ export void menu_click(i32 px, i32 py) {
 
 /**
  * Tests whether a DOM node can accept keyboard focus.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
  * @return True if focusable, false otherwise.
  */
 export bool is_focusable(borrow NodeRow n) {

@@ -115,7 +115,7 @@ bool g_automation_first = true;
 
 /**
  * Transmits a raw string to the automation MMIO transport.
- * @param s Null-terminated string to send.
+ * @param s Text to send.
  */
 void automation_raw(str s) { automation_transport.put_view(s); }
 

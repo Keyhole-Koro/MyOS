@@ -25,7 +25,7 @@ import { NodeId } from "@contracts/ui/widget.contract.mln";
 
 /**
  * Resolves foreground text color for a node, returning fallback if unset.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
  * @param fallback Default RGB color if the node has none.
  * @return Resolved RGB color.
  */
@@ -35,7 +35,7 @@ export i32 node_fg(borrow NodeRow n, i32 fallback) {
 
 /**
  * Renders a WINDOW node including drop shadow, title bar, chrome buttons, resize grip, and border.
- * @param n Pointer to Window Node.
+ * @param n Window node row.
  */
 export void draw_window(borrow NodeRow n) {
     i32 s = dom.ui_scale();
@@ -140,7 +140,7 @@ export void draw_window(borrow NodeRow n) {
 
 /**
  * Renders a BUTTON node with hover, press, focus ring, and primary styling.
- * @param n Pointer to Button Node.
+ * @param n Button node row.
  */
 export void draw_button(borrow NodeRow n) {
     i32 s = dom.ui_scale();
@@ -188,7 +188,7 @@ export void draw_button(borrow NodeRow n) {
 // selection/hover highlight, the text area a caret.
 
 /**
- * Copies a slice of text bytes into a null-terminated destination buffer for safe rendering.
+ * Copies a slice of text bytes into a bounded Text for safe rendering.
  * @param buf Source text buffer.
  * @param start Start byte offset in source.
  * @param llen Number of bytes to copy.
@@ -207,7 +207,7 @@ export Text<160> copy_line(Blob buf, i32 start, i32 llen) {
 
 /**
  * Renders the background card and border for multi-row container controls.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
  * @param focused Non-zero if control has keyboard focus.
  */
 export void draw_rows_box(borrow NodeRow n, i32 focused) {
@@ -226,7 +226,7 @@ export void draw_rows_box(borrow NodeRow n, i32 focused) {
 
 /**
  * Renders a multi-line TEXT_AREA node, including text lines and cursor caret.
- * @param n Pointer to TextArea Node.
+ * @param n TextArea node row.
  */
 export void draw_text_area(borrow NodeRow n) {
     i32 s = dom.ui_scale();
@@ -295,7 +295,7 @@ export void draw_text_area(borrow NodeRow n) {
 
 /**
  * Renders text rows for List or Menu controls, highlighting the row in `sel`.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
  * @param hl_color Background RGB color for highlight.
  * @param hl_fg Foreground text RGB color for highlight.
  */
@@ -341,7 +341,7 @@ export void draw_rows(borrow NodeRow n, i32 hl_color, i32 hl_fg) {
 
 /**
  * Renders a LIST control showing item rows and selected item highlight.
- * @param n Pointer to List Node.
+ * @param n List node row.
  */
 export void draw_list(borrow NodeRow n) {
     i32 state = n.state;
@@ -358,7 +358,7 @@ export void draw_list(borrow NodeRow n) {
 
 /**
  * Renders a floating popup MENU control with drop shadow and hovered item highlight.
- * @param n Pointer to Menu Node.
+ * @param n Menu node row.
  */
 export void draw_menu(borrow NodeRow n) {
     i32 s = dom.ui_scale();
@@ -375,7 +375,7 @@ export void draw_menu(borrow NodeRow n) {
 
 /**
  * Renders a static TEXT node with left or centered alignment.
- * @param n Pointer to Text Node.
+ * @param n Text node row.
  */
 export void draw_text_node(borrow NodeRow n) {
     if (!n.text.is_live()) { return; }
@@ -396,7 +396,7 @@ export void draw_text_node(borrow NodeRow n) {
 
 /**
  * Renders a single-line TEXT_INPUT control with placeholder or text and blinking caret.
- * @param n Pointer to TextInput Node.
+ * @param n TextInput node row.
  */
 export void draw_text_input(borrow NodeRow n) {
     i32 s = dom.ui_scale();
@@ -446,7 +446,7 @@ export void draw_text_input(borrow NodeRow n) {
 
 /**
  * Renders a CHECKBOX control with box, checkmark, and label text.
- * @param n Pointer to Checkbox Node.
+ * @param n Checkbox node row.
  */
 export void draw_checkbox(borrow NodeRow n) {
     i32 s = dom.ui_scale();
@@ -503,7 +503,7 @@ export void draw_checkbox(borrow NodeRow n) {
 
 /**
  * Renders a rounded card PANEL container.
- * @param n Pointer to Panel Node.
+ * @param n Panel node row.
  */
 export void draw_panel(borrow NodeRow n) {
     i32 s = dom.ui_scale();
@@ -576,7 +576,7 @@ export Text<16> format_clock() {
 
 /**
  * Renders the desktop taskbar, launcher button, window list entries, and clock.
- * @param n Pointer to Taskbar Node.
+ * @param n Taskbar node row.
  */
 export void draw_taskbar(borrow NodeRow n) {
     i32 s = dom.ui_scale();
@@ -694,7 +694,7 @@ export void refresh_taskbar() {
 
 /**
  * Dispatches node drawing to the kind-specific drawing routine.
- * @param n Pointer to DOM Node to render.
+ * @param n DOM Node row to render.
  */
 export void draw_node(borrow NodeRow n) {
     i32 kind = n.kind;
@@ -736,7 +736,7 @@ export void draw_node(borrow NodeRow n) {
 
 /**
  * Checks if a node's full extent intersects the current paint damage rectangle.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
  * @return True if node overlaps damage area or full repaint active, false otherwise.
  */
 export bool node_in_damage(borrow NodeRow n) {

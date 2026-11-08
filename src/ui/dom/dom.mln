@@ -380,7 +380,7 @@ export NodeId (borrow NewNode self) keep() {
 /**
  * Allocates and initializes a new DOM node of the given kind with default values.
  * @param kind NodeKind enum variant.
- * @param name Null-terminated node name string.
+ * @param name Node name.
  * @return Newly allocated Node ID.
  */
 export Result<NodeId, UiError> create_node(i32 kind, str name) {
@@ -618,9 +618,9 @@ export Option<i32> node_y(NodeId id) {
 }
 
 /**
- * Returns the text content of a node, or null.
+ * Returns the text content of a node.
  * @param id DOM Node ID.
- * @return Pointer to text string.
+ * @return View of the node's text, or an empty string for a dead ID.
  */
 export str text_of(NodeId id) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return ""; }); };
@@ -630,7 +630,7 @@ export str text_of(NodeId id) {
 /**
  * Returns the debug / identifier name of a node.
  * @param id DOM Node ID.
- * @return Pointer to name string.
+ * @return View of the node's name, or an empty string for a dead ID.
  */
 export str name_of(NodeId id) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return ""; }); };
@@ -764,7 +764,7 @@ export void clear_damage() {
 
 /**
  * Checks if a node uses bold text styling.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
  * @return True if bold, false otherwise.
  */
 export bool text_bold(borrow NodeRow n) {
@@ -773,7 +773,7 @@ export bool text_bold(borrow NodeRow n) {
 
 /**
  * Computes rendered text width for a node based on UI scale and bold flag.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
  * @return Rendered text width in pixels.
  */
 export i32 text_width_of(borrow NodeRow n) {
@@ -786,7 +786,7 @@ export i32 text_width_of(borrow NodeRow n) {
 
 /**
  * Computes rendered text height for a node based on UI scale and bold flag.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
  * @return Rendered text height in pixels.
  */
 export i32 text_height_of(borrow NodeRow n) {
@@ -833,13 +833,13 @@ export void place_child(NodeId child_id, i32 x, i32 y) {
 
 /**
  * Recursively updates layout for container nodes (COLUMN or ROW).
- * @param n Pointer to container Node.
+ * @param n DOM Node row of the container.
  */
 export void relayout_container(borrow NodeRow n);
 
 /**
  * Lays out direct children of a column container top-to-bottom.
- * @param column Pointer to Column Node.
+ * @param column DOM Node row of the Column.
  */
 export void relayout_column(borrow NodeRow column) {
     i32 child_x = column.x + column.padding;
@@ -857,7 +857,7 @@ export void relayout_column(borrow NodeRow column) {
 
 /**
  * Lays out direct children of a row container left-to-right, top-aligned.
- * @param row Pointer to Row Node.
+ * @param row DOM Node row of the Row.
  */
 export void relayout_row(borrow NodeRow row) {
     i32 cursor_x = row.x + row.padding;
@@ -875,7 +875,7 @@ export void relayout_row(borrow NodeRow row) {
 
 /**
  * Dispatches layout calculation for a container node to relayout_column or relayout_row.
- * @param n Pointer to container Node.
+ * @param n DOM Node row of the container.
  */
 export void relayout_container(borrow NodeRow n) {
     i32 k = n.kind;
@@ -925,7 +925,7 @@ export void move_node(NodeId id, i32 dx, i32 dy) {
 /**
  * Sets the text content of a node, updating bounds for TEXT nodes and triggering damage.
  * @param id DOM Node ID.
- * @param text Null-terminated text string.
+ * @param text Text to show.
  */
 export void set_text(NodeId id, str text) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
@@ -1020,7 +1020,7 @@ export void set_column_layout(NodeId id, i32 padding, i32 gap) {
 
 /**
  * Determines whether a state flag change visibly alters a node's rendering.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
  * @param flag NodeState flag.
  * @return True if visible appearance changes, false otherwise.
  */
@@ -1167,7 +1167,7 @@ export Result<Option<fn(Option<Pid> owner, NodeId id, i32 arg) -> void>, UiError
 /**
  * Queues the value change handler of a node if registered, via the
  * (owner, id, arg) event queue -- not a direct call.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
  */
 export void fire_change(borrow NodeRow n) {
     emit(&n, UiEventKind::CHANGE, n.on_change, change_value(&n));
@@ -1247,7 +1247,7 @@ export Result<_, UiError> append_child(NodeId parent_id, NodeId child_id) {
 
 /**
  * Unlinks a node from its parent's sibling linked-list without freeing or damaging.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
  */
 export void unlink(borrow NodeRow n) {
     dom_model.node_from_raw((i32)n.id).children_detach();
@@ -1489,7 +1489,7 @@ export i32 paint_height() { return g_paint.y1 - g_paint.y0; }
 
 /**
  * Checks whether a node clips its children to its bounding box.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
  * @return True if container clips children, false otherwise.
  */
 export bool clips_children(borrow NodeRow n) {
