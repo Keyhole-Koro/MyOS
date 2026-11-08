@@ -201,10 +201,7 @@ Option<i32> owner_slot(Pid owner, i32 make) {
         i++;
     }
     if (make == 0) { return None; }
-    i32 slot = case free of {
-        Some(v) -> v;
-        None -> ({ return None; });
-    };
+    i32 slot = free?;
     g_owner_nodes[slot] = OwnerNodes { owner: Some(owner), count: 0 };
     return Some(slot);
 }
@@ -602,7 +599,7 @@ export void unlock() {
  * @return Some(kind) or None.
  */
 export Option<NodeKind> kind_of(NodeId id) {
-    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return None; }); };
+    borrow NodeRow n = find_row(id)?;
     return Some(n.kind);
 }
 

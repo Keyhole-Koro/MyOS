@@ -695,7 +695,7 @@ export void list_select(NodeId id, i32 index) {
  * @return Option containing 0-based row index, or None.
  */
 export Option<i32> list_row_at(NodeId id, i32 px, i32 py) {
-    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return None; }); };
+    borrow NodeRow n = dom.find_row(id)?;
     i32 s = dom.ui_scale();
     i32 pad = 8 * s;
     i32 lh = ui_metrics.text_height(0, s);
