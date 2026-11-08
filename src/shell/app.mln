@@ -690,7 +690,7 @@ export void install() {
     scan_disk();
     dom_render.set_launcher(launch_menu);
     shell_install.set_desktop_menu(menu_items(), on_menu);
-    dom.set_key_filter(dispatch_key);
+    dom_widgets.set_key_filter(dispatch_key);
     case dom_widgets.create_timer(50, reap_exited) of {
         Ok(_) -> _;
         Err(_) -> ({ debug.panic("app: reaper timer creation failed"); });

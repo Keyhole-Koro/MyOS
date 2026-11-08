@@ -173,6 +173,19 @@ export void maximize_window(NodeId win) {
     dom.set_state_flag(win, NodeState::MAXIMIZED, 1);
 }
 
+// --- keys ----------------------------------------------------------------------------------------
+
+// Installed by the shell: filter(owner, code, mods) sees every key DOWN
+// before the focused widget and returns true to claim it (shortcuts).
+bool no_key_filter(Option<Pid> owner, i32 code, i32 mods) { return false; }
+fn(Option<Pid> owner, i32 code, i32 mods) -> bool g_key_filter = no_key_filter;
+
+/**
+ * Installs the key-down filter called before the focused widget receives a key.
+ * @param handler Callback (owner, key_code, modifiers) returning true to consume the key.
+ */
+export void set_key_filter(fn(Option<Pid> owner, i32 code, i32 mods) -> bool handler) { g_key_filter = handler; }
+
 /**
  * Dispatches a keyboard event to the currently focused node or handles window/menu shortcuts.
  * @param type KeyEventType value from the shared keyboard contract.
@@ -189,7 +202,7 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
             return;
         }
         // App shortcuts (@key) for the active window's app go first.
-        fn(Option<Pid> owner, i32 code, i32 mods) -> bool filter = dom.key_filter();
+        fn(Option<Pid> owner, i32 code, i32 mods) -> bool filter = g_key_filter;
         case dom.row_in(dom.active_window_id()) of {
             Some(win) -> ({ if (filter(win.owner, code, mods)) { return; } });
             None -> _;

@@ -159,11 +159,6 @@ export void note_app_starting(i32 delta) { g_apps_starting = g_apps_starting + d
  */
 export i32 apps_starting() { return g_apps_starting; }
 
-// Installed by the app framework: filter(owner, code, mods) sees every
-// key DOWN before the focused widget and returns 1 to claim it (shortcuts).
-bool no_key_filter(Option<Pid> owner, i32 code, i32 mods) { return false; }
-fn(Option<Pid> owner, i32 code, i32 mods) -> bool g_key_filter = no_key_filter;
-
 // Pending handler calls.
 export const i32 EVENT_MAX = 64;
 struct PendingEvent {
@@ -433,18 +428,6 @@ export void set_owner(NodeId id, Pid owner) {
         set_owner(child, owner);
     }
 }
-
-/**
- * Installs the key-down filter called before the focused widget receives a key.
- * @param handler Callback (owner, key_code, modifiers) returning true to consume the key.
- */
-export void set_key_filter(fn(Option<Pid> owner, i32 code, i32 mods) -> bool handler) { g_key_filter = handler; }
-
-/**
- * Returns the currently installed key-filter callback.
- * @return Callback function, which keeps every key until a filter is installed.
- */
-export fn(Option<Pid> owner, i32 code, i32 mods) -> bool key_filter() { return g_key_filter; }
 
 /**
  * Returns the app process ID whose view or event handler is currently running.
