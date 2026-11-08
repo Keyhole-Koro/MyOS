@@ -213,12 +213,6 @@ export const i32 TIMER_MAX = 16;
 NodeId g_timer_ids[16];
 i32 g_timer_count = 0;
 
-// Scratch rectangle for helpers that hand back a rect (no multiple returns).
-i32 g_ext_x = 0;
-i32 g_ext_y = 0;
-i32 g_ext_w = 0;
-i32 g_ext_h = 0;
-
 /**
  * Increments the global DOM revision counter when observable tree changes occur.
  */
@@ -683,15 +677,11 @@ void damage_union_into(borrow DamageRect entry, DamageRect rect) {
 /**
  * Adds a rectangle to the damage list, clipped to the display.
  * Merges into an overlapping entry if present, or creates a new entry.
- * @param x Rectangle X position.
- * @param y Rectangle Y position.
- * @param w Rectangle width.
- * @param h Rectangle height.
+ * @param rect Rectangle in display coordinates.
  */
-export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
+void damage_rect(DamageRect rect) {
     i32 display_width = ui_metrics.display_width();
     i32 display_height = ui_metrics.display_height();
-    DamageRect rect = DamageRect { x0: x, y0: y, x1: x + w, y1: y + h };
 
     if (rect.x0 < 0) { rect.x0 = 0; }
     if (rect.y0 < 0) { rect.y0 = 0; }
@@ -718,10 +708,10 @@ export void damage_rect(i32 x, i32 y, i32 w, i32 h) {
 
 /**
  * Calculates the full painted extent of a node (including window shadows).
- * Results are stored in g_ext_x, g_ext_y, g_ext_w, g_ext_h.
- * @param n Pointer to DOM Node.
+ * @param n DOM Node row.
+ * @return The extent in display coordinates.
  */
-export void node_extent(borrow NodeRow n) {
+DamageRect node_extent(borrow NodeRow n) {
     i32 x = n.x;
     i32 y = n.y;
     i32 w = n.w;
@@ -735,10 +725,7 @@ export void node_extent(borrow NodeRow n) {
         w = w + 2 * size;
         h = h + 2 * size + off;
     }
-    g_ext_x = x;
-    g_ext_y = y;
-    g_ext_w = w;
-    g_ext_h = h;
+    return DamageRect { x0: x, y0: y, x1: x + w, y1: y + h };
 }
 
 /**
@@ -746,8 +733,7 @@ export void node_extent(borrow NodeRow n) {
  * @param n DOM Node row.
  */
 export void damage_row(borrow NodeRow n) {
-    node_extent(&n);
-    damage_rect(g_ext_x, g_ext_y, g_ext_w, g_ext_h);
+    damage_rect(node_extent(&n));
 }
 
 /**
@@ -1223,16 +1209,17 @@ export bool dispatch_click(NodeId id) {
 // --- tree structure -----------------------------------------------------------------------
 
 /**
- * Computes origin offset for children within a parent node (below window titlebar).
- * Results are stored in g_ext_x and g_ext_y.
- * @param parent Pointer to parent Node.
+ * Computes where children's content starts within a parent node: its top,
+ * or below the title bar of a window. Content starts at the parent's left edge.
+ * @param parent DOM Node row of the parent.
+ * @return Display Y coordinate of the content origin.
  */
-export void content_origin(borrow NodeRow parent) {
-    g_ext_x = parent.x;
-    g_ext_y = parent.y;
+i32 content_top(borrow NodeRow parent) {
+    i32 top = parent.y;
     if (parent.kind == NodeKind::WINDOW) {
-        g_ext_y = g_ext_y + ui_metrics.titlebar_height() * ui_scale();
+        top = top + ui_metrics.titlebar_height() * ui_scale();
     }
+    return top;
 }
 
 /**
@@ -1248,8 +1235,7 @@ export Result<_, UiError> append_child(NodeId parent_id, NodeId child_id) {
 
     // Authored coordinates are relative to the parent's content origin;
     // stored coordinates are absolute, so shift the whole subtree once.
-    content_origin(&parent);
-    offset_subtree(child_id, g_ext_x, g_ext_y);
+    offset_subtree(child_id, parent.x, content_top(&parent));
     damage_node(child_id);
 
     // A Column/Row controls the positions of its direct children. This runs
@@ -1487,11 +1473,11 @@ export void select_full_paint() { g_painting_all = true; }
 /** Returns true when a node overlaps the selected paint region. */
 export bool node_intersects_paint(borrow NodeRow node) {
     if (g_painting_all) { return true; }
-    node_extent(&node);
-    if (g_ext_x + g_ext_w <= g_paint.x0) { return false; }
-    if (g_ext_y + g_ext_h <= g_paint.y0) { return false; }
-    if (g_ext_x >= g_paint.x1) { return false; }
-    if (g_ext_y >= g_paint.y1) { return false; }
+    DamageRect extent = node_extent(&node);
+    if (extent.x1 <= g_paint.x0) { return false; }
+    if (extent.y1 <= g_paint.y0) { return false; }
+    if (extent.x0 >= g_paint.x1) { return false; }
+    if (extent.y0 >= g_paint.y1) { return false; }
     return true;
 }
 
