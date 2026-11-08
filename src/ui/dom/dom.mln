@@ -134,8 +134,6 @@ NodeId g_desktop_node_id;  // set while the desktop is built; UI attaches under 
 Option<NodeId> g_taskbar_id;    // the desktop's taskbar node, drawn above windows
 Option<NodeId> g_active_window; // window with STATE_FOCUSED (front-most, gets keys)
 Option<NodeId> g_focus_id;      // node with keyboard focus (a TextInput)
-void no_launcher() { }
-fn() -> void g_launcher = no_launcher; // taskbar launcher button
 
 // The app instance whose code is running right now (a handler drained from
 // the event queue, or a view() being mounted); create_node stamps it into
@@ -1391,12 +1389,6 @@ export Option<NodeId> focus_id() { return g_focus_id; }
 
 /** Updates the focused control ID; None records that no control has focus. */
 export void set_focus_id(Option<NodeId> id) { g_focus_id = id; }
-
-/** Returns the taskbar launcher callback address. */
-export fn() -> void launcher_handler() { return g_launcher; }
-
-/** Installs the taskbar launcher callback address. */
-export void set_launcher_handler(fn() -> void handler) { g_launcher = handler; }
 
 /** Returns the number of registered timer nodes. */
 export i32 timer_count() { return g_timer_count; }

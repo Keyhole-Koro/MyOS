@@ -678,13 +678,21 @@ export TaskbarTarget taskbar_target_at(i32 px, i32 py) {
     return TaskbarTarget::Miss;
 }
 
+// What the launcher button does; the shell installs it.
+void no_launcher() { }
+fn() -> void g_launcher = no_launcher;
+
 /**
  * Registers an application launcher callback for the taskbar launcher button.
  * @param handler Function pointer to launcher callback: fn().
  */
-export void set_launcher(fn() -> void handler) {
-    dom.set_launcher_handler(handler);
-}
+export void set_launcher(fn() -> void handler) { g_launcher = handler; }
+
+/**
+ * Returns the callback for the taskbar launcher button.
+ * @return The callback set_launcher installed, or one that does nothing.
+ */
+export fn() -> void launcher_handler() { return g_launcher; }
 
 /**
  * Invalidates the taskbar node area to refresh the clock display.
