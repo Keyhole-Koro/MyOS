@@ -1,5 +1,13 @@
 import { kernel_main } from "main.unsafe.mln"
+import _end
 
+; The firmware jumps to the image's first word. The word after it holds where
+; the image ends: the firmware loads the first 64 KB block, reads it there, and
+; then loads the rest (system/MyFirmware/src/fw/main.unsafe.mln).
 __START__:
+  jmp kernel_boot
+kernel_image_end:
+  .word _end
+kernel_boot:
   call kernel_main
   halt
