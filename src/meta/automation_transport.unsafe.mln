@@ -67,6 +67,18 @@ export void put_json_string(str s) {
         } else if (c == '\n') {
             mem.write_word(TX_ADDR, '\\');
             mem.write_word(TX_ADDR, 'n');
+        } else if (c == '\t') {
+            mem.write_word(TX_ADDR, '\\');
+            mem.write_word(TX_ADDR, 't');
+        } else if (c < 32) {
+            // Any other control character, which JSON does not allow bare.
+            mem.write_word(TX_ADDR, '\\');
+            mem.write_word(TX_ADDR, 'u');
+            mem.write_word(TX_ADDR, '0');
+            mem.write_word(TX_ADDR, '0');
+            i32 low = c % 16;
+            mem.write_word(TX_ADDR, '0' + c / 16);
+            mem.write_word(TX_ADDR, low < 10 ? '0' + low : 'a' + low - 10);
         } else {
             mem.write_word(TX_ADDR, c);
         }

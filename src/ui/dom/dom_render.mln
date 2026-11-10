@@ -5,6 +5,8 @@ import scheduler from "@kernel/kernel/scheduler.mln";
 import graphics from "@os/ui/graphics.mln";
 import theme from "@os/ui/theme.mln";
 import dom_menu from "dom_menu.mln";
+import dom_graph from "dom_graph.mln";
+import { Samples } from "dom_graph.mln";
 import dom_text_edit from "dom_text_edit.mln";
 import dom_window_chrome from "dom_window_chrome.mln";
 import dom from "dom.mln";
@@ -337,6 +339,72 @@ export void draw_rows(borrow NodeRow n, i32 hl_color, i32 hl_fg) {
         graphics.draw_label(x + pad + 4 * s, ty, label_6, color, 0, s);
         start = start + llen + 1;
         row = row + 1;
+    }
+}
+
+/**
+ * Renders a GRAPH: a card with lines at each quarter, the first series filled
+ * under an accent line and the second as a line over it. The samples span the
+ * width newest-right, so a series still filling up starts partway across.
+ * @param n Graph node row.
+ */
+export void draw_graph(borrow NodeRow n) {
+    i32 s = dom.ui_scale();
+    draw_rows_box(&n, 0);
+    i32 pad = 8 * s;
+    i32 left = n.x + pad;
+    i32 top = n.y + pad;
+    i32 w = n.w - 2 * pad;
+    i32 h = n.h - 2 * pad;
+    if (w <= 0 || h <= 0) { return; }
+    i32 k = 1;
+    while (k < 4) {
+        graphics.blend_rect(left, top + h * k / 4, w, s, theme.GRAPH_GRID);
+        k++;
+    }
+    i32 cap = n.cap;
+    Samples samples = Samples {};
+    dom_graph.parse_series(dom_graph.series_text(&n, 0), cap, &samples);
+    draw_series(&samples, cap, left, top, w, h, true, theme.ACCENT);
+    dom_graph.parse_series(dom_graph.series_text(&n, 1), cap, &samples);
+    draw_series(&samples, cap, left, top, w, h, false, theme.GRAPH_SECOND);
+}
+
+/**
+ * Draws one series of a graph as a line, two pixels thick at UI scale 1.
+ * @param v The samples, oldest first.
+ * @param cap How many samples span the width.
+ * @param left Left of the plot area.
+ * @param top Top of the plot area: 100%.
+ * @param w Width of the plot area.
+ * @param h Height of the plot area.
+ * @param filled Whether to fill the area under the line.
+ * @param color Line colour.
+ */
+void draw_series(borrow Samples v, i32 cap, i32 left, i32 top, i32 w, i32 h, bool filled, i32 color) {
+    i32 thickness = 2 * dom.ui_scale();
+    i32 bottom = top + h;
+    i32 first = cap - v.count; // where the oldest sample goes
+    i32 i = 0;
+    while (i + 1 < v.count) {
+        i32 x0 = left + w * (first + i) / (cap - 1);
+        i32 x1 = left + w * (first + i + 1) / (cap - 1);
+        i32 y0 = bottom - h * v.values[i] / 100;
+        i32 y1 = bottom - h * v.values[i + 1] / 100;
+        if (filled) {
+            i32 x = x0;
+            while (x < x1) {
+                i32 y = y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+                if (y < bottom) { graphics.blend_rect(x, y, 1, bottom - y, theme.GRAPH_FILL); }
+                x++;
+            }
+        }
+        i32 t = 0;
+        while (t < thickness) {
+            graphics.draw_line(x0, y0 - t, x1, y1 - t, color);
+            t++;
+        }
+        i++;
     }
 }
 
@@ -717,6 +785,8 @@ export void draw_node(borrow NodeRow n) {
         draw_text_area(&n);
     } else if (kind == NodeKind::LIST) {
         draw_list(&n);
+    } else if (kind == NodeKind::GRAPH) {
+        draw_graph(&n);
     } else if (kind == NodeKind::MENU) {
         draw_menu(&n);
     } else if (kind == NodeKind::BOX) {

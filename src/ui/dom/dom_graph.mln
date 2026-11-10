@@ -1,0 +1,97 @@
+package dom_graph;
+
+import dom from "dom.mln";
+import { NodeRow } from "dom_model.mln";
+import { Blob } from "@std/memory/blob.mln";
+import { Option } from "@std/core/option.mln";
+import { NodeKind } from "dom.mln";
+import { Text } from "@std/text/text.mln";
+import str from "@std/text/str.mln";
+import { NodeId } from "@contracts/ui/widget.contract.mln";
+
+// The Graph control: up to two series of percentages, 0 to 100, over time.
+// The node's text holds them as the app sent them, decimal numbers apart by
+// spaces, the first series on the first line and the second on the next, so a
+// DOM snapshot shows the values. The newest sample is the last.
+
+/**
+ * Replaces one series of a Graph node.
+ * @param id DOM Node ID of a Graph.
+ * @param series 0 for the filled series, 1 for the line drawn over it.
+ * @param values Decimal percentages apart by spaces, oldest first.
+ */
+export void graph_set(NodeId id, i32 series, str values) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    if (n.kind != NodeKind::GRAPH || series < 0 || series > 1) { return; }
+    // Both lines are rebuilt from a copy: `values` replaces one of them.
+    Text<512> first = Text<512> {};
+    Text<512> second = Text<512> {};
+    if (series == 0) { first.append(values); } else { first.append(series_text(&n, 0)); }
+    if (series == 1) { second.append(values); } else { second.append(series_text(&n, 1)); }
+    Text<1024> joined = Text<1024> {};
+    joined.append(first.as_str());
+    if (second.length > 0) {
+        joined.append("\n");
+        joined.append(second.as_str());
+    }
+    n.text.write(joined.as_str());
+    dom.damage_row(&n);
+    dom.touch();
+}
+
+/**
+ * One series of a Graph node, as text.
+ * @param n Graph node row.
+ * @param series 0 or 1.
+ * @return Its numbers, empty when it has none.
+ */
+export str series_text(borrow NodeRow n, i32 series) {
+    str all = n.text.as_str();
+    i32 newline = 0;
+    while (newline < all.length && all.byte(newline) != '\n') { newline++; }
+    i32 start = series == 0 ? 0 : newline + 1;
+    i32 end = series == 0 ? newline : all.length;
+    if (start > end) { return ""; }
+    return case all.slice(start, end) of { Some(view) -> view; None -> ""; };
+}
+
+/**
+ * A series read into numbers.
+ * @property values The numbers, oldest first, each 0..100.
+ * @property count How many `values` holds.
+ */
+export struct Samples {
+    i32 values[120];
+    i32 count;
+};
+
+/**
+ * Reads a series into numbers, keeping the newest when there are too many.
+ * @param text A series as series_text returns it.
+ * @param cap The most to keep, at most 120.
+ * @param out Where the numbers go.
+ */
+export void parse_series(str text, i32 cap, borrow Samples out) {
+    out.count = 0;
+    i32 i = 0;
+    while (i < text.length) {
+        while (i < text.length && !graph_digit(text.byte(i))) { i++; }
+        if (i >= text.length) { break; }
+        i32 value = 0;
+        while (i < text.length && graph_digit(text.byte(i))) {
+            value = value * 10 + (text.byte(i) - '0');
+            if (value > 100) { value = 100; }
+            i++;
+        }
+        if (out.count == cap) {
+            // Full: drop the oldest.
+            i32 k = 1;
+            while (k < cap) { out.values[k - 1] = out.values[k]; k++; }
+            out.count = cap - 1;
+        }
+        out.values[out.count] = value;
+        out.count++;
+    }
+}
+
+bool graph_digit(i32 c) { return c >= '0' && c <= '9'; }

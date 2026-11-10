@@ -731,6 +731,14 @@ export void fill_disc(i32 cx, i32 cy, i32 r, i32 color) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Tab stops, in logical pixels. The nth tab on a line moves the pen to n stops
+ * from where the line starts, however wide the text before it is, so lines
+ * with the same number of tabs before a column line it up: tables are text.
+ * Text wider than its column runs into the next one.
+ */
+const i32 TAB_STOP = 20;
+
+/**
  * Returns the line height in pixels for proportional font_sans.
  * @param bold True for bold typeface.
  * @param scale Font scaling factor (1 or 2).
@@ -751,18 +759,7 @@ export i32 text_height(bool bold, i32 scale) {
  */
 @safe
 export i32 text_width(str s, bool bold, i32 scale) {
-    i32 face = font_sans.face_for(bold, scale);
-    i32 w = 0;
-    i32 i = 0;
-    i32 c = text_byte(s, i);
-    while (c != 0) {
-        if (c != 10) {
-            w = w + font_sans.advance(face, c);
-        }
-        i++;
-        c = text_byte(s, i);
-    }
-    return w;
+    return text_width_n(s, s.length, bold, scale);
 }
 
 // The byte at `i`, or zero past the end, which ends the loops below.
@@ -783,11 +780,15 @@ i32 text_byte(str s, i32 i) {
 export i32 text_width_n(str s, i32 n, bool bold, i32 scale) {
     i32 face = font_sans.face_for(bold, scale);
     i32 w = 0;
+    i32 tabs = 0;
     i32 i = 0;
     i32 c = text_byte(s, i);
     while (c != 0) {
         if (i >= n) { return w; }
-        if (c != 10) {
+        if (c == 9) {
+            tabs++;
+            w = tabs * TAB_STOP * scale;
+        } else if (c != 10) {
             w = w + font_sans.advance(face, c);
         }
         i++;
@@ -836,12 +837,17 @@ export void draw_label(i32 x, i32 y, str s, i32 color, bool bold, i32 scale) {
     i32 line_h = font_sans.line_height(face);
     i32 cx = x;
     i32 cy = y;
+    i32 tabs = 0;
     i32 i = 0;
     i32 c = text_byte(s, i);
     while (c != 0) {
         if (c == 10) {
             cx = x;
             cy = cy + line_h;
+            tabs = 0;
+        } else if (c == 9) {
+            tabs++;
+            cx = x + tabs * TAB_STOP * scale;
         } else {
             // Skip glyphs entirely outside the clip without touching DMA2D.
             i32 adv = font_sans.advance(face, c);

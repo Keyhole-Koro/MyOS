@@ -38,7 +38,7 @@ Result<_, UiError> tag(NodeId id, char *testId) {
  *
  * Supports creating windows, buttons, primary buttons, text, labels, boxes,
  * panels, columns, rows, text inputs, checkboxes, separators, timers, text areas,
- * and lists, as well as appending child nodes.
+ * lists and graphs, as well as appending child nodes.
  *
  * @param m Pointer to Request descriptor with layout bounds, styles, and text.
  * @return Ok(node ID), or a typed UiError preserving the failure cause.
@@ -99,6 +99,8 @@ export Result<NodeId, UiError> create(Request *m) {
     } else if (op == UiOp::CREATE_LIST) {
         id = dom_elements.create_list(s0, x, y, w, h, m->a4)?;
         dom.set_hit_testable(id, 1); // rows select on click even with no handler
+    } else if (op == UiOp::CREATE_GRAPH) {
+        id = dom_elements.create_graph(x, y, w, h, m->a4)?;
     } else {
         return Err(UiError::UnknownOperation(op));
     }

@@ -52,6 +52,7 @@ export enum NodeKind {
     TEXT_AREA,
     LIST,
     MENU,
+    GRAPH,
 }
 
 /** Accessibility and automation roles assigned to DOM nodes. */
@@ -69,6 +70,7 @@ export enum NodeRole {
     TEXTAREA,
     LIST,
     MENU,
+    GRAPH,
 }
 
 /** Bit flags describing visibility, interaction, focus, and widget state. */

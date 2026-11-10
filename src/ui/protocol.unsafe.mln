@@ -16,6 +16,7 @@ import dom from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
 import dom_focus from "dom/dom_focus.mln";
 import dom_list from "dom/dom_list.mln";
+import dom_graph from "dom/dom_graph.mln";
 import dom_text_edit from "dom/dom_text_edit.mln";
 import irq from "@kernel/arch/irq.mln";
 import protocol_elements from "protocol_elements.mln";
@@ -88,6 +89,7 @@ RequestStatus run_request(Request *m) {
     if (op == UiOp::AREA_CLEAR)     { area_clear(id); return RequestStatus::OK; }
     if (op == UiOp::LIST_SET_ITEMS) { list_set_items(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::LIST_SELECT)    { dom_list.list_select(id, m->a1); return RequestStatus::OK; }
+    if (op == UiOp::GRAPH_SET)      { dom_graph.graph_set(id, m->a1, str.from_c(m->s0)); return RequestStatus::OK; }
     if (op == UiOp::FOCUS)          { focus(id); return RequestStatus::OK; }
     if (op == UiOp::SEND_KEY)       { send_key(m->a0, m->a1, m->a2); return RequestStatus::OK; }
     if (op >= UiOp::CREATE_WINDOW && op <= UiOp::APPEND_CHILD) {

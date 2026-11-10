@@ -55,6 +55,11 @@ export const i32 PANEL_BG = 0xFFFFFF;
 export const i32 PANEL_BORDER = 0x1E000000;
 export const i32 SEPARATOR = 0x1E000000;
 
+// Graph: the filled series under the accent line, and the second series.
+export const i32 GRAPH_FILL = 0x383B82F6;
+export const i32 GRAPH_GRID = 0x14000000;
+export const i32 GRAPH_SECOND = 0xF59E0B;
+
 export const i32 INPUT_BG = 0xFFFFFF;
 export const i32 INPUT_BORDER = 0x3C000000;
 export const i32 INPUT_BORDER_FOCUS = ACCENT;

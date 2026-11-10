@@ -636,3 +636,15 @@ checked/hitTestableを含める。host側は`MyOS` / strict `Locator` / `expect`
 - `dom_widgets.taskbar_node_height()` はタスクバーのノードの実際の高さ（表示ピクセル）で、
   `ui_metrics.taskbar_height()` はテーマの論理値。
 - `node_extent` は範囲を `DamageRect` で返す（以前は `g_ext_*` に書いていた）。
+
+## 2026-11-10: Graph とタブ
+
+- 新ノード種別 `GRAPH`（role `graph`）。`dom_elements.create_graph(x, y, w, h, samples)` が作り、
+  `dom_graph.graph_set(id, series, values)` が系列を入れ替える。text は系列 0 の行と系列 1 の行で、
+  各行は 0〜100 の数を空白で区切ったもの（snapshot の `text` にそのまま出る）。`cap` は横幅に並ぶ
+  標本の数。描画は `dom_render.draw_graph`：四分の一ごとの線、系列 0 を塗りつぶして accent の線、
+  系列 1 を `GRAPH_SECOND` の線。新しい標本が右端。
+- 文字のタブ：行の n 個目のタブは、行頭から `TAB_STOP`（20 論理ピクセル）× n の位置へ移る。
+  前の文字の幅によらないので、同じ数のタブを置いた行どうしは列がそろう。`draw_label`・
+  `text_width`・`text_width_n` が同じ規則で測る。
+- snapshot の JSON は、改行に加えてタブと他の制御文字もエスケープする。

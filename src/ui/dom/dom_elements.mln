@@ -223,6 +223,41 @@ export Result<NodeId, UiError> create_separator(i32 x, i32 y, i32 w) {
     return Ok(id);
 }
 
+/** The most samples a GRAPH shows across its width. */
+const i32 GRAPH_MAX_SAMPLES = 120;
+
+/**
+ * Creates a GRAPH: up to two series of percentages over time, newest at the
+ * right. Its text holds them as decimal numbers, the first series on the first
+ * line and the second on the next (see dom_graph).
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param samples How many samples span the width, 2 to GRAPH_MAX_SAMPLES.
+ * @return DOM Node ID.
+ */
+export Result<NodeId, UiError> create_graph(i32 x, i32 y, i32 w, i32 h, i32 samples) {
+    if (samples < 2) { samples = 2; }
+    if (samples > GRAPH_MAX_SAMPLES) { samples = GRAPH_MAX_SAMPLES; }
+    NewNode node = NewNode { id: dom.create_node(NodeKind::GRAPH, "graph")? };
+    NodeId id = node.id;
+    dom.set_role(id, NodeRole::GRAPH);
+    dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
+    borrow NodeRow n = dom.row_of(id);
+    // Two lines of up to `samples` numbers of at most three digits and a space.
+    i32 bytes = samples * 8 + 2;
+    Blob buf = case blob.blob_new(bytes) of {
+        Some(value) -> value;
+        None -> ({ return Err(UiError::AllocationFailed(bytes)); });
+    };
+    buf.put(0, (char)0);
+    n.text = buf;
+    n.cap = (u16)samples;
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
+    return Ok(node.keep());
+}
+
 /**
  * Creates an editable or read-only multi-line TEXT_AREA control.
  * @param name Node identifier name.
@@ -308,5 +343,6 @@ export str role_name(NodeRole role) {
     if (role == NodeRole::CHECKBOX) { return "checkbox"; }
     if (role == NodeRole::TOOLBAR) { return "toolbar"; }
     if (role == NodeRole::SEPARATOR) { return "separator"; }
+    if (role == NodeRole::GRAPH) { return "graph"; }
     return "none";
 }
