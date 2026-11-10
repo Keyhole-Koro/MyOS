@@ -28,7 +28,7 @@ from mydomtester import MyOS, expect  # noqa: E402
 
 # Registry order: the executables on the disk that declare @app, in MFS
 # entry order (tools/mkfs.py adds them sorted by name).
-MENU = ["Counter", "Editor", "Files", "Notes", "Terminal"]
+MENU = ["Counter", "Editor", "Files", "Notes", "Task Manager", "Terminal"]
 MOD_CTRL = 2
 ROW_H = 39  # menu row height at 2x UI scale (see apps_e2e_test.py)
 
@@ -67,7 +67,7 @@ def launch_app(os, name):
             raise AssertionError("the launcher menu did not open")
         time.sleep(0.05)
     menu = os.get_by_role("menu").snapshot()
-    row = MENU.index(name)
+    row = menu.text.split("\n").index(name)  # one row per line of its text
     click_point(os, menu.bounds.x + 40, menu.bounds.y + 16 + ROW_H * row + ROW_H // 2)
     deadline = time.monotonic() + 10.0
     while not [n for n in os.snapshot().nodes

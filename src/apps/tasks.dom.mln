@@ -1,0 +1,472 @@
+package tasks;
+
+import app from "@app/app.mln";
+import { App, View } from "@app/app.mln";
+import elements from "@app/elements.mln";
+import ui from "@app/ui.mln";
+import { app, timer } from "@app/annotations.mln";
+import process from "@std/hosted/process.mln";
+import { ProcStats, ProcInfo, ProcActivity, CpuTimes } from "@contracts/myos/process-args.contract.mln";
+import str from "@std/text/str.mln";
+import { Text } from "@std/text/text.mln";
+import { Option } from "@std/core/option.mln";
+
+// Task Manager: what is running and what it costs, read once a second. It only
+// shows: a process controls nothing but its own children, so it ends nothing.
+//
+// CPU time is counted in timer ticks, each charged to whatever it interrupted.
+// A share is the ticks something took between two readings over all the ticks
+// between them. The graph keeps a minute of shares: the whole CPU filled, and
+// the selected row as a line over it.
+//
+// The list is a table because a tab moves to the next column: the nth tab on a
+// line goes to n tab stops from its start, so the header and every row put the
+// same number of tabs before a column (see `cell`).
+
+const i32 SAMPLES = 60;    // one a second: a minute across the graph
+const i32 OS_SERIES = 16;  // series 0..15 follow processes
+const i32 CPU_SERIES = 17;
+const i32 OS_KEY = 0;      // the OS's own row: no process has pid 0
+const i32 NO_KEY = -1;
+
+// Where each column starts, in tab stops from the start of the line.
+const i32 COL_PID = 7;
+const i32 COL_THREADS = 9;
+const i32 COL_CPU = 12;
+const i32 COL_MEMORY = 15;
+const i32 COL_STATE = 19;
+
+/**
+ * The Task Manager's state.
+ * @property last The previous reading: shares are what changed since.
+ * @property keys What each series follows: a pid, OS_KEY, or NO_KEY when free.
+ * @property counts How many samples each series has, up to SAMPLES.
+ * @property samples Each series' shares, oldest first, SAMPLES apart.
+ * @property row_keys What each row of the list shows, top first.
+ * @property row_count Rows in the list.
+ * @property rows The list's rows.
+ * @property header The column titles over the list.
+ * @property selected The selected row.
+ * @property selected_key What the selected row shows; it stays selected as rows move.
+ * @property fill The whole CPU's series, as the graph takes it.
+ * @property line The selected row's series.
+ * @property cpu The CPU's share now.
+ * @property chosen The selected row's name and share now.
+ * @property summary The status line.
+ */
+@app(name = "Task Manager", single)
+struct Tasks {
+    ProcStats last;
+    i32 keys[18];
+    i32 counts[18];
+    u8 samples[1080];
+    i32 row_keys[17];
+    i32 row_count;
+    Text<1024> rows;
+    Text<96> header;
+    Option<i32> selected;
+    i32 selected_key;
+    Text<256> fill;
+    Text<256> line;
+    Text<32> cpu;
+    Text<48> chosen;
+    Text<96> summary;
+};
+
+impl App for Tasks {
+    Self start() {
+        Tasks t = Tasks { selected_key: NO_KEY };
+        i32 i = 0;
+        while (i < OS_SERIES) { t.keys[i] = NO_KEY; i++; }
+        t.keys[OS_SERIES] = OS_KEY;
+        cell(&t.header, "Name", COL_PID);
+        cell(&t.header, "PID", COL_THREADS);
+        cell(&t.header, "Threads", COL_CPU);
+        cell(&t.header, "CPU", COL_MEMORY);
+        cell(&t.header, "Memory", COL_STATE);
+        t.header.append("State");
+        t.last = process.stats();
+        t.show();
+        return t;
+    }
+
+    View (Self t) view() {
+        return <Window title="Task Manager" w={560} h={500}>
+            <Label text={t.cpu} x={16} y={12} bold={1} testId="cpu-share" />
+            <Label text={t.chosen} x={160} y={12} color={ui.GRAPH_SECOND} testId="selected-share" />
+            <Graph x={16} y={40} w={528} h={120} samples={60} fill={t.fill} line={t.line} testId="cpu-graph" />
+            <Label text={t.header} x={28} y={174} color={ui.TEXT_SECONDARY} />
+            <List name="processes" items={t.rows} selected={t.selected} x={16} y={196} w={528} h={236}
+                  capacity={1024} onChange={t.select} testId="process-list" />
+            <Label text={t.summary} x={16} y={444} color={ui.TEXT_SECONDARY} testId="tasks-summary" />
+        </Window>;
+    }
+}
+
+/** Takes a reading and shows what changed since the last one. */
+@timer(1000)
+void (borrow Tasks t) tick() {
+    ProcStats now = process.stats();
+    i32 span = now.cpu.total - t.last.cpu.total;
+    if (span > 0) {
+        t.record(CPU_SERIES, share(span - (now.cpu.idle - t.last.cpu.idle), span));
+        t.record(OS_SERIES, share(now.cpu.kernel - t.last.cpu.kernel, span));
+        i32 i = 0;
+        while (i < now.count) {
+            ProcInfo p = now.procs[i];
+            case t.series_for(p.pid) of {
+                Some(series) -> ({ t.record(series, share(p.cpu_ticks - t.ticks_before(p.pid), span)); });
+                None -> _;
+            };
+            i++;
+        }
+    }
+    t.last = now;
+    t.forget_ended();
+    t.show();
+}
+
+/**
+ * Selects a row: its series becomes the line over the graph.
+ * @param row The row.
+ */
+void (borrow Tasks t) select(i32 row) {
+    if (row < 0 || row >= t.row_count) { return; }
+    t.selected_key = t.row_keys[row];
+    t.show();
+}
+
+// --- series ------------------------------------------------------------------
+
+/**
+ * A share of the time between two readings.
+ * @param ticks Ticks something took.
+ * @param span All the ticks between the readings.
+ * @return Percent, 0 to 100.
+ */
+i32 share(i32 ticks, i32 span) {
+    if (span <= 0 || ticks <= 0) { return 0; }
+    i32 percent = (ticks * 100 + span / 2) / span;
+    return percent > 100 ? 100 : percent;
+}
+
+/**
+ * The series following a process, taking a free one for a new process.
+ * @param pid The process.
+ * @return The series, or None when all are taken.
+ */
+Option<i32> (borrow Tasks t) series_for(i32 pid) {
+    i32 i = 0;
+    while (i < OS_SERIES) {
+        if (t.keys[i] == pid) { return Some(i); }
+        i++;
+    }
+    i = 0;
+    while (i < OS_SERIES) {
+        if (t.keys[i] == NO_KEY) {
+            t.keys[i] = pid;
+            t.counts[i] = 0;
+            return Some(i);
+        }
+        i++;
+    }
+    return None;
+}
+
+/**
+ * The ticks a process had at the last reading; zero for one started since.
+ * @param pid The process.
+ * @return Its ticks then.
+ */
+i32 (borrow Tasks t) ticks_before(i32 pid) {
+    i32 i = 0;
+    while (i < t.last.count) {
+        ProcInfo p = t.last.procs[i];
+        if (p.pid == pid) { return p.cpu_ticks; }
+        i++;
+    }
+    return 0;
+}
+
+/** Frees the series of processes the last reading no longer has. */
+void (borrow Tasks t) forget_ended() {
+    i32 i = 0;
+    while (i < OS_SERIES) {
+        if (t.keys[i] != NO_KEY && !t.has_pid(t.keys[i])) { t.keys[i] = NO_KEY; }
+        i++;
+    }
+}
+
+/**
+ * @param pid A process.
+ * @return Whether the last reading has it.
+ */
+bool (borrow Tasks t) has_pid(i32 pid) {
+    i32 i = 0;
+    while (i < t.last.count) {
+        ProcInfo p = t.last.procs[i];
+        if (p.pid == pid) { return true; }
+        i++;
+    }
+    return false;
+}
+
+/**
+ * Adds a share to a series, dropping its oldest when it is full.
+ * @param series The series.
+ * @param percent The share.
+ */
+void (borrow Tasks t) record(i32 series, i32 percent) {
+    i32 base = series * SAMPLES;
+    i32 count = t.counts[series];
+    if (count == SAMPLES) {
+        i32 k = 1;
+        while (k < SAMPLES) {
+            t.samples[base + k - 1] = t.samples[base + k];
+            k++;
+        }
+        count = SAMPLES - 1;
+    }
+    t.samples[base + count] = (u8)percent;
+    t.counts[series] = count + 1;
+}
+
+/**
+ * The latest share of a series.
+ * @param series The series.
+ * @return Percent, zero before the first.
+ */
+i32 (borrow Tasks t) latest(i32 series) {
+    i32 count = t.counts[series];
+    if (count == 0) { return 0; }
+    return (i32)t.samples[series * SAMPLES + count - 1];
+}
+
+/**
+ * A series as the graph takes it.
+ * @param series The series.
+ * @return Its shares apart by spaces.
+ */
+Text<256> (borrow Tasks t) series_text(i32 series) {
+    Text<256> out = Text<256> {};
+    i32 i = 0;
+    while (i < t.counts[series]) {
+        if (i > 0) { out.append(" "); }
+        Text<12> number = ((i32)t.samples[series * SAMPLES + i]).to_string();
+        out.append(number.as_str());
+        i++;
+    }
+    return out;
+}
+
+/**
+ * The series a row's key follows.
+ * @param key A pid or OS_KEY.
+ * @return The series, or None for a process without one.
+ */
+Option<i32> (borrow Tasks t) series_of(i32 key) {
+    i32 i = 0;
+    while (i <= OS_SERIES) {
+        if (t.keys[i] == key) { return Some(i); }
+        i++;
+    }
+    return None;
+}
+
+// --- the table -----------------------------------------------------------------
+
+/**
+ * Appends a cell and the tabs that bring the line to the next column.
+ * @param line The line so far.
+ * @param text The cell.
+ * @param next The tab stop the next column starts at.
+ */
+void cell(borrow Text<96> line, str text, i32 next) {
+    line.append(text);
+    while (tabs_in(line.as_str()) < next) { line.append("\t"); }
+}
+
+/**
+ * @param text A line.
+ * @return The tabs in it.
+ */
+i32 tabs_in(str text) {
+    i32 count = 0;
+    i32 i = 0;
+    while (i < text.length) {
+        if (text.byte(i) == '\t') { count++; }
+        i++;
+    }
+    return count;
+}
+
+/**
+ * @param value A number.
+ * @param unit What follows it.
+ * @return Both as one cell.
+ */
+Text<24> number_cell(i32 value, str unit) {
+    Text<24> out = Text<24> {};
+    Text<12> digits = value.to_string();
+    out.append(digits.as_str());
+    out.append(unit);
+    return out;
+}
+
+/**
+ * @param pages A number of 4 KiB pages.
+ * @return It in megabytes, to a tenth.
+ */
+Text<24> megabytes(i32 pages) {
+    i32 tenths = (pages * 4 * 10 + 512) / 1024;
+    Text<24> out = number_cell(tenths / 10, ".");
+    i32 digit = tenths % 10;
+    Text<12> tenth = digit.to_string();
+    out.append(tenth.as_str());
+    out.append(" MB");
+    return out;
+}
+
+/**
+ * @param count How many.
+ * @param one What one is called.
+ * @param many What more are called.
+ * @return The count and the word that goes with it.
+ */
+Text<24> count_of(i32 count, str one, str many) {
+    Text<24> out = number_cell(count, " ");
+    if (count == 1) { out.append(one); } else { out.append(many); }
+    return out;
+}
+
+/**
+ * @param activity What a process is doing.
+ * @return It in a word.
+ */
+str activity_name(ProcActivity activity) {
+    return case activity of {
+        ProcActivity::Starting -> "starting";
+        ProcActivity::Running -> "running";
+        ProcActivity::Waiting -> "waiting";
+        ProcActivity::Exiting -> "exiting";
+        ProcActivity::Ended -> "ended";
+    };
+}
+
+/**
+ * Adds a row to the list.
+ * @param key What it shows: a pid or OS_KEY.
+ * @param line Its text.
+ */
+void (borrow Tasks t) add_row(i32 key, str line) {
+    if (t.row_count > 0) { t.rows.append("\n"); }
+    t.rows.append(line);
+    t.row_keys[t.row_count] = key;
+    if (key == t.selected_key) { t.selected = Some(t.row_count); }
+    t.row_count = t.row_count + 1;
+}
+
+/** Rebuilds what the window shows from the last reading and the shares. */
+void (borrow Tasks t) show() {
+    ProcStats now = t.last;
+    t.rows.clear();
+    t.row_count = 0;
+    t.selected = None;
+    Text<96> line = Text<96> {};
+
+    cell(&line, "MyOS", COL_PID);
+    cell(&line, "-", COL_THREADS);
+    Text<24> kernel_threads = number_cell(now.cpu.kernel_threads, "");
+    cell(&line, kernel_threads.as_str(), COL_CPU);
+    Text<24> os_share = number_cell(t.latest(OS_SERIES), "%");
+    cell(&line, os_share.as_str(), COL_MEMORY);
+    cell(&line, "-", COL_STATE);
+    line.append("kernel");
+    t.add_row(OS_KEY, line.as_str());
+
+    i32 threads = now.cpu.kernel_threads;
+    i32 live = 0;
+    i32 i = 0;
+    while (i < now.count) {
+        ProcInfo p = now.procs[i];
+        line.clear();
+        if (p.name.is_empty()) { cell(&line, "?", COL_PID); }
+        else { cell(&line, p.name.as_str(), COL_PID); }
+        Text<24> pid = number_cell(p.pid, "");
+        cell(&line, pid.as_str(), COL_THREADS);
+        Text<24> count = number_cell(p.threads, "");
+        cell(&line, count.as_str(), COL_CPU);
+        i32 percent = case t.series_of(p.pid) of { Some(series) -> t.latest(series); None -> 0; };
+        Text<24> cpu = number_cell(percent, "%");
+        cell(&line, cpu.as_str(), COL_MEMORY);
+        Text<24> memory = number_cell(p.pages * 4, " KB");
+        cell(&line, memory.as_str(), COL_STATE);
+        line.append(activity_name(p.activity));
+        t.add_row(p.pid, line.as_str());
+        threads = threads + p.threads;
+        if (p.activity != ProcActivity::Ended) { live++; }
+        i++;
+    }
+
+    t.cpu.clear();
+    t.cpu.append("CPU ");
+    Text<24> total = number_cell(t.latest(CPU_SERIES), "%");
+    t.cpu.append(total.as_str());
+    t.fill = t.series_text(CPU_SERIES);
+
+    t.chosen.clear();
+    t.line.clear();
+    case t.selected of {
+        Some(row) -> ({
+            case t.series_of(t.selected_key) of {
+                Some(series) -> ({
+                    t.line = t.series_text(series);
+                    Text<24> name = t.row_name(row);
+                    t.chosen.append(name.as_str());
+                    t.chosen.append(" ");
+                    Text<24> mine = number_cell(t.latest(series), "%");
+                    t.chosen.append(mine.as_str());
+                });
+                None -> _;
+            };
+        });
+        None -> _;
+    };
+
+    t.summary.clear();
+    Text<24> processes = count_of(live, "process", "processes");
+    t.summary.append(processes.as_str());
+    t.summary.append(", ");
+    Text<24> thread_count = count_of(threads, "thread", "threads");
+    t.summary.append(thread_count.as_str());
+    t.summary.append(", ");
+    Text<24> used = megabytes(now.total_pages - now.free_pages);
+    t.summary.append(used.as_str());
+    t.summary.append(" of ");
+    Text<24> total = megabytes(now.total_pages);
+    t.summary.append(total.as_str());
+    t.summary.append(" in use");
+}
+
+/**
+ * The name in a row: its text up to the first tab.
+ * @param row The row.
+ * @return The name.
+ */
+Text<24> (borrow Tasks t) row_name(i32 row) {
+    str rows = t.rows.as_str();
+    i32 start = 0;
+    i32 line = 0;
+    while (line < row) {
+        while (start < rows.length && rows.byte(start) != '\n') { start++; }
+        start++;
+        line++;
+    }
+    i32 end = start;
+    while (end < rows.length && rows.byte(end) != '\t' && rows.byte(end) != '\n') { end++; }
+    Text<24> name = Text<24> {};
+    case rows.slice(start, end) of { Some(view) -> ({ name.append(view); }); None -> _; };
+    return name;
+}
+
+i32 main() { return app.run<Tasks>(); }

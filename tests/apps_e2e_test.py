@@ -46,13 +46,15 @@ def click_point(os, x, y, timeout: float = 2.0):
         pass
 
 
-def launch_app(os, row_index):
-    """Open the taskbar app menu and click the row'th item."""
+def launch_app(os, name):
+    """Open the taskbar app menu and click the named item: its rows are the
+    menu's text, one per line."""
     click_point(os, 40, 1516)  # the MyOS launcher at the taskbar's left
     expect(os.get_by_role("menu")).to_be_visible()
     menu = os.get_by_role("menu").snapshot()
+    row = menu.text.split("\n").index(name)
     click_point(os, menu.bounds.x + 40,
-                menu.bounds.y + 16 + ROW_H * row_index + ROW_H // 2)
+                menu.bounds.y + 16 + ROW_H * row + ROW_H // 2)
 
 
 def close_window(os, name):
@@ -118,7 +120,7 @@ def main() -> int:
             wait_text_contains(term_out, "ls: no such file or directory")
 
             # 2. The editor saves a new file to the disk.
-            launch_app(os, 1)  # Editor (menu is alphabetical: Counter, Editor, Files, Notes, Terminal)
+            launch_app(os, "Editor")
             editor = os.get_by_role("window", name="Editor")
             expect(editor).to_be_visible()
             # The editor opens with "untitled.txt" in the name field; clear it
@@ -139,7 +141,7 @@ def main() -> int:
             #    editor just wrote -- proof the save reached the disk image --
             #    and the directories the executables live in (MFS has
             #    directories: /bin for programs, /apps for desktop apps).
-            launch_app(os, 2)  # Files
+            launch_app(os, "Files")
             files = os.get_by_role("window", name="Files")
             expect(files).to_be_visible()
             os.get_by_role("button", name="Refresh").click()
@@ -185,7 +187,7 @@ def main() -> int:
             child = re.findall(r"^\[pid (\d+)\] echo$", text, re.MULTILINE)[-1]
             close_window(os, "Terminal")
             expect(os.get_by_role("window", name="Terminal")).to_have_count(0)
-            launch_app(os, 4)  # Terminal
+            launch_app(os, "Terminal")
             expect(term_in).to_be_visible()
             term_in.click()
             os._type("hello")
@@ -197,7 +199,27 @@ def main() -> int:
             slots = [int(pid) & 31 for pid in pids]
             assert slots == [int(child) & 31], f"the closed terminal's child kept its slot: {child}, {pids}"
 
-        print("PASS: user process, editor disk round-trip, file manager and hangup via automation")
+            # 6. Task Manager reads every process from PROC_STATS: names from
+            #    the paths they were started from, and a CPU sample a second.
+            launch_app(os, "Task Manager")
+            expect(os.get_by_role("window", name="Task Manager")).to_be_visible()
+            procs = os.get_by_test_id("process-list")
+            rows = wait_text_contains(procs, "\ntasks\t").split("\n")
+            names = [row.split("\t")[0] for row in rows]
+            for name in ("MyOS", "counter", "notes", "terminal", "tasks"):
+                assert name in names, f"{name} missing from the process list:\n{rows}"
+            wait_text_contains(os.get_by_test_id("tasks-summary"), "processes")
+            graph = os.get_by_test_id("cpu-graph")
+            deadline = time.monotonic() + 8.0
+            while not graph.snapshot().text and time.monotonic() < deadline:
+                pass
+            assert graph.snapshot().text, "no CPU sample reached the graph"
+            # Selecting a row draws its share over the graph.
+            box = procs.snapshot().bounds
+            click_point(os, box.x + 40, box.y + 20 + ROW_H * names.index("terminal"))
+            wait_text_contains(os.get_by_test_id("selected-share"), "terminal")
+
+        print("PASS: user process, editor disk round-trip, file manager, hangup and task manager via automation")
         return 0
     except (AssertionError, RuntimeError) as error:
         print(f"FAIL: {error}")
