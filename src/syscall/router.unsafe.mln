@@ -53,7 +53,7 @@ Result<i32, OsServiceError> handle(Pid pid, i32 service, UserAddress args) {
         fs_syscall.handle(pid, service, args)?;
         return Ok(0);
     }
-    if (service >= OsService::PROC_SPAWN && service <= OsService::PROC_FEED) {
+    if (service >= OsService::PROC_SPAWN && service <= OsService::PROC_STATS) {
         return process_syscall.handle(pid, service, args);
     }
     if (service == OsService::LOG) {

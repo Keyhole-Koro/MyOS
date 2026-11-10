@@ -1,0 +1,185 @@
+/**
+ * What PROC_STATS reports: every process, what it is doing and what it costs,
+ * and where the CPU's time went.
+ *
+ * The kernel keeps the numbers; this module adds the one thing it cannot know,
+ * the name each process was started under, and reads it all at once.
+ */
+package proc_stats;
+
+import { Option } from "@std/core/option.mln";
+import { Text } from "@std/text/text.mln";
+import str from "@std/text/str.mln";
+import irq from "@kernel/arch/irq.mln";
+import kernel_config from "@kernel/kernel/kernel_config.mln";
+import mmu from "@kernel/mm/mmu.mln";
+import frames from "@kernel/mm/frames.mln";
+import process from "@kernel/kernel/process.mln";
+import { ProcessState } from "@kernel/kernel/process.mln";
+import scheduler from "@kernel/kernel/scheduler.mln";
+import thread from "@kernel/kernel/thread.mln";
+import { ThreadState } from "@kernel/kernel/thread.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
+import { ProcStats, ProcInfo, ProcActivity, CpuTimes } from "@contracts/myos/process-args.contract.mln";
+
+/**
+ * The name a process slot's process was started under.
+ * @property pid The process it was given for: a slot's next process has none
+ *           until it is named, rather than the last one's.
+ * @property name The name.
+ */
+struct ProcName {
+    i32 pid;
+    Text<16> name;
+};
+
+ProcName g_names[16];
+
+/**
+ * Remembers the name a process was started under: the last part of its path,
+ * up to an extension. A longer name is cut.
+ * @param pid The process just started.
+ * @param path The path it was started from.
+ */
+export void name_process(Pid pid, str path) {
+    i32 slot = case process.slot_of(pid) of { Some(value) -> value; None -> ({ return; }); };
+    i32 start = 0;
+    i32 i = 0;
+    while (i < path.length) {
+        if (path.byte(i) == '/') { start = i + 1; }
+        i++;
+    }
+    i32 end = path.length;
+    i = start;
+    while (i < path.length) {
+        if (path.byte(i) == '.') { end = i; }
+        i++;
+    }
+    ProcName named = ProcName { pid: (i32)pid, name: Text<16> {} };
+    case path.slice(start, end) of {
+        Some(name) -> ({ named.name.append(name); });
+        None -> _;
+    };
+    g_names[slot] = named;
+}
+
+/**
+ * Reads every process, the CPU's time and the free memory, with interrupts off
+ * so the numbers are from one moment.
+ * @param out Where they go; `count` says how many processes there were.
+ */
+export void fill(borrow ProcStats out) {
+    bool was_enabled = irq.save_disable();
+    defer irq.restore(was_enabled);
+    out.cpu = CpuTimes {
+        total: scheduler.ticks(),
+        idle: scheduler.idle_ticks(),
+        kernel: scheduler.kernel_ticks(),
+        kernel_threads: live_kernel_threads(),
+    };
+    out.total_pages = frames.total();
+    out.free_pages = frames.available();
+    out.count = 0;
+    i32 slot = 0;
+    while (slot < kernel_config.MAX_PROCS) {
+        case process.pid_at(slot) of {
+            Some(pid) -> ({
+                out.procs[out.count] = process_info(pid, slot);
+                out.count++;
+            });
+            None -> _;
+        };
+        slot++;
+    }
+}
+
+/**
+ * One process.
+ * @param pid The process.
+ * @param slot Its process slot, where its name is.
+ * @return What PROC_STATS says of it.
+ */
+ProcInfo process_info(Pid pid, i32 slot) {
+    i32 parent = case process.parent_of(pid) of {
+        Some(held) -> case held of { Some(owner) -> (i32)owner; None -> 0; };
+        None -> 0;
+    };
+    ProcInfo p = ProcInfo {
+        pid: (i32)pid,
+        parent: parent,
+        activity: process_activity(pid),
+        threads: process.live_thread_count(pid).unwrap_or(0),
+        cpu_ticks: process.cpu_ticks(pid).unwrap_or(0),
+        pages: mmu.count_user_pages(process.get_pdbr(pid).unwrap_or(0)),
+        name: Text<16> {},
+    };
+    ProcName named = g_names[slot];
+    if (named.pid == (i32)pid) { p.name.append(named.name.as_str()); }
+    return p;
+}
+
+/**
+ * @param pid A process.
+ * @return What it is doing.
+ */
+ProcActivity process_activity(Pid pid) {
+    ProcessState state = case process.get_state(pid) of {
+        Some(value) -> value;
+        None -> ({ return ProcActivity::Ended; });
+    };
+    return case state of {
+        ProcessState::Loading -> ProcActivity::Starting;
+        ProcessState::Alive -> process_runs(pid) ? ProcActivity::Running : ProcActivity::Waiting;
+        ProcessState::Exiting(_) -> ProcActivity::Exiting;
+        _ -> ProcActivity::Ended;
+    };
+}
+
+/**
+ * @param pid A process.
+ * @return Whether one of its threads is running or ready to.
+ */
+bool process_runs(Pid pid) {
+    i32 slot = 0;
+    while (slot < thread.high_water()) {
+        bool mine = case thread.owner_pid_at(slot) of { Some(owner) -> owner == pid; None -> false; };
+        if (mine && thread_is_ready(slot)) { return true; }
+        slot++;
+    }
+    return false;
+}
+
+/**
+ * @param slot A thread slot.
+ * @return Whether its thread is running or ready to.
+ */
+bool thread_is_ready(i32 slot) {
+    return case thread.state_at(slot) of {
+        Some(state) -> case state of {
+            ThreadState::Runnable -> true;
+            ThreadState::Running -> true;
+            _ -> false;
+        };
+        None -> false;
+    };
+}
+
+/** @return The OS's own threads that have not ended. */
+i32 live_kernel_threads() {
+    i32 count = 0;
+    i32 slot = 0;
+    while (slot < thread.high_water()) {
+        bool kernel = case thread.owner_pid_at(slot) of { Some(_) -> false; None -> thread.occupied(slot); };
+        bool live = case thread.state_at(slot) of {
+            Some(state) -> case state of {
+                ThreadState::Exiting(_) -> false;
+                ThreadState::Zombie(_) -> false;
+                _ -> true;
+            };
+            None -> false;
+        };
+        if (kernel && live) { count++; }
+        slot++;
+    }
+    return count;
+}

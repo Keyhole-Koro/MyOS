@@ -25,6 +25,7 @@ import { FileHandle } from "@os/fs/fs.mln";
 import str from "@std/text/str.mln";
 import { Text } from "@std/text/text.mln";
 import consoles from "consoles.mln";
+import proc_stats from "stats.mln";
 import { Console, ConsoleRow } from "consoles.mln";
 import dom_text_edit from "@os/ui/dom/dom_text_edit.mln";
 import dom from "@os/ui/dom/dom.mln";
@@ -311,6 +312,7 @@ export Result<Pid, SpawnError> spawn_file(Option<Pid> parent, str path) {
     }
     // A loader failure becomes SpawnError::Loader through the contract's From.
     Pid pid = loader.spawn_from_buffer(parent, image.addr, size)?;
+    proc_stats.name_process(pid, path);
     return Ok(pid);
 }
 

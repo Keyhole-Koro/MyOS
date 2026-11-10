@@ -9,9 +9,10 @@ package process_syscall;
 import { OsService, OsServiceError } from "@contracts/myos/services.contract.mln";
 import {
     ProcSpawnArgs, ProcExitedArgs, ProcReapArgs, ProcFeedArgs,
-    ProcBindArgs, ProcUnbindArgs
+    ProcBindArgs, ProcUnbindArgs, ProcStatsArgs, ProcStats, ProcInfo, CpuTimes, ProcActivity
 } from "@contracts/myos/process-args.contract.mln";
 import console from "console.mln";
+import proc_stats from "stats.mln";
 import user_memory from "@os/syscall/user_memory.mln";
 import { copy_in_text } from "@os/syscall/user_memory.mln";
 import { UserAddress } from "@std/core/address.mln";
@@ -41,7 +42,8 @@ i32 answer(Result<_, ProcessControlError> result) {
  *
  * @param caller Calling process: the parent of what it spawns, and the only
  *               process that may control those children.
- * @param service Service code (PROC_SPAWN, PROC_BIND, PROC_UNBIND, PROC_EXITED, PROC_REAP, PROC_FEED).
+ * @param service Service code (PROC_SPAWN, PROC_BIND, PROC_UNBIND, PROC_EXITED, PROC_REAP, PROC_FEED,
+ *                PROC_STATS).
  * @param args Virtual address of argument structure in caller's memory.
  * @return Ok(r2 word) when the request was handled, or Err(UnknownService).
  */
@@ -101,6 +103,15 @@ export Result<i32, OsServiceError> handle(Pid caller, i32 service, UserAddress a
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
         copy_in_text<128>(UserAddress((i32)request.line), request.line_length, &g_line);
         return Ok(answer(console.feed_line(caller, Pid(request.pid), g_line.as_str())));
+    }
+    if (service == OsService::PROC_STATS) {
+        // It controls nothing, so it answers anyone, about every process.
+        ProcStatsArgs request;
+        user_memory.copy_in(args, (char*)(&request), sizeof(request));
+        ProcStats result = ProcStats {};
+        proc_stats.fill(&result);
+        user_memory.copy_out(UserAddress((i32)request.result_out), (char*)(&result), sizeof(ProcStats));
+        return Ok(0);
     }
     return Err(OsServiceError::UnknownService(service));
 }
