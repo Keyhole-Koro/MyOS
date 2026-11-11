@@ -1,7 +1,6 @@
 package app;
 
 import process from "@std/hosted/process.mln";
-import thread from "@std/hosted/thread.mln";
 import { Pid, ProcessExitStatus } from "@contracts/process/control.contract.mln";
 import { Result } from "@std/core/result.mln";
 
@@ -17,12 +16,7 @@ export i32 main() {
         Ok(child) -> child;
         Err(_) -> ({ return 1; });
     };
-    bool done = false;
-    while (!done) {
-        done = case process.has_exited(pid) of { Ok(exited) -> exited; Err(_) -> true; };
-        thread.yield_now();
-    }
-    return case process.reap(pid) of {
+    return case process.wait(pid) of {
         Ok(status) -> case status of {
             ProcessExitStatus::Code(code) -> 40 + code;
             _ -> 2;

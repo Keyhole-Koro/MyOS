@@ -110,15 +110,7 @@ void run(str name) {
         Ok(child) -> child;
         Err(e) -> ({ say_error(name, e.describe()); return; });
     };
-    bool exited = false;
-    while (!exited) {
-        exited = case process.has_exited(pid) of {
-            Ok(value) -> value;
-            Err(_) -> true;
-        };
-        if (!exited) { ulib.yield_cpu(); }
-    }
-    Result<ProcessExitStatus, ProcessControlError> reaped = process.reap(pid);
+    Result<ProcessExitStatus, ProcessControlError> reaped = process.wait(pid);
     ulib.print("[pid ");
     ulib.print_i32((i32)pid);
     case reaped of {

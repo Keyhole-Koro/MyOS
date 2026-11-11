@@ -19,6 +19,7 @@ import { Result } from "@std/core/result.mln";
 import { Option } from "@std/core/option.mln";
 import { SpawnError, SpawnFsOperation, SpawnFilesystemError, SpawnReadMismatch } from "@contracts/process/spawn.contract.mln";
 import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
+import { ProcessSignal } from "@contracts/myos/syscall.contract.mln";
 import { FsError, SeekWhence } from "@contracts/io/fs.contract.mln";
 import fs from "@os/fs/fs.mln";
 import { FileHandle } from "@os/fs/fs.mln";
@@ -178,25 +179,27 @@ export Result<_, ProcessControlError> feed_line(Pid caller, Pid pid, str line) {
     check_child(caller, pid)?;
     case consoles.console_by_pid(pid) of {
         Some(bound) -> ({
-            borrow ConsoleRow row = bound.row();
-            queue(&row, line);
-            queue(&row, "\n");
+            queue(bound, line);
+            queue(bound, "\n");
         });
         None -> _;
     };
     return Ok(_);
 }
 
-// Adds bytes to a stdin queue; what does not fit is dropped.
-void queue(borrow ConsoleRow row, str bytes) {
+// Adds bytes to a process's stdin queue, and wakes it if it waits to read.
+// What does not fit is dropped.
+void queue(Console bound, str bytes) {
+    borrow ConsoleRow row = bound.row();
     i32 k = 0;
     while (k < bytes.length) {
         i32 next = (row.in_tail + 1) % STDIN_CAP;
-        if (next == row.in_head) { return; }
+        if (next == row.in_head) { break; }
         row.stdin[row.in_tail] = (u8)bytes.byte(k);
         row.in_tail = next;
         k++;
     }
+    scheduler.notify_pid(bound.pid(), ProcessSignal::STDIN);
 }
 
 /**
@@ -221,10 +224,7 @@ void take_line(NodeId terminal, str line) {
         }
     }
     case latest of {
-        Some(found) -> ({
-            borrow ConsoleRow row = found.row();
-            queue(&row, line);
-        });
+        Some(found) -> queue(found, line);
         None -> _;
     };
 }
@@ -272,7 +272,10 @@ i32 on_write(Pid pid, UserAddress buf, i32 count) {
 i32 on_read(Pid pid, UserAddress buf, i32 count) {
     Console bound = case consoles.console_by_pid(pid) of {
         Some(v) -> v;
-        None -> ({ return 0; });
+        None -> ({
+            scheduler.arm_notification(ProcessSignal::STDIN);
+            return 0;
+        });
     };
     borrow ConsoleRow row = bound.row();
     i32 got = 0;
@@ -283,6 +286,10 @@ i32 on_read(Pid pid, UserAddress buf, i32 count) {
         user_memory.write_byte(buf.plus(got), c);
         got++;
     }
+    // Nothing yet: the next line wakes a reader that waits for STDIN, even one
+    // that queued after this answer and before the wait.
+    if (got == 0) { scheduler.arm_notification(ProcessSignal::STDIN); }
+    else { scheduler.disarm_notification(ProcessSignal::STDIN); }
     return got;
 }
 
@@ -410,10 +417,15 @@ Result<Pid, SpawnError> on_spawn(UserAddress user_path) {
  */
 export Result<bool, ProcessControlError> has_exited(Pid caller, Pid pid) {
     check_child(caller, pid)?;
-    return case process.get_state(pid) of {
-        Some(state) -> Ok(case state of { ProcessState::Released(_) -> true; _ -> false; });
-        None -> Err(ProcessControlError::InvalidPid(pid));
+    bool released = case process.get_state(pid) of {
+        Some(state) -> case state of { ProcessState::Released(_) -> true; _ -> false; };
+        None -> ({ return Err(ProcessControlError::InvalidPid(pid)); });
     };
+    // Not yet: the release of a child wakes a parent that waits for CHILD,
+    // even one released after this answer and before the wait.
+    if (released) { scheduler.disarm_notification(ProcessSignal::CHILD); }
+    else { scheduler.arm_notification(ProcessSignal::CHILD); }
+    return Ok(released);
 }
 
 /**
@@ -502,6 +514,11 @@ bool release(Pid pid) {
         detach(pid);
     }
     process.mark_released(pid);
+    // A parent that waits for it can reap it now.
+    case process.parent_of(pid) of {
+        Some(Some(parent)) -> scheduler.notify_pid(parent, ProcessSignal::CHILD);
+        _ -> _;
+    };
     return true;
 }
 

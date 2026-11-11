@@ -1,8 +1,8 @@
 package ulib;
 
 import { sys_read, sys_write } from "sys.masm";
-import { sys_yield, sys_exit } from "@std/platform/myos/syscall.masm";
-import { SyscallStatus } from "@contracts/myos/syscall.contract.mln";
+import { sys_yield, sys_exit, sys_wait_notification } from "@std/platform/myos/syscall.masm";
+import { SyscallStatus, ProcessSignal } from "@contracts/myos/syscall.contract.mln";
 import { Text } from "@std/text/text.mln";
 
 // Minimal user-space runtime: stdio over the read/write syscalls and a few
@@ -113,7 +113,8 @@ export void print_i32(i32 v) {
 }
 
 /**
- * Reads a line of text from standard input (descriptor 0).
+ * Reads a line of text from standard input (descriptor 0), sleeping until it
+ * comes: an empty read arms ProcessSignal::STDIN, and the next line raises it.
  * The trailing newline is dropped; bytes past the line's capacity are lost.
  * @param out Destination line.
  */
@@ -125,7 +126,8 @@ export void read_line(borrow Line out) {
         i32 got = 0;
         SyscallStatus status = sys_read(0, &c[0], 1, &got);
         if (status != SyscallStatus::Ok || got <= 0) {
-            sys_yield();
+            i32 woken = 0;
+            sys_wait_notification(ProcessSignal::STDIN, &woken);
         } else {
             i32 ch = (i32)c[0] & 0xFF;
             if (ch == 10) { return; }

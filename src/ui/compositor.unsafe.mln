@@ -77,6 +77,13 @@ i32 g_drag_last_y = 0;
 Option<NodeId> g_pressed_id;
 Option<NodeId> g_hot_id;
 
+// Where the pointer was, and the tree's revision, when the hovered node was
+// last worked out. The hit test runs again only once either has changed: every
+// change to what is where (bounds, order, nodes) bumps the revision.
+i32 g_hover_x = -1;
+i32 g_hover_y = -1;
+i32 g_hover_revision = -1;
+
 // Desktop context menu (right-click on the wallpaper), registered by main.
 char *g_desktop_menu_items = (char*)0;
 void no_desktop_menu(i32 index) { }
@@ -372,11 +379,17 @@ export void run() {
             i32 my = mouse.y();
             graphics.set_cursor(mx, my);
 
-            Option<NodeId> hit = dom_hit_test.find_at(mx, my);
-            if (!dom.same_node(hit, g_hot_id)) {
-                case g_hot_id of { Some(id) -> dom.set_hovered(id, 0); None -> _; };
-                case hit of { Some(id) -> dom.set_hovered(id, 1); None -> _; };
-                g_hot_id = hit;
+            if (mx != g_hover_x || my != g_hover_y || dom.revision() != g_hover_revision) {
+                Option<NodeId> hit = dom_hit_test.find_at(mx, my);
+                if (!dom.same_node(hit, g_hot_id)) {
+                    case g_hot_id of { Some(id) -> dom.set_hovered(id, 0); None -> _; };
+                    case hit of { Some(id) -> dom.set_hovered(id, 1); None -> _; };
+                    g_hot_id = hit;
+                }
+                // After the hover change, which bumps the revision itself.
+                g_hover_x = mx;
+                g_hover_y = my;
+                g_hover_revision = dom.revision();
             }
             dom_menu.menu_hover(mx, my);
 
