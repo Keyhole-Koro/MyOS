@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
 """End-to-end UI test for the v2 MyOS automation API."""
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from tools.project_paths import REPO_ROOT
 from mydomtester import MyOS, expect
+
+
+def wait_unchecked(locator, timeout: float = 5.0) -> None:
+    """Poll until a checkbox is unchecked: expect() has no negative form."""
+    deadline = time.monotonic() + timeout
+    while locator.snapshot().checked:
+        if time.monotonic() > deadline:
+            raise AssertionError("checkbox stayed checked")
 
 
 def main() -> int:
@@ -16,25 +25,24 @@ def main() -> int:
         return 1
     try:
         with MyOS.launch(firmware, disk=disk, artifacts=REPO_ROOT / "qa" / "outputs" / "dom-click") as os:
-            counter = os.get_by_role("window", name="Counter")
-            increment = counter.get_by_role("button", name="Click me")
-            expect(increment).to_be_visible()
-            expect(increment).to_be_enabled()
-            expect(increment).to_have_count(1)
+            notes = os.get_by_role("window", name="Notes")
+            clear = notes.get_by_role("button", name="Clear")
+            expect(clear).to_be_visible()
+            expect(clear).to_be_enabled()
+            expect(clear).to_have_count(1)
 
-            # Boot opens Counter first, so the windows after it land on top.
-            expect(os.get_by_role("window", name="Notes")).to_be_visible()
+            # Boot's windows arrive in any order, and each lands on top.
             expect(os.get_by_role("window", name="Terminal")).to_be_visible()
-            os.raise_window("Counter")
-
-            increment.click()
-            expect(counter.get_by_test_id("counter")).to_have_text("clicks: 1")
-
-            counter.get_by_role("checkbox", name="Count by two").click()
-            increment.click()
-            expect(counter.get_by_test_id("counter")).to_have_text("clicks: 3")
-
             os.raise_window("Notes")
+
+            # A checkbox toggles on click, with no handler behind it.
+            done = notes.get_by_role("checkbox", name="Mark as done")
+            expect(done).to_be_checked()
+            done.click()
+            wait_unchecked(done)
+            done.click()
+            expect(done).to_be_checked()
+
             title = os.get_by_role("textbox", name="Title")
             title.fill("Hello")
             expect(title).to_have_value("Hello")

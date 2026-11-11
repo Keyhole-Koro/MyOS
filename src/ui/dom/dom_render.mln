@@ -1,7 +1,6 @@
 package dom_render;
 import debug from "@kernel/debug/debug.mln";
 import blob from "@std/memory/blob.mln";
-import scheduler from "@kernel/kernel/scheduler.mln";
 import graphics from "@os/ui/graphics.mln";
 import theme from "@os/ui/theme.mln";
 import dom_menu from "dom_menu.mln";
@@ -585,7 +584,7 @@ export void draw_panel(borrow NodeRow n) {
 
 // --- taskbar ---
 // The bar lists every window on the desktop (click to activate), with a
-// launcher button at the left and an uptime clock at the right. Entries are
+// launcher button at the left. Entries are
 // laid out arithmetically at draw and hit time rather than as child nodes,
 // so the bar never has to be rebuilt when windows come and go.
 
@@ -621,30 +620,7 @@ export i32 taskbar_entry_x(i32 index) {
 }
 
 /**
- * Formats current system uptime as "HH:MM:SS".
- * @return Owned, NUL-terminated clock text.
- */
-export Text<16> format_clock() {
-    // Uptime from the 1 ms scheduler tick: HH:MM:SS.
-    i32 secs = scheduler.ticks() / 1000;
-    i32 hh = (secs / 3600) % 100;
-    i32 mm = (secs / 60) % 60;
-    i32 ss = secs % 60;
-    Text<16> clock = Text<16> {};
-    clock.clear();
-    clock.push((u8)('0' + hh / 10));
-    clock.push((u8)('0' + hh % 10));
-    clock.push((u8)':');
-    clock.push((u8)('0' + mm / 10));
-    clock.push((u8)('0' + mm % 10));
-    clock.push((u8)':');
-    clock.push((u8)('0' + ss / 10));
-    clock.push((u8)('0' + ss % 10));
-    return clock;
-}
-
-/**
- * Renders the desktop taskbar, launcher button, window list entries, and clock.
+ * Renders the desktop taskbar: the launcher button and an entry per window.
  * @param n Taskbar node row.
  */
 export void draw_taskbar(borrow NodeRow n) {
@@ -700,13 +676,6 @@ export void draw_taskbar(borrow NodeRow n) {
         index = index + 1;
         after = (i32)win;
     }
-
-    // Clock at the right.
-    Text<16> clock = format_clock();
-    str label_14 = clock.as_str();
-    i32 cw = graphics.text_width(label_14, 0, s);
-    str label_15 = clock.as_str();
-    graphics.draw_label(x + w - cw - 16 * s, y + (h - th) / 2, label_15, on_dark, 0, s);
 }
 
 /** Target identified by hit-testing a pointer position on the taskbar. */
@@ -761,13 +730,6 @@ export void set_launcher(fn() -> void handler) { g_launcher = handler; }
  * @return The callback set_launcher installed, or one that does nothing.
  */
 export fn() -> void launcher_handler() { return g_launcher; }
-
-/**
- * Invalidates the taskbar node area to refresh the clock display.
- */
-export void refresh_taskbar() {
-    dom.damage_taskbar();
-}
 
 /**
  * Dispatches node drawing to the kind-specific drawing routine.

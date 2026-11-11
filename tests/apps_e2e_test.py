@@ -80,7 +80,6 @@ def main() -> int:
             #    lands in the terminal, and its exit code is reported.
             expect(term_in).to_be_visible()
             # Boot's windows arrive in any order, and each lands on top.
-            expect(os.get_by_role("window", name="Counter")).to_be_visible()
             expect(os.get_by_role("window", name="Notes")).to_be_visible()
             os.raise_window("Terminal")
             term_in.click()
@@ -206,7 +205,7 @@ def main() -> int:
             procs = os.get_by_test_id("process-list")
             rows = wait_text_contains(procs, "\ntasks\t").split("\n")
             names = [row.split("\t")[0] for row in rows]
-            for name in ("MyOS", "counter", "notes", "terminal", "tasks"):
+            for name in ("MyOS", "notes", "terminal", "tasks"):
                 assert name in names, f"{name} missing from the process list:\n{rows}"
             wait_text_contains(os.get_by_test_id("tasks-summary"), "processes")
             graph = os.get_by_test_id("cpu-graph")

@@ -1,5 +1,0 @@
-import { kernel_main } from "uiprobe.mln"
-
-__START__:
-  call kernel_main
-  halt

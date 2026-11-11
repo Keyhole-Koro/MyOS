@@ -28,7 +28,7 @@ from mydomtester import MyOS, expect  # noqa: E402
 
 # Registry order: the executables on the disk that declare @app, in MFS
 # entry order (tools/mkfs.py adds them sorted by name).
-MENU = ["Counter", "Editor", "Files", "Notes", "Task Manager", "Terminal"]
+MENU = ["Editor", "Files", "Notes", "Task Manager", "Terminal"]
 MOD_CTRL = 2
 ROW_H = 39  # menu row height at 2x UI scale (see apps_e2e_test.py)
 
@@ -93,7 +93,7 @@ def main() -> int:
         with MyOS.launch(firmware, disk=disk,
                          artifacts=REPO_ROOT / "qa" / "outputs" / "app-framework") as os:
             # Boot's windows arrive in any order, and each lands on top.
-            for name in ("Counter", "Notes", "Terminal"):
+            for name in ("Notes", "Terminal"):
                 expect(os.get_by_role("window", name=name)).to_be_visible()
 
             # 1. The launcher lists the manifest and starts an app.
@@ -133,19 +133,20 @@ def main() -> int:
             expect(os.get_by_role("window", name="Delete file?")).to_have_count(0)
 
             # 6. Closing a window frees only that instance: Files goes, the
-            #    Editor stays. Files covered the Counter, which is next.
+            #    Editor stays.
             close_window(os, "Files")
             expect(os.get_by_role("window", name="Files")).to_have_count(0)
             expect(os.get_by_role("window", name="Editor")).to_have_count(1)
 
             # 7. A relaunch after close starts from the initial state.
-            os.raise_window("Counter")
-            os.get_by_role("window", name="Counter").get_by_role("button", name="Click me").click()
-            expect(os.get_by_test_id("counter")).to_have_text("clicks: 1")
-            close_window(os, "Counter")
-            expect(os.get_by_role("window", name="Counter")).to_have_count(0)
-            launch_app(os, "Counter")
-            expect(os.get_by_test_id("counter")).to_have_text("clicks: 0")
+            os.raise_window("Notes")
+            os.get_by_role("textbox", name="Title").fill("Hello")
+            expect(os.get_by_text("You typed: Hello")).to_be_visible()
+            close_window(os, "Notes")
+            expect(os.get_by_role("window", name="Notes")).to_have_count(0)
+            launch_app(os, "Notes")
+            expect(os.get_by_role("textbox", name="Title")).to_have_value("")
+            expect(os.get_by_text("You typed: Hello")).to_have_count(0)
 
             # 8. The launcher is the disk: the shell read each executable's
             #    `@app(name = ...)` from its MBIN header without loading it.
@@ -168,16 +169,16 @@ def main() -> int:
                 w = [n for n in os.snapshot().nodes if n.role == "window" and n.text == name and n.focused][0]
                 click_point(os, w.bounds.x + 30, w.bounds.y + 16)
 
-            launch_app(os, "Counter")
-            expect(os.get_by_role("window", name="Counter")).to_have_count(2)
-            close_focused("Counter")
-            expect(os.get_by_role("window", name="Counter")).to_have_count(1)
+            launch_app(os, "Notes")
+            expect(os.get_by_role("window", name="Notes")).to_have_count(2)
+            close_focused("Notes")
+            expect(os.get_by_role("window", name="Notes")).to_have_count(1)
             first = max_id()
             for _ in range(6):
-                launch_app(os, "Counter")
-                expect(os.get_by_role("window", name="Counter")).to_have_count(2)
-                close_focused("Counter")
-                expect(os.get_by_role("window", name="Counter")).to_have_count(1)
+                launch_app(os, "Notes")
+                expect(os.get_by_role("window", name="Notes")).to_have_count(2)
+                close_focused("Notes")
+                expect(os.get_by_role("window", name="Notes")).to_have_count(1)
             if max_id() > first + 2:
                 raise AssertionError(f"node ids are not reused: high-water mark {first} -> {max_id()}")
 

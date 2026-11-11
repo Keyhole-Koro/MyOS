@@ -1,7 +1,5 @@
 import debug from "@kernel/debug/debug.mln";
 import heap from "@kernel/mm/heap.mln";
-import dom_widgets from "@os/ui/dom/dom_widgets.mln";
-import dom_render from "@os/ui/dom/dom_render.mln";
 import desktop from "@os/ui/desktop.mln";
 import dom_automation from "@os/ui/dom/dom_automation.mln";
 import graphics from "@os/ui/graphics.mln";
@@ -13,13 +11,10 @@ import irq from "@kernel/arch/irq.mln";
 import shell from "@os/shell/serial.mln";
 import automation_ui from "@os/meta/automation_ui.mln";
 import compositor from "@os/ui/compositor.mln";
-import { NodeId } from "@contracts/ui/widget.contract.mln";
-import { Pid } from "@contracts/process/control.contract.mln";
 import console from "@os/proc/console.mln";
 import mmu from "@kernel/mm/mmu.mln";
 import { MmuError } from "@contracts/process/loader.contract.mln";
 import { Result } from "@std/core/result.mln";
-import { Option } from "@std/core/option.mln";
 import allocator from "@std/memory/allocator.mln";
 import app from "@os/shell/app.mln";
 import request_channel from "@os/ipc/channel.mln";
@@ -76,22 +71,10 @@ void enable_kernel_paging() {
     mmu.enable_paging(kpd);
 }
 
-// Once a second: redraw the taskbar so its uptime clock advances. A system
-// timer, so it takes the raw handler ABI.
-/**
- * Refreshes the taskbar clock when the system timer fires.
- * @param owner Event owner supplied by the DOM timer dispatcher (unused).
- * @param id Timer node ID supplied by the DOM timer dispatcher (unused).
- * @param arg Timer callback argument (unused).
- */
-void on_clock(Option<Pid> owner, NodeId id, i32 arg) {
-    dom_render.refresh_taskbar();
-}
-
 /**
  * Performs full system initialization and enters the compositor event loop.
  *
- * Sets up MMU, DOM, filesystem, default applications, timers, scheduler, and IRQs.
+ * Sets up MMU, DOM, filesystem, default applications, scheduler, and IRQs.
  */
 void kernel_init() {
     kernel_boot_banner();
@@ -102,10 +85,6 @@ void kernel_init() {
     case desktop.create_taskbar() of {
         Ok(_) -> _;
         Err(_) -> ({ debug.panic("kernel: taskbar creation failed"); });
-    };
-    case dom_widgets.create_timer(1000, on_clock) of {
-        Ok(_) -> _;
-        Err(_) -> ({ debug.panic("kernel: clock timer creation failed"); });
     };
     debug.println("kernel: dom ready");
 
@@ -157,7 +136,6 @@ void kernel_init() {
     // Open a few apps at boot; the last one launched is the active window.
     // Each is a process (the scheduler is up now): its window appears once
     // it has run view() and the server has answered its requests.
-    app.launch_named("Counter");
     app.launch_named("Notes");
     app.launch_named("Terminal");
     dom_automation.note_app_starting(-1);
