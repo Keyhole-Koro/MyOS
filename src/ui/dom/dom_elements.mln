@@ -294,6 +294,40 @@ export Result<NodeId, UiError> create_text_area(str name, i32 x, i32 y, i32 w, i
 }
 
 /**
+ * Creates a TERMINAL: a grid of fixed-width cells that the processes attached
+ * to it write to, with a line to type on (dom_terminal.mln).
+ * @param name Node identifier name.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @param capacity Buffer capacity in bytes: what was written and the typed line.
+ * @return DOM Node ID.
+ */
+export Result<NodeId, UiError> create_terminal(str name, i32 x, i32 y, i32 w, i32 h, i32 capacity) {
+    if (capacity < 256) { capacity = 256; }
+    NewNode node = NewNode { id: dom.create_node(NodeKind::TERMINAL, name)? };
+    NodeId id = node.id;
+    dom.set_role(id, NodeRole::TERMINAL);
+    dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
+    borrow NodeRow n = dom.row_of(id);
+    Blob buf = case blob.blob_new(capacity) of {
+        Some(value) -> value;
+        None -> ({ return Err(UiError::AllocationFailed(capacity)); });
+    };
+    buf.put(0, (char)0);
+    n.text = buf;
+    n.cap = (u16)capacity;
+    n.len = 0;
+    n.cursor = 0;
+    n.scroll = 0;
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::ENABLED, 1);
+    dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
+    return Ok(node.keep());
+}
+
+/**
  * Creates a scrollable single-selection LIST control.
  * @param name Node identifier name.
  * @param x Logical X coordinate.
@@ -344,5 +378,6 @@ export str role_name(NodeRole role) {
     if (role == NodeRole::TOOLBAR) { return "toolbar"; }
     if (role == NodeRole::SEPARATOR) { return "separator"; }
     if (role == NodeRole::GRAPH) { return "graph"; }
+    if (role == NodeRole::TERMINAL) { return "terminal"; }
     return "none";
 }

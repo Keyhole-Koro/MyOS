@@ -1,0 +1,184 @@
+package app;
+
+import ulib from "../lib/ulib.mln";
+import { Line } from "../lib/ulib.mln";
+import fs from "@std/hosted/fs.mln";
+import { DirEntry, FsChunk } from "@std/hosted/fs.mln";
+import process from "@std/hosted/process.mln";
+import str from "@std/text/str.mln";
+import { Text } from "@std/text/text.mln";
+import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
+import { FsError } from "@contracts/io/fs.contract.mln";
+import { SpawnError } from "@contracts/process/spawn.contract.mln";
+import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
+
+// sh: the shell a Terminal runs. It reads a command line from its terminal,
+// runs a built-in or starts the program the line names, and waits for that
+// program to end before it asks for the next line. The program writes to the
+// same terminal, and the lines typed while it runs go to the program.
+//
+//     help, ls [dir], cat <file>, clear, exit
+//     <program>, or run <program>: looked up in /bin, then /apps
+
+/**
+ * Writes `what: message` and a newline.
+ * @param what The command.
+ * @param message Why it failed, typically an error's `describe()`.
+ */
+void say_error(str what, str message) {
+    ulib.print(what);
+    ulib.print(": ");
+    ulib.println(message);
+}
+
+/**
+ * `ls [dir]`: the entries of the root, or of a directory.
+ * @param dir The directory; empty for the root.
+ */
+void list(str dir) {
+    i32 count = 0;
+    i32 start = 0;
+    while (1) {
+        DirEntry entry = case fs.next_entry(dir, start) of {
+            Ok(v) -> case v of { Some(found) -> found; None -> ({ break; }); };
+            Err(e) -> ({ say_error("ls", e.describe()); return; });
+        };
+        i32 index = entry.index;
+        ulib.print("  ");
+        ulib.print(entry.name.as_str());
+        bool directory = case fs.is_dir(index) of {
+            Ok(value) -> value;
+            Err(e) -> ({ say_error("ls", e.describe()); return; });
+        };
+        if (directory) {
+            ulib.println("/");
+        } else {
+            i32 size = case fs.entry_size(index) of {
+                Ok(value) -> value;
+                Err(e) -> ({ say_error("ls", e.describe()); return; });
+            };
+            ulib.print("  ");
+            ulib.print_i32(size);
+            ulib.println(" bytes");
+        }
+        count++;
+        start = index + 1;
+    }
+    if (count == 0) { ulib.println("  (empty)"); }
+}
+
+/**
+ * `cat <file>`: the file's bytes.
+ * @param path The file.
+ */
+void cat(str path) {
+    i32 fd = case fs.open(path) of {
+        Ok(v) -> v;
+        Err(e) -> ({ say_error("cat", e.describe()); return; });
+    };
+    while (1) {
+        FsChunk chunk = case fs.read(fd) of {
+            Ok(v) -> v;
+            Err(e) -> ({
+                fs.close(fd);
+                say_error("cat", e.describe());
+                return;
+            });
+        };
+        if (chunk.got <= 0) { break; }
+        ulib.print(chunk.text.as_str());
+    }
+    fs.close(fd);
+    ulib.println("");
+}
+
+/** `clear`: a form feed, which a terminal takes as "clear the screen". */
+void clear() {
+    Text<4> form_feed = Text<4> {};
+    form_feed.push((u8)12);
+    ulib.print(form_feed.as_str());
+}
+
+/**
+ * Starts a program and waits for it to end, then says how it ended: by then
+ * nothing else writes, so the line cannot land inside the program's output.
+ * @param name The program.
+ */
+void run(str name) {
+    Pid pid = case process.spawn(name) of {
+        Ok(child) -> child;
+        Err(e) -> ({ say_error(name, e.describe()); return; });
+    };
+    bool exited = false;
+    while (!exited) {
+        exited = case process.has_exited(pid) of {
+            Ok(value) -> value;
+            Err(_) -> true;
+        };
+        if (!exited) { ulib.yield_cpu(); }
+    }
+    Result<ProcessExitStatus, ProcessControlError> reaped = process.reap(pid);
+    ulib.print("[pid ");
+    ulib.print_i32((i32)pid);
+    case reaped of {
+        Ok(ProcessExitStatus::Code(code)) -> ({ ulib.print(" exited with "); ulib.print_i32(code); });
+        Ok(ProcessExitStatus::PageFault) -> ulib.print(" terminated by page fault");
+        Ok(ProcessExitStatus::PrivilegeViolation) -> ulib.print(" terminated by privilege violation");
+        Ok(ProcessExitStatus::IllegalInstruction) -> ulib.print(" terminated by illegal instruction");
+        Err(_) -> ulib.print(" could not be reaped");
+    };
+    ulib.println("]");
+}
+
+/** The part of `line` from `start` to `end`. */
+str part(str line, i32 start, i32 end) {
+    Option<str> view = line.slice(start, end);
+    return case view of { Some(found) -> found; None -> ""; };
+}
+
+/**
+ * Runs one command line.
+ * @param line The line, without its newline.
+ * @return False after `exit`.
+ */
+bool run_line(str line) {
+    // "command argument": split at the first space, skipping the spaces after it.
+    i32 end = case line.find(" ") of { Some(at) -> at; None -> line.length; };
+    str command = part(line, 0, end);
+    if (command.is_empty()) { return true; }
+    i32 start = end;
+    while (start < line.length && part(line, start, start + 1) == " ") { start++; }
+    str argument = part(line, start, line.length);
+    if (command == "exit") { return false; }
+    if (command == "help") {
+        ulib.println("help          this text");
+        ulib.println("ls [dir]      list the disk, or a directory (bin, apps)");
+        ulib.println("cat <file>    print a file");
+        ulib.println("clear         clear the screen");
+        ulib.println("exit          end the shell, and its window");
+        ulib.println("<program>     start a program in /bin or /apps (or: run <program>)");
+        return true;
+    }
+    if (command == "ls") { list(argument); return true; }
+    if (command == "cat") { cat(argument); return true; }
+    if (command == "clear") { clear(); return true; }
+    if (command == "run") { run(argument); return true; }
+    run(command);
+    return true;
+}
+
+/**
+ * The shell's entry point: a prompt, a line, its command, until `exit`.
+ * @return Exit code 0.
+ */
+export i32 main() {
+    ulib.println("MyOS sh. Type help, ls, or a program: hello, echo, count.");
+    Line line;
+    while (1) {
+        ulib.print("$ ");
+        ulib.read_line(&line);
+        Text<96> text = ulib.line_text(line);
+        if (!run_line(text.as_str())) { return 0; }
+    }
+}

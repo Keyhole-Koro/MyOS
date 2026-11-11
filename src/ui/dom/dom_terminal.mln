@@ -1,0 +1,274 @@
+package dom_terminal;
+
+import dom from "dom.mln";
+import graphics from "@os/ui/graphics.mln";
+import { NodeRow } from "dom_model.mln";
+import { Blob } from "@std/memory/blob.mln";
+import { Option } from "@std/core/option.mln";
+import { NodeKind } from "dom.mln";
+import { Text } from "@std/text/text.mln";
+import str from "@std/text/str.mln";
+import ascii from "@std/text/ascii.mln";
+import { NodeId } from "@contracts/ui/widget.contract.mln";
+import { KeyEventType, KeyCode } from "@contracts/input/keyboard.contract.mln";
+
+// The Terminal control: a grid of fixed-width cells that shows what the
+// processes attached to it wrote, followed by the line being typed.
+//
+// It is the terminal's line discipline as well as its screen. A printable key
+// adds to the typed line and Backspace takes from it. Enter leaves the line in
+// the text and hands it, with its newline, to the input sink, which gives it to
+// a process. Output goes in before the typed line, so a program that prints
+// while someone types does not split what they typed.
+//
+// The node's text buffer holds what was written, then the typed line. `cursor`
+// is where the typed line starts and `scroll` how many rows the view is back
+// from the end. When the buffer is full, the oldest lines go.
+//
+// Of the control characters in output, '\n' ends a line, '\t' moves to the
+// next multiple of TAB_WIDTH columns and '\f' clears the screen. The others
+// are dropped.
+
+/** The longest line that can be typed, in bytes. */
+const i32 LINE_MAX = 120;
+
+/** The grid's inset from the node's edges, in logical pixels. */
+export const i32 PAD = 6;
+
+const i32 TAB_WIDTH = 8;
+
+void no_input_sink(NodeId id, str line) { }
+
+fn(NodeId id, str line) -> void g_input_sink = no_input_sink;
+
+/**
+ * Installs who takes a typed line: the process layer, which hands it to a
+ * process attached to the terminal.
+ * @param sink Called on the server task with the terminal and the line, newline included.
+ */
+export void set_input_sink(fn(NodeId id, str line) -> void sink) { g_input_sink = sink; }
+
+// --- the buffer ------------------------------------------------------------------------------
+
+// Drops the oldest lines until `add` more bytes fit, with a quarter of the
+// buffer to spare, so a full terminal does not move its whole buffer for every
+// line it is given. The typed line always stays.
+void make_room(borrow NodeRow n, i32 add) {
+    i32 cap = n.cap;
+    i32 len = n.len;
+    if (len + add + 1 <= cap) { return; }
+    i32 want = len + add + 1 - cap + cap / 4;
+    i32 limit = n.cursor;
+    Blob buf = n.text;
+    i32 drop = 0;
+    while (drop < limit) {
+        drop++;
+        if (drop >= want && buf.at(drop - 1) == '\n') { break; }
+    }
+    i32 i = drop;
+    while (i < len) {
+        buf.put(i - drop, buf.at(i));
+        i++;
+    }
+    buf.put(len - drop, (char)0);
+    n.len = (u16)(len - drop);
+    n.cursor = (u16)(n.cursor - drop);
+}
+
+// One byte of output, in before the typed line.
+void put_output(borrow NodeRow n, i32 c) {
+    make_room(&n, 1);
+    i32 len = n.len;
+    if (len + 1 >= n.cap) { return; }
+    Blob buf = n.text;
+    i32 at = n.cursor;
+    i32 i = len;
+    while (i > at) {
+        buf.put(i, buf.at(i - 1));
+        i--;
+    }
+    buf.put(at, (char)c);
+    buf.put(len + 1, (char)0);
+    n.len = (u16)(len + 1);
+    n.cursor = (u16)(at + 1);
+}
+
+// The column output goes in at: the bytes since the last newline before it.
+i32 output_column(borrow NodeRow n) {
+    Blob buf = n.text;
+    i32 i = n.cursor;
+    while (i > 0 && buf.at(i - 1) != '\n') { i--; }
+    return n.cursor - i;
+}
+
+// '\f': what was written goes; the typed line stays.
+void clear_screen(borrow NodeRow n) {
+    Blob buf = n.text;
+    i32 at = n.cursor;
+    i32 len = n.len;
+    i32 i = at;
+    while (i < len) {
+        buf.put(i - at, buf.at(i));
+        i++;
+    }
+    buf.put(len - at, (char)0);
+    n.len = (u16)(len - at);
+    n.cursor = 0;
+}
+
+/**
+ * Writes a process's output to a Terminal, in before the typed line, and
+ * brings the end into view.
+ * @param id DOM Node ID of a Terminal.
+ * @param bytes What the process wrote.
+ */
+export void write(NodeId id, str bytes) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    if (n.kind != NodeKind::TERMINAL) { return; }
+    i32 i = 0;
+    while (i < bytes.length) {
+        i32 c = bytes.byte(i);
+        if (c == '\n' || ascii.is_printable(c)) {
+            put_output(&n, c);
+        } else if (c == '\t') {
+            i32 spaces = TAB_WIDTH - output_column(&n) % TAB_WIDTH;
+            while (spaces > 0) {
+                put_output(&n, ' ');
+                spaces--;
+            }
+        } else if (c == 12) {
+            clear_screen(&n);
+        }
+        i++;
+    }
+    n.scroll = 0;
+    dom.damage_row(&n);
+    dom.touch();
+}
+
+// --- keys ------------------------------------------------------------------------------------
+
+// Enter: the typed line stays in the text, and goes to the sink.
+void submit(borrow NodeRow n) {
+    Blob buf = n.text;
+    Text<128> line = Text<128> {};
+    i32 i = n.cursor;
+    while (i < n.len) {
+        line.push((u8)buf.at(i));
+        i++;
+    }
+    line.push((u8)'\n');
+    make_room(&n, 1);
+    i32 len = n.len;
+    if (len + 1 < n.cap) {
+        buf.put(len, (char)'\n');
+        buf.put(len + 1, (char)0);
+        n.len = (u16)(len + 1);
+    }
+    n.cursor = n.len;
+    g_input_sink(n.id, line.as_str());
+}
+
+/**
+ * Applies a key to the typed line of a focused Terminal.
+ * @param n Terminal node row.
+ * @param type KeyEventType value.
+ * @param code Key code, or the character of a CHAR event.
+ * @return True when the node changed.
+ */
+export bool handle_key(borrow NodeRow n, i32 type, i32 code) {
+    if (type == KeyEventType::CHAR) {
+        if (!ascii.is_printable(code) || n.len - n.cursor >= LINE_MAX) { return false; }
+        make_room(&n, 1);
+        i32 len = n.len;
+        if (len + 1 >= n.cap) { return false; }
+        Blob buf = n.text;
+        buf.put(len, (char)code);
+        buf.put(len + 1, (char)0);
+        n.len = (u16)(len + 1);
+        n.scroll = 0;
+        return true;
+    }
+    if (type != KeyEventType::DOWN) { return false; }
+    if (code == KeyCode::BACKSPACE) {
+        if (n.len <= n.cursor) { return false; }
+        i32 len = n.len - 1;
+        n.text.put(len, (char)0);
+        n.len = (u16)len;
+        n.scroll = 0;
+        return true;
+    }
+    if (code == KeyCode::ENTER) {
+        submit(&n);
+        n.scroll = 0;
+        return true;
+    }
+    return false;
+}
+
+// --- the grid --------------------------------------------------------------------------------
+
+/** How many cells fit across a Terminal. */
+export i32 columns(borrow NodeRow n) {
+    i32 s = dom.ui_scale();
+    i32 cols = (n.w - 2 * PAD * s) / graphics.mono_cell_width(s);
+    return cols < 1 ? 1 : cols;
+}
+
+/** How many rows of cells fit down a Terminal. */
+export i32 visible_rows(borrow NodeRow n) {
+    i32 s = dom.ui_scale();
+    i32 rows = (n.h - 2 * PAD * s) / graphics.mono_line_height(s);
+    return rows < 1 ? 1 : rows;
+}
+
+/**
+ * The rows a line takes on a grid `cols` wide. A long line wraps; the last
+ * line keeps a cell after its end for the caret.
+ * @param length The line's bytes, without its newline.
+ * @param last Whether it is the last line, the one being typed.
+ * @param cols Cells across.
+ */
+export i32 line_rows(i32 length, bool last, i32 cols) {
+    if (last) { return length / cols + 1; }
+    if (length == 0) { return 1; }
+    return (length + cols - 1) / cols;
+}
+
+/**
+ * The rows all of a Terminal's text takes on a grid `cols` wide.
+ * @param text The node's text.
+ * @param cols Cells across.
+ */
+export i32 row_count(str text, i32 cols) {
+    i32 rows = 0;
+    i32 start = 0;
+    i32 i = 0;
+    while (i < text.length) {
+        if (text.byte(i) == '\n') {
+            rows = rows + line_rows(i - start, false, cols);
+            start = i + 1;
+        }
+        i++;
+    }
+    return rows + line_rows(text.length - start, true, cols);
+}
+
+/**
+ * Moves a Terminal's view back through its text, or forward toward the end.
+ * @param id DOM Node ID.
+ * @param rows Rows to move; positive goes back.
+ */
+export void scroll_by(NodeId id, i32 rows) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    if (n.kind != NodeKind::TERMINAL) { return; }
+    i32 most = row_count(n.text.as_str(), columns(&n)) - visible_rows(&n);
+    if (most < 0) { most = 0; }
+    i32 scroll = n.scroll + rows;
+    if (scroll < 0) { scroll = 0; }
+    if (scroll > most) { scroll = most; }
+    if (scroll != n.scroll) {
+        n.scroll = (u16)scroll;
+        dom.damage_row(&n);
+    }
+}

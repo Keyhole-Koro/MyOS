@@ -648,3 +648,22 @@ checked/hitTestableを含める。host側は`MyOS` / strict `Locator` / `expect`
   前の文字の幅によらないので、同じ数のタブを置いた行どうしは列がそろう。`draw_label`・
   `text_width`・`text_width_n` が同じ規則で測る。
 - snapshot の JSON は、改行に加えてタブと他の制御文字もエスケープする。
+
+## 2026-11-11: Terminal
+
+- 新ノード種別 `TERMINAL`（role `terminal`）。`dom_elements.create_terminal(name, x, y, w, h, capacity)`
+  が作る。等幅の文字の格子に、書かれた文字と打っている行を出す（`dom_terminal.mln`）。
+  文字は `font_mono.mln`（`tools/gen_font.py --mono`、Noto Sans Mono）で、`graphics.draw_mono` が
+  1 バイト 1 マスで描く。長い行は格子の幅で折り返す。
+- text は書かれたものの後に打っている行。`cursor` は打っている行の始まり、`scroll` は末尾から
+  何行戻って見ているか（ホイールで動き、出力か打鍵で 0 に戻る）。text が `cap` を超えると、
+  四分の一空くまで古い行から捨てる。打っている行は捨てない。
+- 行の規則（line discipline）もこのノードが持つ。印字できるキーは打っている行に足し、
+  Backspace は削り、Enter はその行を text に残したまま、改行付きで入力の受け手
+  （`dom_terminal.set_input_sink`）へ渡す。受け手は `proc/console.mln` で、その端末に
+  最後に結ばれたプロセスの stdin に入れる。打てる行は `LINE_MAX`（120 バイト）まで。
+- 出力（`dom_terminal.write`）は打っている行の前に入るので、打っている途中に出力が来ても
+  打った文字は分かれない。制御文字は `\n` が改行、`\t` が 8 桁ごとの位置まで空白、`\f`（12）が
+  画面の消去（打っている行は残る）。他は捨てる。
+- `AREA_APPEND` は Terminal にも効き、プロセスの出力と同じく書く。キーはフォーカスのある
+  Terminal へ `dom_widgets.dispatch_key_event` から、ホイールは compositor から `scroll_by` へ届く。

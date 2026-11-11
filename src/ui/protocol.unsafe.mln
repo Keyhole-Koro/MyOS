@@ -13,11 +13,13 @@ import { Pid } from "@contracts/process/control.contract.mln";
 import { Result } from "@std/core/result.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import dom from "dom/dom.mln";
+import { NodeKind } from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
 import dom_focus from "dom/dom_focus.mln";
 import dom_list from "dom/dom_list.mln";
 import dom_graph from "dom/dom_graph.mln";
 import dom_text_edit from "dom/dom_text_edit.mln";
+import dom_terminal from "dom/dom_terminal.mln";
 import irq from "@kernel/arch/irq.mln";
 import protocol_elements from "protocol_elements.mln";
 import { NodeRow } from "dom/dom_model.mln";
@@ -86,7 +88,6 @@ RequestStatus run_request(Request *m) {
     if (op == UiOp::SET_CHECKED)    { set_checked(id, m->a1); return RequestStatus::OK; }
     if (op == UiOp::INPUT_SET)      { input_set(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::AREA_APPEND)    { area_append(id, m->s0); return RequestStatus::OK; }
-    if (op == UiOp::AREA_CLEAR)     { area_clear(id); return RequestStatus::OK; }
     if (op == UiOp::LIST_SET_ITEMS) { list_set_items(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::LIST_SELECT)    { dom_list.list_select(id, m->a1); return RequestStatus::OK; }
     if (op == UiOp::GRAPH_SET)      { dom_graph.graph_set(id, m->a1, str.from_c(m->s0)); return RequestStatus::OK; }
@@ -149,15 +150,10 @@ void input_set(NodeId id, char *s) { dom_text_edit.set_input_text(id, str.from_c
 void area_append(NodeId id, char *s) {
     i32 was = irq.save_disable();
     defer irq.restore(was);
-    dom_text_edit.append_text(id, str.from_c(s));
+    bool terminal = case dom.kind_of(id) of { Some(kind) -> kind == NodeKind::TERMINAL; None -> false; };
+    if (terminal) { dom_terminal.write(id, str.from_c(s)); }
+    else { dom_text_edit.append_text(id, str.from_c(s)); }
 }
-
-/**
- * Clears all content from a multi-line text area.
- *
- * @param id UI node ID.
- */
-void area_clear(NodeId id) { dom_text_edit.clear_text_area(id); }
 
 /**
  * Replaces the item list of a list widget with newline-separated strings.

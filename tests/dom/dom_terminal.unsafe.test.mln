@@ -1,0 +1,152 @@
+import assert from "@std/testing/assert.mln";
+import dom from "@os/ui/dom/dom.mln";
+import desktop from "@os/ui/desktop.mln";
+import dom_elements from "@os/ui/dom/dom_elements.mln";
+import dom_terminal from "@os/ui/dom/dom_terminal.mln";
+import heap from "@kernel/mm/heap.mln";
+import allocator from "@std/memory/allocator.mln";
+import str from "@std/text/str.mln";
+import { Text } from "@std/text/text.mln";
+import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
+import { NodeRow } from "@os/ui/dom/dom_model.mln";
+import { KeyEventType, KeyCode } from "@contracts/input/keyboard.contract.mln";
+
+// The Terminal node is a line discipline as well as a screen
+// (src/ui/dom/dom_terminal.mln): what is typed collects in its text and goes
+// to the input sink on Enter, and output goes in before the typed line.
+
+Text<128> g_line;
+i32 g_lines = 0;
+i32 g_from = 0;
+
+void take_line(NodeId id, str line) {
+    g_line.clear();
+    g_line.append(line);
+    g_lines++;
+    g_from = (i32)id;
+}
+
+bool g_ready = false;
+
+// A fresh Terminal on a fresh DOM, with the sink above installed.
+NodeId terminal(i32 capacity) {
+    if (!g_ready) {
+        heap.init();
+        allocator.configure(heap.alloc, heap.free);
+        desktop.init();
+        dom_terminal.set_input_sink(take_line);
+        g_ready = true;
+    }
+    return case dom_elements.create_terminal("t", 0, 0, 400, 200, capacity) of {
+        Ok(id) -> id;
+        Err(_) -> ({ assert.assert_true(false, "the terminal is created"); (NodeId)0; });
+    };
+}
+
+void type_text(NodeId id, str text) {
+    i32 i = 0;
+    while (i < text.length) {
+        borrow NodeRow n = dom.row_of(id);
+        dom_terminal.handle_key(&n, KeyEventType::CHAR, text.byte(i));
+        i++;
+    }
+}
+
+void press(NodeId id, i32 code) {
+    borrow NodeRow n = dom.row_of(id);
+    dom_terminal.handle_key(&n, KeyEventType::DOWN, code);
+}
+
+/*@Test "a typed line goes to the sink and stays on the screen" { step: 20000000; }*/
+void a_typed_line_goes_to_the_sink_and_stays_on_the_screen() {
+    NodeId id = terminal(1024);
+    g_lines = 0;
+    type_text(id, "ls");
+    assert.assert_str_eq(dom.text_of(id), "ls", "typing shows the line");
+    assert.assert_true(g_lines == 0, "nothing goes before Enter");
+    press(id, KeyCode::ENTER);
+    assert.assert_true(g_lines == 1, "Enter hands the line over");
+    assert.assert_str_eq(g_line.as_str(), "ls\n", "the line goes with its newline");
+    assert.assert_true(g_from == (i32)id, "from the terminal it was typed in");
+    assert.assert_str_eq(dom.text_of(id), "ls\n", "and stays on the screen");
+}
+
+/*@Test "output goes in before the typed line" { step: 20000000; }*/
+void output_goes_in_before_the_typed_line() {
+    NodeId id = terminal(1024);
+    dom_terminal.write(id, "$ ");
+    type_text(id, "ab");
+    dom_terminal.write(id, "hello\n");
+    assert.assert_str_eq(dom.text_of(id), "$ hello\nab", "output does not split what was typed");
+    press(id, KeyCode::ENTER);
+    assert.assert_str_eq(g_line.as_str(), "ab\n", "the typed line is still whole");
+}
+
+/*@Test "backspace stops where the typed line starts" { step: 20000000; }*/
+void backspace_stops_where_the_typed_line_starts() {
+    NodeId id = terminal(1024);
+    dom_terminal.write(id, "$ ");
+    type_text(id, "x");
+    press(id, KeyCode::BACKSPACE);
+    press(id, KeyCode::BACKSPACE);
+    press(id, KeyCode::BACKSPACE);
+    assert.assert_str_eq(dom.text_of(id), "$ ", "the prompt is output, not typing");
+}
+
+/*@Test "a tab moves to a multiple of eight and a form feed clears" { step: 20000000; }*/
+void a_tab_moves_to_a_multiple_of_eight_and_a_form_feed_clears() {
+    NodeId id = terminal(1024);
+    dom_terminal.write(id, "ab\tc\n");
+    assert.assert_str_eq(dom.text_of(id), "ab      c\n", "the tab fills to column 8");
+    type_text(id, "zz");
+    Text<4> form_feed = Text<4> {};
+    form_feed.push((u8)12);
+    dom_terminal.write(id, form_feed.as_str());
+    assert.assert_str_eq(dom.text_of(id), "zz", "a form feed clears all but the typed line");
+}
+
+/*@Test "a full terminal drops its oldest lines" { step: 50000000; }*/
+void a_full_terminal_drops_its_oldest_lines() {
+    NodeId id = terminal(256);
+    i32 i = 0;
+    while (i < 40) {
+        dom_terminal.write(id, "line of output\n");
+        i++;
+    }
+    type_text(id, "kept");
+    dom_terminal.write(id, "last\n");
+    str text = dom.text_of(id);
+    assert.assert_true(text.length < 256, "it stays within its capacity");
+    assert.assert_true(text.starts_with("line of output\n"), "it drops whole lines");
+    assert.assert_true(text.ends_with("last\nkept"), "the newest output and the typed line stay");
+}
+
+/*@Test "long lines wrap and the view scrolls back within the text" { step: 50000000; }*/
+void long_lines_wrap_and_the_view_scrolls_back_within_the_text() {
+    assert.assert_true(dom_terminal.line_rows(0, false, 10) == 1, "an empty line is a row");
+    assert.assert_true(dom_terminal.line_rows(10, false, 10) == 1, "a full line is a row");
+    assert.assert_true(dom_terminal.line_rows(11, false, 10) == 2, "one more wraps");
+    assert.assert_true(dom_terminal.line_rows(10, true, 10) == 2, "the last line keeps a cell for the caret");
+    assert.assert_true(dom_terminal.row_count("a\nb", 10) == 2, "two lines, two rows");
+
+    NodeId id = terminal(2048);
+    i32 i = 0;
+    while (i < 40) {
+        dom_terminal.write(id, "row\n");
+        i++;
+    }
+    borrow NodeRow n = dom.row_of(id);
+    i32 most = dom_terminal.row_count(dom.text_of(id), dom_terminal.columns(&n)) - dom_terminal.visible_rows(&n);
+    assert.assert_true(most > 3, "there is more text than fits");
+    dom_terminal.scroll_by(id, 3);
+    assert.assert_true(dom.row_of(id).scroll == 3, "the view goes back");
+    dom_terminal.scroll_by(id, 1000);
+    assert.assert_true(dom.row_of(id).scroll == most, "no further back than the first row");
+    dom_terminal.scroll_by(id, -2000);
+    assert.assert_true(dom.row_of(id).scroll == 0, "no further on than the end");
+    dom_terminal.scroll_by(id, 5);
+    dom_terminal.write(id, "new\n");
+    assert.assert_true(dom.row_of(id).scroll == 0, "output brings the end back into view");
+}

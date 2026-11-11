@@ -3,10 +3,12 @@ import debug from "@kernel/debug/debug.mln";
 import blob from "@std/memory/blob.mln";
 import graphics from "@os/ui/graphics.mln";
 import theme from "@os/ui/theme.mln";
+import str from "@std/text/str.mln";
 import dom_menu from "dom_menu.mln";
 import dom_graph from "dom_graph.mln";
 import { Samples } from "dom_graph.mln";
 import dom_text_edit from "dom_text_edit.mln";
+import dom_terminal from "dom_terminal.mln";
 import dom_window_chrome from "dom_window_chrome.mln";
 import dom from "dom.mln";
 import { NodeRow } from "dom_model.mln";
@@ -293,6 +295,70 @@ export void draw_text_area(borrow NodeRow n) {
             }
         }
     }
+}
+
+/**
+ * Renders a TERMINAL: its text on a grid of fixed-width cells, long lines
+ * wrapped at the grid's width, the end in view unless it is scrolled back, and
+ * a block caret after the typed line while it has the keyboard.
+ * @param n Terminal node row.
+ */
+export void draw_terminal(borrow NodeRow n) {
+    i32 s = dom.ui_scale();
+    i32 pad = dom_terminal.PAD * s;
+    i32 cell = graphics.mono_cell_width(s);
+    i32 lh = graphics.mono_line_height(s);
+    i32 cols = dom_terminal.columns(&n);
+    i32 rows = dom_terminal.visible_rows(&n);
+    graphics.fill_rect(n.x, n.y, n.w, n.h, theme.TERMINAL_BG);
+
+    str text = n.text.as_str();
+    i32 total = dom_terminal.row_count(text, cols);
+    i32 first = total - rows - n.scroll;
+    if (first < 0) { first = 0; }
+    i32 left = n.x + pad;
+    i32 top = n.y + pad;
+    graphics.push_clip(n.x, n.y, n.w, n.h);
+    // `row` counts the rows of the whole text; the visible ones are first..first+rows.
+    i32 row = 0;
+    i32 start = 0;
+    bool done = false;
+    while (!done) {
+        i32 end = start;
+        while (end < text.length && text.byte(end) != '\n') { end++; }
+        bool last = end >= text.length;
+        i32 count = dom_terminal.line_rows(end - start, last, cols);
+        i32 k = 0;
+        while (k < count && row + k - first < rows) {
+            i32 at = row + k - first;
+            i32 a = start + k * cols;
+            i32 b = a + cols;
+            if (b > end) { b = end; }
+            if (at >= 0 && a < b) {
+                Option<str> part = text.slice(a, b);
+                str piece = case part of { Some(view) -> view; None -> ""; };
+                graphics.draw_mono(left, top + at * lh, piece, theme.TERMINAL_TEXT, s);
+            }
+            k++;
+        }
+        row = row + count;
+        if (last || row - first >= rows) {
+            done = true;
+        } else {
+            start = end + 1;
+        }
+    }
+    // The caret follows the last byte, on the last row of the text.
+    if ((n.state & NodeState::FOCUSED) != 0) {
+        i32 line_start = text.length;
+        while (line_start > 0 && text.byte(line_start - 1) != '\n') { line_start--; }
+        i32 at = total - 1 - first;
+        if (at >= 0 && at < rows) {
+            i32 column = (text.length - line_start) % cols;
+            graphics.fill_rect(left + column * cell, top + at * lh, cell, lh, theme.TERMINAL_CARET);
+        }
+    }
+    graphics.pop_clip();
 }
 
 /**
@@ -749,6 +815,8 @@ export void draw_node(borrow NodeRow n) {
         draw_list(&n);
     } else if (kind == NodeKind::GRAPH) {
         draw_graph(&n);
+    } else if (kind == NodeKind::TERMINAL) {
+        draw_terminal(&n);
     } else if (kind == NodeKind::MENU) {
         draw_menu(&n);
     } else if (kind == NodeKind::BOX) {

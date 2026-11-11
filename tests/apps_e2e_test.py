@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end test for the MYOS-015 apps: a user process runs in the terminal,
-the file manager lists the disk, and the editor round-trips a file.
+under /bin/sh, the file manager lists the disk, and the editor round-trips a
+file.
 
 Drives the real system through the v2 automation bridge (mydomtester), the
 same path a person would use with mouse and keyboard.
@@ -73,50 +74,62 @@ def main() -> int:
     try:
         with MyOS.launch(firmware, disk=disk,
                          artifacts=REPO_ROOT / "qa" / "outputs" / "apps-e2e") as os:
-            term_in = os.get_by_test_id("terminal-input")
-            term_out = os.get_by_test_id("terminal-output")
+            term = os.get_by_test_id("terminal")
 
-            # 1. A user-space program runs as its own process; its stdout
-            #    lands in the terminal, and its exit code is reported.
-            expect(term_in).to_be_visible()
+            # 1. The terminal runs /bin/sh. A program the shell starts runs as
+            #    its own process; its stdout lands in the terminal, and the
+            #    shell reports its exit code once it ends.
+            expect(term).to_be_visible()
+            wait_text_contains(term, "$ ")
             # Boot's windows arrive in any order, and each lands on top.
             expect(os.get_by_role("window", name="Notes")).to_be_visible()
             os.raise_window("Terminal")
-            term_in.click()
+            term.click()
             os._type("hello")
             os._press("enter")
-            wait_text_contains(term_out, "Hello from user space!")
-            # The terminal notices the exit on its @timer, a tick or two later.
-            wait_text_contains(term_out, "exited with 7")
+            wait_text_contains(term, "Hello from user space!")
+            wait_text_contains(term, "exited with 7")
 
             # Threads and sync primitives in a real process, and a program
             # starting another one; each reports through its exit code.
             os._type("threads")
             os._press("enter")
-            wait_text_contains(term_out, "exited with 42")
+            wait_text_contains(term, "exited with 42")
             os._type("spawner")
             os._press("enter")
-            text = wait_text_contains(term_out, "exited with 47")
+            text = wait_text_contains(term, "exited with 47")
             # A reaped slot is the next one handed out, so each of these ran in
             # the same slot under a pid of its own: the low five bits are the
             # slot (tests/proc/pid_reuse.unsafe.test.mln).
-            pids = re.findall(r"^\[pid (\d+)\] \w+$", text, re.MULTILINE)
+            pids = re.findall(r"^\[pid (\d+) exited with \d+\]$", text, re.MULTILINE)
             assert len(pids) == 3 and len(set(pids)) == 3, f"pids: {pids}"
             assert len({int(pid) & 31 for pid in pids}) == 1, f"pids: {pids}"
 
-            # `ls` is a terminal built-in reading the MFS disk.
+            # A line typed while a program runs goes to the program, and the
+            # next one to the shell again once it has ended.
+            os._type("echo")
+            os._press("enter")
+            wait_text_contains(term, "echo: type lines")
             os._type("ls")
             os._press("enter")
-            wait_text_contains(term_out, "readme.txt")
+            wait_text_contains(term, "> ls")
+            os._type("quit")
+            os._press("enter")
+            wait_text_contains(term, "exited with 0]")
+
+            # `ls` is a shell built-in reading the MFS disk.
+            os._type("ls")
+            os._press("enter")
+            wait_text_contains(term, "readme.txt")
 
             # A typed Err crosses the syscall boundary; there is no negative
             # integer convention in the hosted FS API.
             os._type("cat definitely-missing")
             os._press("enter")
-            wait_text_contains(term_out, "cat: no such file or directory")
+            wait_text_contains(term, "cat: no such file or directory")
             os._type("ls definitely-missing")
             os._press("enter")
-            wait_text_contains(term_out, "ls: no such file or directory")
+            wait_text_contains(term, "ls: no such file or directory")
 
             # 2. The editor saves a new file to the disk.
             launch_app(os, "Editor")
@@ -172,31 +185,43 @@ def main() -> int:
             listing = os.get_by_test_id("file-list").snapshot().text
             assert listing.split("\n")[0] == "..", f"no way back from /bin:\n{listing}"
 
-            # 5. Closing a terminal hangs up what runs in it: the OS ends a
-            #    child still waiting for input and frees its pid, with no help
-            #    from the app. The new terminal retakes the old one's pid, so
-            #    the next program gets the child's, the lowest number free.
+            # 5. Closing a terminal hangs up what runs in it: the OS ends the
+            #    shell and the program it waits for, still waiting for input,
+            #    and frees their pids, with no help from the app. Task Manager
+            #    names the program's pid. The new terminal and its shell retake
+            #    the old ones' pids, so the next program gets that one, the
+            #    lowest number free.
             os.raise_window("Terminal")
-            term_in.click()
+            term.click()
             os._type("echo")
             os._press("enter")
-            wait_text_contains(term_out, "echo: type lines")
-            # The child's stdout overtakes the terminal's own "[pid N]" line.
-            text = wait_text_contains(term_out, "] echo\n")
-            child = re.findall(r"^\[pid (\d+)\] echo$", text, re.MULTILINE)[-1]
+            wait_text_contains(term, "echo: type lines")
+            launch_app(os, "Task Manager")
+            expect(os.get_by_role("window", name="Task Manager")).to_be_visible()
+            procs = os.get_by_test_id("process-list")
+            rows = wait_text_contains(procs, "\necho\t").split("\n")
+            # Cells are apart by one or more tabs: name, pid, ...
+            child = next(re.split(r"\t+", row)[1] for row in rows if row.startswith("echo\t"))
+            close_window(os, "Task Manager")
             close_window(os, "Terminal")
             expect(os.get_by_role("window", name="Terminal")).to_have_count(0)
             launch_app(os, "Terminal")
-            expect(term_in).to_be_visible()
-            term_in.click()
+            expect(term).to_be_visible()
+            wait_text_contains(term, "$ ")
+            term.click()
             os._type("hello")
             os._press("enter")
-            # The exit report comes after the terminal's own "[pid N]" line; a
-            # child's stdout can overtake that line, which is a request.
-            text = wait_text_contains(term_out, "exited with 7")
-            pids = re.findall(r"^\[pid (\d+)\] hello$", text, re.MULTILINE)
+            text = wait_text_contains(term, "exited with 7")
+            pids = re.findall(r"^\[pid (\d+) exited with 7\]$", text, re.MULTILINE)
             slots = [int(pid) & 31 for pid in pids]
-            assert slots == [int(child) & 31], f"the closed terminal's child kept its slot: {child}, {pids}"
+            assert slots == [int(child) & 31], f"the closed terminal's program kept its slot: {child}, {pids}"
+
+            # `exit` ends the shell, and with it the window.
+            os._type("exit")
+            os._press("enter")
+            expect(os.get_by_role("window", name="Terminal")).to_have_count(0)
+            launch_app(os, "Terminal")
+            expect(term).to_be_visible()
 
             # 6. Task Manager reads every process from PROC_STATS: names from
             #    the paths they were started from, and a CPU sample a second.
@@ -205,7 +230,7 @@ def main() -> int:
             procs = os.get_by_test_id("process-list")
             rows = wait_text_contains(procs, "\ntasks\t").split("\n")
             names = [row.split("\t")[0] for row in rows]
-            for name in ("MyOS", "notes", "terminal", "tasks"):
+            for name in ("MyOS", "notes", "terminal", "sh", "tasks"):
                 assert name in names, f"{name} missing from the process list:\n{rows}"
             wait_text_contains(os.get_by_test_id("tasks-summary"), "processes")
             graph = os.get_by_test_id("cpu-graph")

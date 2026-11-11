@@ -101,6 +101,8 @@ export Result<NodeId, UiError> create(Request *m) {
         dom.set_hit_testable(id, 1); // rows select on click even with no handler
     } else if (op == UiOp::CREATE_GRAPH) {
         id = dom_elements.create_graph(x, y, w, h, m->a4)?;
+    } else if (op == UiOp::CREATE_TERMINAL) {
+        id = dom_elements.create_terminal(s0, x, y, w, h, m->a4)?;
     } else {
         return Err(UiError::UnknownOperation(op));
     }

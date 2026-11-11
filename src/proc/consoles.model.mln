@@ -2,11 +2,12 @@ package consoles;
 
 import { Pid } from "@contracts/process/control.contract.mln";
 
-// Standard-I/O routing for user processes: the TextArea a process's stdout
-// goes to, and a stdin ring the terminal fills one line at a time.
+// Standard-I/O routing for user processes: the Terminal (or TextArea) a
+// process's stdout goes to, and a stdin ring filled one line at a time.
 entity Console max 8 {
     Pid pid;
-    i32 output;         // TextArea node id receiving stdout
+    i32 output;         // Terminal or TextArea node id receiving stdout
+    i32 since;          // when it was attached to `output`: a typed line goes to the latest
     u8 stdin[256];
     i32 in_head;        // next queued input byte to read
     i32 in_tail;        // where the next input byte is appended

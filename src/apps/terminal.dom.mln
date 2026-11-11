@@ -4,279 +4,64 @@ import app from "@app/app.mln";
 import { App, View } from "@app/app.mln";
 import elements from "@app/elements.mln";
 import ui from "@app/ui.mln";
-import { TextField, TextLog } from "@app/ui.mln";
-import { app, timer, key } from "@app/annotations.mln";
+import { Screen } from "@app/ui.mln";
+import { app, timer } from "@app/annotations.mln";
 import terminal from "@app/terminal.mln";
-import fs from "@std/hosted/fs.mln";
-import { DirEntry, FsChunk } from "@std/hosted/fs.mln";
 import process from "@std/hosted/process.mln";
-import str from "@std/text/str.mln";
-import { Text } from "@std/text/text.mln";
-import { Result } from "@std/core/result.mln";
-import { FsError } from "@contracts/io/fs.contract.mln";
-import { SpawnError } from "@contracts/process/spawn.contract.mln";
-import { LoaderError } from "@contracts/process/loader.contract.mln";
-import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
 import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
+import { SpawnError } from "@contracts/process/spawn.contract.mln";
+import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
 
-// Terminal: a read-only TextArea for output and a command line. Lines typed
-// while a user process is attached go to its stdin; otherwise they are
-// built-in commands (help, ls, cat, clear, run). `run hello` (or just
-// `hello`) loads the executable from the disk image and starts it as a
-// separate process whose stdout lands in this window (see proc/console.mln).
-// Each instance polls its own process on a @timer and reports its exit status.
+// Terminal: a screen with /bin/sh on it. The shell reads the lines typed on
+// the screen and starts the programs they name, which write to the same
+// screen (user/apps/sh.mln). The window only starts the shell, and goes when
+// the shell ends.
 
 /**
  * The state of a terminal.
- * @property out What the terminal and its child have printed.
- * @property input The command line.
- * @property pid Attached child process, while a program is running.
+ * @property screen What the shell runs on.
+ * @property shell The shell, while it runs.
  */
 @app
 struct Terminal {
-    TextLog out;
-    TextField input;
-    Option<Pid> pid;
+    Screen screen;
+    Option<Pid> shell;
 };
 
 impl App for Terminal {
-    Self start() { return Terminal { out: ui.log(), input: ui.field() }; }
+    Self start() { return Terminal { screen: ui.screen() }; }
 
     View (Self t) view() {
-        return <Window title="Terminal" w={560} h={400}>
-            <TextArea log={t.out} text="MyOS terminal. Type help, ls, or the name of a program (hello, echo, count).\n" name="output" x={12} y={12} w={536} h={296} capacity={6144} readonly={1} testId="terminal-output" />
-            <Row x={12} y={320} w={536} h={34} gap={8}>
-                <TextInput field={t.input} placeholder="type a command, e.g. help" w={440} h={34} capacity={96} focus={true} testId="terminal-input" />
-                <PrimaryButton text="Run" w={88} h={34} onClick={t.submit} />
-            </Row>
+        return <Window title="Terminal" w={600} h={400}>
+            <Terminal screen={t.screen} w={600} h={368} focus={true} testId="terminal" />
         </Window>;
     }
 
-    /** Stops routing the child's output to a log that is going away. A refusal
-     * means the child is gone already, and with it the output. */
-    void (borrow Self t) close() {
-        case t.pid of { Some(pid) -> terminal.unbind(pid); None -> _; };
-    }
-}
-
-/**
- * Appends text to the terminal output area.
- * @param s NUL-terminated text to append.
- */
-void (Terminal t) say(str s) {
-    t.out.append(s);
-}
-
-/**
- * Appends a line of text and a newline to the terminal output area.
- * @param s NUL-terminated line to append.
- */
-void (Terminal t) say_line(str s) {
-    t.say(s);
-    t.say("\n");
-}
-
-/**
- * Reports a failed command as `what: <message>`.
- * @param what The command, as the line's prefix.
- * @param message Why, typically an error's `describe()`.
- */
-void (Terminal t) say_error(str what, str message) {
-    t.say(what);
-    t.say(": ");
-    t.say_line(message);
-}
-
-// `ls [dir]`: the root, or a directory (`ls apps`).
-/**
- * Lists entries in a directory in the terminal output.
- * @param dir NUL-terminated directory path; empty string selects the root.
- */
-void (borrow Terminal t) cmd_ls(str dir) {
-    i32 n = 0;
-    i32 start = 0;
-    while (1) {
-        // None breaks enumeration; Err remains a distinct filesystem result.
-        DirEntry entry = case fs.next_entry(dir, start) of {
-            Ok(v) -> case v of { Some(found) -> found; None -> ({ break; }); };
-            Err(e) -> ({ t.say_error("ls", e.describe()); return; });
-        };
-        i32 idx = entry.index;
-        Text<96> line = Text<96> {};
-        line.append("  ");
-        line.append(entry.name.as_str());
-        bool is_directory = case fs.is_dir(idx) of {
-            Ok(value) -> value;
-            Err(e) -> ({ t.say_error("ls", e.describe()); return; });
-        };
-        if (is_directory) {
-            line.append("/\n");
-        } else {
-            i32 size = case fs.entry_size(idx) of {
-                Ok(value) -> value;
-                Err(e) -> ({ t.say_error("ls", e.describe()); return; });
-            };
-            line.append("  ");
-            Text<12> size_text = size.to_string();
-            line.append(size_text.as_str());
-            line.append(" bytes\n");
-        }
-        t.say(line.as_str());
-        n++;
-        start = idx + 1;
-    }
-    if (n == 0) { t.say_line("  (empty)"); }
-}
-
-/**
- * Reads a file and writes its contents to the terminal output.
- * @param path NUL-terminated file path to display.
- */
-void (borrow Terminal t) cmd_cat(str path) {
-    i32 fd = case fs.open(path) of {
-        Ok(v) -> v;
-        Err(e) -> ({ t.say_error("cat", e.describe()); return; });
-    };
-    while (1) {
-        FsChunk chunk = case fs.read(fd) of {
-            Ok(v) -> v;
+    /** The shell starts on the launch, the first open. */
+    void (borrow Self t) open(str path) {
+        if (t.shell.is_some()) { return; }
+        case terminal.spawn_bound("sh", t.screen) of {
+            Ok(pid) -> ({ t.shell = Some(pid); });
             Err(e) -> ({
-                fs.close(fd);
-                t.say_error("cat", e.describe());
-                return;
+                t.screen.write("sh: ");
+                t.screen.write(e.describe());
+                t.screen.write("\n");
             });
         };
-        if (chunk.got <= 0) { break; }
-        t.say(chunk.text.as_str());
     }
-    fs.close(fd);
-    t.say("\n");
 }
 
-/**
- * Starts an executable in a child process and routes its output to this terminal.
- * @param path NUL-terminated executable path or app name to launch.
- */
-void (borrow Terminal t) cmd_run(str path) {
-    if (t.pid.is_some()) {
-        t.say_line("a process is still running here");
-        return;
-    }
-    Pid pid = case terminal.spawn_bound(path, t.out) of {
-        Ok(value) -> value;
-        Err(e) -> ({ t.say_error("run", e.describe()); return; });
-    };
-    t.pid = Some(pid);
-    Text<128> line = pid_line(pid);
-    line.append("] ");
-    line.append(path);
-    line.append("\n");
-    t.say(line.as_str());
-}
-
-// The start of a line about a process: `[pid 3`.
-Text<128> pid_line(Pid pid) {
-    Text<128> line = Text<128> {};
-    Text<12> number = ((i32)pid).to_string();
-    line.append("[pid ");
-    line.append(number.as_str());
-    return line;
-}
-
-// The part of `line` from `start` to `end`.
-str part(str line, i32 start, i32 end) {
-    return case line.slice(start, end) of { Some(view) -> view; None -> ""; };
-}
-
-/**
- * Echoes and dispatches a command line, forwarding it to an attached process when present.
- * @param line Command line.
- */
-void (borrow Terminal t) run_line(str line) {
-    // Echo the command line into the transcript.
-    t.say("$ ");
-    t.say_line(line);
-
-    case t.pid of {
-        Some(pid) -> ({
-            case process.feed_line(pid, line) of {
-                Ok(_) -> _;
-                Err(error) -> t.say_error("input", error.describe());
-            };
-            return;
-        });
-        None -> _;
-    };
-    // "cmd arg": split at the first space, skipping the spaces after it.
-    i32 end = case line.find(" ") of { Some(at) -> at; None -> line.length; };
-    str command = part(line, 0, end);
-    if (command.is_empty()) { return; }
-    i32 start = end;
-    while (start < line.length && part(line, start, start + 1) == " ") { start++; }
-    str arg = part(line, start, line.length);
-    if (command == "help") {
-        t.say_line("help          this text");
-        t.say_line("ls [dir]      list the disk, or a directory (bin, apps)");
-        t.say_line("cat <file>    print a file");
-        t.say_line("run <file>    start a user program (or just type its name)");
-        t.say_line("clear         clear the screen");
-        return;
-    }
-    if (command == "ls") { t.cmd_ls(arg); return; }
-    if (command == "clear") { terminal.clear(t.out); return; }
-    if (command == "cat") { t.cmd_cat(arg); return; }
-    if (command == "run") { t.cmd_run(arg); return; }
-    t.cmd_run(command);
-}
-
-// Enter anywhere in the window, or the Run button, submits the command line.
-@key("Enter")
-/** Submits the current input text as a terminal command. */
-void (borrow Terminal t) submit() {
-    str line = t.input.read();
-    t.input.clear();
-    t.run_line(line);
-    t.input.focus();
-}
-
-// Poll the attached process; report and reap it once it exits.
-@timer(100)
-/** Checks the attached child process and reports/reaps it after exit. */
+// The shell has ended, with `exit`: so does the window.
+@timer(200)
+/** Closes the terminal once its shell has ended. */
 void (borrow Terminal t) poll() {
-    Pid pid = case t.pid of { Some(value) -> value; None -> ({ return; }); };
+    Pid pid = case t.shell of { Some(value) -> value; None -> ({ return; }); };
     bool exited = case process.has_exited(pid) of {
         Ok(value) -> value;
-        Err(ProcessControlError::InvalidPid(_)) -> true;
-        Err(ProcessControlError::NotExited(_)) -> false;
+        Err(_) -> true;
     };
-    if (!exited) { return; }
-    t.pid = None;
-    case process.reap(pid) of {
-        Ok(status) -> t.say_exit(pid, Some(status));
-        Err(_) -> t.say_exit(pid, None);
-    };
-}
-
-/**
- * Reports how a child ended.
- * @param pid The child.
- * @param status Its exit status, or None when it could not be reaped.
- */
-void (Terminal t) say_exit(Pid pid, Option<ProcessExitStatus> status) {
-    Text<128> line = pid_line(pid);
-    case status of {
-        Some(ProcessExitStatus::Code(code)) -> ({
-            Text<12> code_text = code.to_string();
-            line.append(" exited with ");
-            line.append(code_text.as_str());
-        });
-        Some(ProcessExitStatus::PageFault) -> ({ line.append(" terminated by page fault"); });
-        Some(ProcessExitStatus::PrivilegeViolation) -> ({ line.append(" terminated by privilege violation"); });
-        Some(ProcessExitStatus::IllegalInstruction) -> ({ line.append(" terminated by illegal instruction"); });
-        None -> ({ line.append(" could not be reaped"); });
-    };
-    line.append("]\n");
-    t.say(line.as_str());
+    if (exited) { app.quit(); }
 }
 
 i32 main() { return app.run<Terminal>(); }

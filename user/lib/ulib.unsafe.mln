@@ -1,7 +1,9 @@
 package ulib;
 
-import { sys_read, sys_write, sys_yield, sys_exit } from "sys.masm";
+import { sys_read, sys_write } from "sys.masm";
+import { sys_yield, sys_exit } from "@std/platform/myos/syscall.masm";
 import { SyscallStatus } from "@contracts/myos/syscall.contract.mln";
+import { Text } from "@std/text/text.mln";
 
 // Minimal user-space runtime: stdio over the read/write syscalls and a few
 // string helpers. No heap (sbrk exists but nothing here needs it) and small
@@ -32,6 +34,22 @@ export bool line_is(Line line, str s) {
         i++;
     }
     return true;
+}
+
+/**
+ * A line's bytes as text, for the str methods.
+ * @param line Line to copy.
+ * @return Its bytes.
+ */
+@safe
+export Text<96> line_text(Line line) {
+    Text<96> out = Text<96> {};
+    i32 i = 0;
+    while (i < line.length) {
+        out.push((u8)line.data[i]);
+        i++;
+    }
+    return out;
 }
 
 /**

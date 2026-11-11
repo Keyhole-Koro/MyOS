@@ -61,6 +61,7 @@ export bool is_focusable(borrow NodeRow n) {
     i32 k = n.kind;
     if (k == NodeKind::TEXT_INPUT) { return true; }
     if (k == NodeKind::TEXT_AREA) { return true; }
+    if (k == NodeKind::TERMINAL) { return true; }
     if (k == NodeKind::BUTTON) { return true; }
     if (k == NodeKind::CHECKBOX) { return true; }
     if (k == NodeKind::LIST) { return true; }

@@ -12,6 +12,7 @@ import dom_focus from "dom/dom_focus.mln";
 import dom_list from "dom/dom_list.mln";
 import dom_menu from "dom/dom_menu.mln";
 import dom_text_edit from "dom/dom_text_edit.mln";
+import dom_terminal from "dom/dom_terminal.mln";
 import dom_window_chrome from "dom/dom_window_chrome.mln";
 import dom_render from "dom/dom_render.mln";
 import { TaskbarTarget } from "dom/dom_render.mln";
@@ -188,6 +189,7 @@ void on_press(i32 ex, i32 ey) {
     case kind of {
         NodeKind::TEXT_INPUT -> ({ dom_focus.set_focus(hit); return; });
         NodeKind::TEXT_AREA  -> ({ dom_focus.set_focus(hit); return; });
+        NodeKind::TERMINAL   -> ({ dom_focus.set_focus(hit); return; });
         NodeKind::LIST       -> ({
             dom_focus.set_focus(hit);
             dom_list.list_click(hit, ex, ey);
@@ -344,7 +346,11 @@ export void run() {
 
                 if (wheel != 0) {
                     case dom_hit_test.find_at(ex, ey) of {
-                        Some(id) -> ({ dom_text_edit.dispatch_wheel(id, wheel); });
+                        Some(id) -> ({
+                            bool terminal = case dom.kind_of(id) of { Some(kind) -> kind == NodeKind::TERMINAL; None -> false; };
+                            if (terminal) { dom_terminal.scroll_by(id, wheel * 3); }
+                            else { dom_text_edit.dispatch_wheel(id, wheel); }
+                        });
                         None -> _;
                     };
                 }

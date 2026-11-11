@@ -28,7 +28,9 @@ import consoles from "consoles.mln";
 import proc_stats from "stats.mln";
 import { Console, ConsoleRow } from "consoles.mln";
 import dom_text_edit from "@os/ui/dom/dom_text_edit.mln";
+import dom_terminal from "@os/ui/dom/dom_terminal.mln";
 import dom from "@os/ui/dom/dom.mln";
+import { NodeKind } from "@os/ui/dom/dom.mln";
 import { NodeId } from "@contracts/ui/widget.contract.mln";
 
 // Process consoles (MYOS-015): the glue between user-space processes and
@@ -37,11 +39,15 @@ import { NodeId } from "@contracts/ui/widget.contract.mln";
 // The kernel's syscall layer does not know about the desktop; it calls the
 // write/read handlers registered here (syscall.set_console) and the spawn
 // handler (syscall.set_spawn_handler). Each running process is bound to a
-// row of consoles.model.mln, which names the TextArea its stdout goes to and
-// holds a small stdin queue. Output written from a
-// syscall lands in the DOM directly (append_bytes reads the user buffer
-// through the process's own page tables, which are active during the
-// syscall); the compositor repaints it on its next pass.
+// row of consoles.model.mln, which names the Terminal (or TextArea) its stdout
+// goes to and holds a small stdin queue. Output written from a syscall lands
+// in the DOM directly (it is read from the user buffer through the process's
+// own page tables, which are active during the syscall); the compositor
+// repaints it on its next pass.
+//
+// A child starts on its parent's terminal. A line typed there goes to the
+// process attached to it last: the program a shell started, until it ends,
+// and then the shell again. Every process still reads only its own queue.
 //
 // This is also where a process ends. A process controls only its children, and
 // a child can be reaped only once the OS holds nothing under its pid, so the
@@ -49,6 +55,9 @@ import { NodeId } from "@contracts/ui/widget.contract.mln";
 // see below for why it cannot happen inside a parent's reap syscall.
 
 i32 STDIN_CAP = 256;
+
+// Counts attachments, so the latest process on a terminal is the greatest.
+i32 g_attached = 0;
 
 /**
  * The exit status of a child ended because its parent did. Nobody reads it, as
@@ -85,11 +94,16 @@ Result<_, ProcessControlError> check_child(Pid caller, Pid pid) {
  * Attaches a process's stdio to a DOM TextArea node, replacing any earlier one.
  * With the console table full the process keeps writing to the serial log.
  * @param pid Target process ID.
- * @param output_id DOM node ID of the TextArea for stdout.
+ * @param output_id DOM node ID of the Terminal or TextArea for stdout.
  */
 void attach(Pid pid, i32 output_id) {
+    g_attached++;
     case consoles.console_by_pid(pid) of {
-        Some(bound) -> ({ bound.row().output = output_id; return; });
+        Some(bound) -> ({
+            bound.row().output = output_id;
+            bound.row().since = g_attached;
+            return;
+        });
         None -> _;
     };
     Console made = case consoles.new_console() of {
@@ -98,6 +112,7 @@ void attach(Pid pid, i32 output_id) {
     };
     made.set_pid(pid);
     made.row().output = output_id;
+    made.row().since = g_attached;
 }
 
 /**
@@ -161,22 +176,57 @@ export Option<i32> output_of(Pid pid) {
  */
 export Result<_, ProcessControlError> feed_line(Pid caller, Pid pid, str line) {
     check_child(caller, pid)?;
-    Console bound = case consoles.console_by_pid(pid) of {
-        Some(v) -> v;
-        None -> ({ return Ok(_); });
+    case consoles.console_by_pid(pid) of {
+        Some(bound) -> ({
+            borrow ConsoleRow row = bound.row();
+            queue(&row, line);
+            queue(&row, "\n");
+        });
+        None -> _;
     };
-    borrow ConsoleRow row = bound.row();
+    return Ok(_);
+}
+
+// Adds bytes to a stdin queue; what does not fit is dropped.
+void queue(borrow ConsoleRow row, str bytes) {
     i32 k = 0;
-    while (1) {
-        i32 c = 10;
-        if (k < line.length) { c = line.byte(k); }
+    while (k < bytes.length) {
         i32 next = (row.in_tail + 1) % STDIN_CAP;
-        if (next == row.in_head) { return Ok(_); } // full
-        row.stdin[row.in_tail] = (u8)c;
+        if (next == row.in_head) { return; }
+        row.stdin[row.in_tail] = (u8)bytes.byte(k);
         row.in_tail = next;
-        if (k >= line.length) { return Ok(_); }
         k++;
     }
+}
+
+/**
+ * A line typed in a Terminal: the input of the living process attached to it
+ * last. One that has ended but is not yet released is passed over, so a line
+ * typed just after a program ends goes to the shell. Nobody attached, it goes
+ * nowhere. Runs on the server task.
+ * @param terminal The Terminal it was typed in.
+ * @param line The line, its newline included.
+ */
+void take_line(NodeId terminal, str line) {
+    // Syscalls read these queues, and this task can be preempted.
+    bool was_enabled = irq.save_disable();
+    defer irq.restore(was_enabled);
+    Option<Console> latest = None;
+    i32 since = 0;
+    for (Console each in consoles.console_all()) {
+        borrow ConsoleRow row = each.row();
+        if (row.output == (i32)terminal && row.since > since && process.accepts_threads(each.pid())) {
+            latest = Some(each);
+            since = row.since;
+        }
+    }
+    case latest of {
+        Some(found) -> ({
+            borrow ConsoleRow row = found.row();
+            queue(&row, line);
+        });
+        None -> _;
+    };
 }
 
 // --- syscall handlers (run in the calling process's context) ---
@@ -206,7 +256,9 @@ i32 on_write(Pid pid, UserAddress buf, i32 count) {
         }
         return count;
     }
-    dom_text_edit.append_bytes(NodeId(out), user_memory.view(buf, count));
+    bool terminal = case dom.kind_of(NodeId(out)) of { Some(kind) -> kind == NodeKind::TERMINAL; None -> false; };
+    if (terminal) { dom_terminal.write(NodeId(out), user_memory.view(buf, count)); }
+    else { dom_text_edit.append_bytes(NodeId(out), user_memory.view(buf, count)); }
     return count;
 }
 
@@ -478,4 +530,5 @@ export void sweep() {
 export void init() {
     syscall.set_console(on_write, on_read);
     syscall.set_spawn_handler(on_spawn);
+    dom_terminal.set_input_sink(take_line);
 }

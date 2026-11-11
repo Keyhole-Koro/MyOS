@@ -53,6 +53,7 @@ export enum NodeKind {
     LIST,
     MENU,
     GRAPH,
+    TERMINAL,
 }
 
 /** Accessibility and automation roles assigned to DOM nodes. */
@@ -71,6 +72,7 @@ export enum NodeRole {
     LIST,
     MENU,
     GRAPH,
+    TERMINAL,
 }
 
 /** Bit flags describing visibility, interaction, focus, and widget state. */
@@ -1017,6 +1019,7 @@ export bool state_is_visible(borrow NodeRow n, i32 flag) {
         if (kind == NodeKind::TEXT_INPUT) { return true; }
         if (kind == NodeKind::WINDOW) { return true; }
         if (kind == NodeKind::TEXT_AREA) { return true; }
+        if (kind == NodeKind::TERMINAL) { return true; }
         if (kind == NodeKind::LIST) { return true; }
         if (kind == NodeKind::BUTTON) { return true; }  // focus ring
         if (kind == NodeKind::CHECKBOX) { return true; }

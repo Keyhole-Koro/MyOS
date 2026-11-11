@@ -10,6 +10,7 @@ import dom_focus from "dom_focus.mln";
 import dom_list from "dom_list.mln";
 import dom_menu from "dom_menu.mln";
 import dom_text_edit from "dom_text_edit.mln";
+import dom_terminal from "dom_terminal.mln";
 import { EditResult } from "dom_text_edit.mln";
 import { NodeKind, NodeState, NewNode } from "dom.mln";
 import { Option } from "@std/core/option.mln";
@@ -241,6 +242,13 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
             });
             EditResult::Unhandled -> _;
         };
+        return;
+    }
+    if (kind == NodeKind::TERMINAL) {
+        if (dom_terminal.handle_key(&n, type, code)) {
+            dom.damage_row(&n);
+            dom.touch();
+        }
         return;
     }
     if (kind == NodeKind::LIST) {

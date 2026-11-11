@@ -3,6 +3,7 @@ package graphics;
 import display_config from "display_config.mln";
 import ui_config from "config.mln";
 import font_sans from "font_sans.mln";
+import font_mono from "font_mono.mln";
 import str from "@std/text/str.mln";
 import ascii from "@std/text/ascii.mln";
 import { Option } from "@std/core/option.mln";
@@ -877,6 +878,51 @@ export void draw_label(i32 x, i32 y, str s, i32 color, bool bold, i32 scale) {
 export void draw_label_centered(i32 x, i32 y, i32 w, str s, i32 color, bool bold, i32 scale) {
     i32 tw = text_width(s, bold, scale);
     draw_label(x + (w - tw) / 2, y, s, color, bold, scale);
+}
+
+// ---------------------------------------------------------------------------
+// Fixed-width text (font_mono): a cell per byte, for the terminal's grid.
+// ---------------------------------------------------------------------------
+
+/** The width of one cell of fixed-width text, in pixels. */
+@safe
+export i32 mono_cell_width(i32 scale) {
+    return font_mono.advance(font_mono.face_for(scale), ' ');
+}
+
+/** The height of one line of fixed-width text, in pixels. */
+@safe
+export i32 mono_line_height(i32 scale) {
+    return font_mono.line_height(font_mono.face_for(scale));
+}
+
+/**
+ * Draws `s` in fixed-width text, one cell per byte, from (x, y) rightward. A
+ * byte outside 0x20..0x7E draws as '?'.
+ * @param x Left of the first cell.
+ * @param y Top of the line.
+ * @param s Bytes to draw.
+ * @param color Text color.
+ * @param scale Scaling factor.
+ */
+@safe
+export void draw_mono(i32 x, i32 y, str s, i32 color, i32 scale) {
+    i32 face = font_mono.face_for(scale);
+    i32 cell = font_mono.advance(face, ' ');
+    i32 i = 0;
+    while (i < s.length) {
+        i32 cx = x + i * cell;
+        if (cx >= g_clip.x1) { return; }
+        i32 c = s.byte(i);
+        i32 w = font_mono.width(face, c);
+        i32 h = font_mono.height(face, c);
+        if (cx + cell + 4 > g_clip.x0 && w > 0 && h > 0) {
+            i32 gx = cx + font_mono.bearing_x(face, c);
+            i32 gy = y + font_mono.bearing_y(face, c);
+            mask_blit(font_mono.data(face, c), w, gx, gy, w, h, color);
+        }
+        i++;
+    }
 }
 
 // ---------------------------------------------------------------------------

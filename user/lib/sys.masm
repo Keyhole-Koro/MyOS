@@ -1,19 +1,12 @@
-; User-space syscall stubs (MYOS-015). The MyLang calling convention puts
-; arguments in r5/r6/r7. The syscall trap returns status in r1 and a value
-; or error payload in r2; stubs copy r2 through their final out pointer.
-; Numbers
-; must match SYS_* in system/MyKernel/src/kernel/syscall.mln.
-export sys_exit
+; User-space syscall stubs (MYOS-015) for console I/O. The MyLang calling
+; convention puts arguments in r5/r6/r7. The syscall trap returns status in r1
+; and a value or error payload in r2; stubs copy r2 through their final out
+; pointer. Numbers must match Syscall in contracts/myos/syscall.contract.mln.
+; The rest (exit, yield, sbrk...) are MyStdLib's platform/myos/syscall.masm,
+; so that a program can use this library and the hosted one together.
 export sys_read
 export sys_write
-export sys_sbrk
-export sys_yield
 export sys_spawn
-
-sys_exit:
-  movi r1, 1
-  syscall
-  mov pc, lr
 
 sys_read:
   movi r1, 2
@@ -27,17 +20,6 @@ sys_write:
   syscall
   load r3, sp
   store r3, r2
-  mov pc, lr
-
-sys_sbrk:
-  movi r1, 7
-  syscall
-  store r6, r2
-  mov pc, lr
-
-sys_yield:
-  movi r1, 8
-  syscall
   mov pc, lr
 
 sys_spawn:

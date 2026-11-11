@@ -53,9 +53,14 @@ export Result<i32, OsServiceError> handle(Pid caller, i32 service, UserAddress a
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
         copy_in_text<64>(UserAddress((i32)request.path), request.path_length, &g_path);
         Result<Pid, SpawnError> result = console.spawn_file(Some(caller), g_path.as_str());
-        if (request.stdout_node != 0) {
+        // With no node named, the child writes where its parent does.
+        i32 output = request.stdout_node;
+        if (output == 0) {
+            output = case console.output_of(caller) of { Some(node) -> node; None -> 0; };
+        }
+        if (output != 0) {
             case result of {
-                Ok(pid) -> ({ console.bind(caller, pid, request.stdout_node); });
+                Ok(pid) -> ({ console.bind(caller, pid, output); });
                 Err(_) -> _;
             };
         }
