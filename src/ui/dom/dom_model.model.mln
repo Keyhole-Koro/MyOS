@@ -9,6 +9,7 @@ import { Pid } from "@contracts/process/control.contract.mln";
 // keeps ids as words; dom.mln turns them into NodeId. A stale one reaches no row.
 entity Node max 512 {
     NodeId id;
+    i32 serial;      // when it was created: ids are reused, so order goes by this
     u16 kind;
     u16 role;        // ROLE_* ; 0 = none
     u16 x;           // bounds in display pixels (UI nodes only, else 0)

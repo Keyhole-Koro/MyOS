@@ -87,8 +87,9 @@ export void draw_window(borrow NodeRow n) {
     i32 ring = theme.CLOSE_BUTTON_RING;
     i32 g = theme.CLOSE_GLYPH;
     i32 k = cr / 2;
+    i32 buttons = dom_window_chrome.button_count(&n);
     i32 which = 1;
-    while (which <= 3) {
+    while (which <= buttons) {
         i32 bx = dom_window_chrome.button_cx(&n, which);
         i32 face = theme.CLOSE_BUTTON;
         if (which == 2) { face = theme.MINIMIZE_BUTTON; }
@@ -114,14 +115,17 @@ export void draw_window(borrow NodeRow n) {
         which++;
     }
 
-    // Resize grip: three short diagonal lines in the bottom-right corner.
-    i32 grip = theme.TEXT_DISABLED;
-    i32 gx = x + w - 4 * s;
-    i32 gy = y + h - 4 * s;
-    i32 d = 4 * s;
-    while (d <= 12 * s) {
-        graphics.draw_line(gx - d, gy, gx, gy - d, grip);
-        d = d + 4 * s;
+    // Resize grip: three short diagonal lines in the bottom-right corner. A
+    // dialog keeps its size.
+    if (!dom.is_dialog(&n)) {
+        i32 grip = theme.TEXT_DISABLED;
+        i32 gx = x + w - 4 * s;
+        i32 gy = y + h - 4 * s;
+        i32 d = 4 * s;
+        while (d <= 12 * s) {
+            graphics.draw_line(gx - d, gy, gx, gy - d, grip);
+            d = d + 4 * s;
+        }
     }
 
     // Title, centred, kept clear of the buttons.
@@ -229,6 +233,29 @@ export void draw_rows_box(borrow NodeRow n, i32 focused) {
 }
 
 /**
+ * Draws a scroll thumb at the right edge of a box when not all its rows fit:
+ * its length is the share of the rows in view, its place where they are.
+ * @param right The box's inner right edge.
+ * @param top The top of the rows' area.
+ * @param height The height of the rows' area.
+ * @param total How many rows there are.
+ * @param visible How many fit.
+ * @param first The first row in view.
+ * @param color The thumb's ARGB colour.
+ */
+void draw_scroll_thumb(i32 right, i32 top, i32 height, i32 total, i32 visible, i32 first, i32 color) {
+    if (total <= visible || height <= 0) { return; }
+    i32 s = dom.ui_scale();
+    i32 length = height * visible / total;
+    if (length < 16 * s) { length = 16 * s; }
+    i32 most = total - visible;
+    if (first > most) { first = most; }
+    if (first < 0) { first = 0; }
+    i32 y = top + (height - length) * first / most;
+    graphics.blend_rect(right - 6 * s, y, 3 * s, length, color);
+}
+
+/**
  * Renders a multi-line TEXT_AREA node, including text lines and cursor caret.
  * @param n TextArea node row.
  */
@@ -285,6 +312,8 @@ export void draw_text_area(borrow NodeRow n) {
         }
     }
     graphics.pop_clip();
+    draw_scroll_thumb(x + w, y + pad, h - 2 * pad, dom_text_edit.line_of(&n, len) + 1,
+                      rows, first, theme.SCROLL_THUMB);
     // Empty editable area: placeholder from the node name.
     if (len == 0) {
         if (!ro) {
@@ -359,6 +388,7 @@ export void draw_terminal(borrow NodeRow n) {
         }
     }
     graphics.pop_clip();
+    draw_scroll_thumb(n.x + n.w, top, rows * lh, total, rows, first, theme.SCROLL_THUMB_ON_DARK);
 }
 
 /**
@@ -488,6 +518,9 @@ export void draw_list(borrow NodeRow n) {
         hl_fg = theme.TEXT_PRIMARY;
     }
     draw_rows(&n, hl, hl_fg);
+    i32 pad = 8 * dom.ui_scale();
+    draw_scroll_thumb(n.x + n.w, n.y + pad, n.h - 2 * pad, dom_text_edit.line_of(&n, n.len) + 1,
+                      dom_text_edit.visible_lines(&n), n.scroll, theme.SCROLL_THUMB);
 }
 
 /**
@@ -649,40 +682,74 @@ export void draw_panel(borrow NodeRow n) {
 }
 
 // --- taskbar ---
-// The bar lists every window on the desktop (click to activate), with a
-// launcher button at the left. Entries are
-// laid out arithmetically at draw and hit time rather than as child nodes,
-// so the bar never has to be rebuilt when windows come and go.
+// The bar lists every window on the desktop but dialogs (click to activate),
+// oldest first, with a launcher button at the left. Entries are laid out
+// arithmetically at draw and hit time rather than as child nodes, so the bar
+// never has to be rebuilt when windows come and go; they narrow when there
+// are more than fit at full width.
 
 /**
- * Finds the desktop window with the lowest ID word above `after`, so walking
- * from 0 visits windows in creation order.
- * @param after ID word lower bound (0 for first).
- * @return Next window DOM Node ID, if any.
+ * The window the taskbar lists after the one created `after`: each window on
+ * the desktop but a dialog, oldest first. A node id is reused, so the order
+ * goes by NodeRow.serial.
+ * @param after The serial of the last window listed, or 0 for the first.
+ * @return The next window, if any.
  */
 export Option<NodeId> next_window_after(i32 after) {
     Option<NodeId> best = None;
+    i32 best_serial = 0;
     for (NodeId child_id in dom.children(dom.desktop_id())) {
         borrow NodeRow c = dom.row_of(child_id);
-        i32 word = (i32)child_id;
-        if (c.kind == NodeKind::WINDOW && word > after) {
-            bool closer = case best of { Some(id) -> word < (i32)id; None -> true; };
-            if (closer) { best = Some(child_id); }
+        if (c.kind == NodeKind::WINDOW && !dom.is_dialog(&c) && c.serial > after) {
+            if (best.is_none() || c.serial < best_serial) {
+                best = Some(child_id);
+                best_serial = c.serial;
+            }
         }
     }
     return best;
 }
 
+// How many windows the taskbar lists.
+i32 taskbar_window_count() {
+    i32 count = 0;
+    i32 after = 0;
+    while (1) {
+        NodeId win = case next_window_after(after) of { Some(id) -> id; None -> ({ break; }); };
+        after = dom.row_of(win).serial;
+        count++;
+    }
+    return count;
+}
+
 /**
- * Computes the X coordinate of the taskbar entry for a given window index.
- * @param index 0-based window index.
- * @return Screen X coordinate in display pixels.
+ * The width of each taskbar entry when `count` share a bar `bar_w` wide: the
+ * full width while they fit, narrower after that.
+ * @param count Windows listed.
+ * @param bar_w The taskbar's width in display pixels.
+ * @return Entry width in display pixels.
  */
-export i32 taskbar_entry_x(i32 index) {
+export i32 taskbar_entry_width(i32 count, i32 bar_w) {
+    i32 s = dom.ui_scale();
+    i32 full = theme.TASKBAR_ENTRY_W * s;
+    if (count <= 0) { return full; }
+    i32 gap = 6 * s;
+    i32 room = bar_w - taskbar_entry_x(0, full) - 8 * s;
+    i32 fit = (room + gap) / count - gap;
+    if (fit < 24 * s) { fit = 24 * s; }
+    return fit < full ? fit : full;
+}
+
+/**
+ * Computes the X offset of a taskbar entry from the bar's left edge.
+ * @param index 0-based window index.
+ * @param width Entry width (taskbar_entry_width).
+ * @return Offset in display pixels.
+ */
+export i32 taskbar_entry_x(i32 index, i32 width) {
     i32 s = dom.ui_scale();
     i32 launcher = theme.TASKBAR_LAUNCHER_W * s;
-    i32 ew = theme.TASKBAR_ENTRY_W * s;
-    return 8 * s + launcher + 8 * s + index * (ew + 6 * s);
+    return 8 * s + launcher + 8 * s + index * (width + 6 * s);
 }
 
 /**
@@ -713,9 +780,9 @@ export void draw_taskbar(borrow NodeRow n) {
     i32 th_b = graphics.text_height(1, s);
     graphics.draw_label(lx + 30 * s, y + (h - th_b) / 2, "MyOS", on_dark, 1, s);
 
-    // One entry per window, in creation order (ids ascend), so raising a
-    // window does not shuffle the bar.
-    i32 ew = theme.TASKBAR_ENTRY_W * s;
+    // One entry per window, in creation order, so raising a window does not
+    // shuffle the bar.
+    i32 ew = taskbar_entry_width(taskbar_window_count(), w);
     i32 active_bg = theme.TASKBAR_ENTRY_ACTIVE;
     i32 dim = theme.TEXT_ON_DARK_DIM;
     i32 th = graphics.text_height(0, s);
@@ -724,7 +791,7 @@ export void draw_taskbar(borrow NodeRow n) {
     while (1) {
         NodeId win = case next_window_after(after) of { Some(id) -> id; None -> ({ break; }); };
         borrow NodeRow c = dom.row_of(win);
-        i32 ex = x + taskbar_entry_x(index);
+        i32 ex = x + taskbar_entry_x(index, ew);
         i32 ebg = entry_bg;
         i32 fg = dim;
         bool active = dom.holds(dom.active_window_id(), win);
@@ -740,7 +807,7 @@ export void draw_taskbar(borrow NodeRow n) {
             graphics.pop_clip();
         }
         index = index + 1;
-        after = (i32)win;
+        after = c.serial;
     }
 }
 
@@ -766,17 +833,17 @@ export TaskbarTarget taskbar_target_at(i32 px, i32 py) {
     if (px >= lx) {
         if (px < lx + lw) { return TaskbarTarget::Launcher; }
     }
-    i32 ew = theme.TASKBAR_ENTRY_W * s;
+    i32 ew = taskbar_entry_width(taskbar_window_count(), n.w);
     i32 index = 0;
     i32 after = 0;
     while (1) {
         NodeId win = case next_window_after(after) of { Some(id) -> id; None -> ({ break; }); };
-        i32 ex = x + taskbar_entry_x(index);
+        i32 ex = x + taskbar_entry_x(index, ew);
         if (px >= ex) {
             if (px < ex + ew) { return TaskbarTarget::Window(win); }
         }
         index++;
-        after = (i32)win;
+        after = dom.row_of(win).serial;
     }
     return TaskbarTarget::Miss;
 }

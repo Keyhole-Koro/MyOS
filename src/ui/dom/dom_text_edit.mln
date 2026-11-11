@@ -4,6 +4,7 @@ import dom from "dom.mln";
 import { NodeRow } from "dom_model.mln";
 import { Blob } from "@std/memory/blob.mln";
 import ui_metrics from "@os/ui/ui_metrics.mln";
+import theme from "@os/ui/theme.mln";
 import { NodeKind, NodeStyle } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Text } from "@std/text/text.mln";
@@ -309,6 +310,55 @@ export EditResult text_area_handle(borrow NodeRow n, i32 type, i32 code, i32 mod
         return EditResult::Moved;
     }
     return EditResult::Unhandled;
+}
+
+// --- the caret from a click ------------------------------------------------------------------
+
+// The boundary in `line` nearest to `dx` pixels right of where it is drawn:
+// the caret goes before the byte at that index.
+i32 nearest_boundary(str line, i32 dx, i32 s) {
+    if (dx <= 0) { return 0; }
+    i32 before = 0;
+    i32 k = 0;
+    while (k < line.length) {
+        Option<str> prefix = line.slice(0, k + 1);
+        i32 after = case prefix of { Some(p) -> ui_metrics.text_width(p, false, s); None -> before; };
+        if (dx < (before + after) / 2) { return k; }
+        before = after;
+        k++;
+    }
+    return line.length;
+}
+
+/**
+ * Puts the caret of a TextInput or TextArea at the character boundary nearest
+ * a click, as the text is drawn (dom_render).
+ * @param id DOM Node ID.
+ * @param px Click X in display pixels.
+ * @param py Click Y in display pixels.
+ */
+export void place_caret(NodeId id, i32 px, i32 py) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    i32 s = dom.ui_scale();
+    str text = n.text.as_str();
+    if (n.kind == NodeKind::TEXT_INPUT) {
+        n.cursor = (u16)nearest_boundary(text, px - n.x - theme.INPUT_PADDING_X * s, s);
+    } else if (n.kind == NodeKind::TEXT_AREA) {
+        i32 pad = 8 * s;
+        i32 row = (py - n.y - pad) / ui_metrics.text_height(false, s);
+        if (row < 0) { row = 0; }
+        i32 line = n.scroll + row;
+        i32 last = line_of(&n, n.len);
+        if (line > last) { line = last; }
+        i32 start = line_start(&n, line);
+        Option<str> view = text.slice(start, start + line_len_at(&n, start));
+        str piece = case view of { Some(found) -> found; None -> ""; };
+        n.cursor = (u16)(start + nearest_boundary(piece, px - n.x - pad, s));
+    } else {
+        return;
+    }
+    dom.damage_row(&n);
+    dom.touch();
 }
 
 /**

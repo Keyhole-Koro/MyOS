@@ -84,6 +84,16 @@ i32 g_hover_x = -1;
 i32 g_hover_y = -1;
 i32 g_hover_revision = -1;
 
+// The last press on a title bar, so a second one soon after, on the same
+// window and at about the same place, is a double click: it maximizes the
+// window, or restores it.
+const i32 DOUBLE_CLICK_TICKS = 400;
+const i32 DOUBLE_CLICK_SLOP = 4;   // logical pixels the pointer may move between the presses
+Option<NodeId> g_title_pressed;
+i32 g_title_pressed_at = 0;
+i32 g_title_pressed_x = 0;
+i32 g_title_pressed_y = 0;
+
 // Desktop context menu (right-click on the wallpaper), registered by main.
 char *g_desktop_menu_items = (char*)0;
 void no_desktop_menu(i32 index) { }
@@ -140,10 +150,14 @@ void on_press(i32 ex, i32 ey) {
         None -> ({ dom_focus.clear_focus(); return; });
     };
 
-    // Anything inside a window activates that window first.
+    // Anything inside a window activates that window first. A window with a
+    // dialog over it takes no clicks: the dialog comes forward instead.
     Option<NodeId> enclosing = dom.enclosing_window(hit);
     case enclosing of {
-        Some(win) -> dom_widgets.focus_window(win);
+        Some(win) -> ({
+            dom_widgets.focus_window(win);
+            if (dom_widgets.dialog_over(win).is_some()) { return; }
+        });
         None -> _;
     };
 
@@ -182,6 +196,19 @@ void on_press(i32 ex, i32 ey) {
             return;
         }
         if (dom_window_chrome.titlebar_hit(win, ex, ey)) {
+            i32 now = scheduler.ticks();
+            i32 slop = DOUBLE_CLICK_SLOP * dom.ui_scale();
+            bool near = ex - g_title_pressed_x <= slop && g_title_pressed_x - ex <= slop
+                && ey - g_title_pressed_y <= slop && g_title_pressed_y - ey <= slop;
+            if (dom.same_node(g_title_pressed, Some(win)) && now - g_title_pressed_at < DOUBLE_CLICK_TICKS && near) {
+                g_title_pressed = None;
+                dom_widgets.maximize_window(win);
+                return;
+            }
+            g_title_pressed = Some(win);
+            g_title_pressed_at = now;
+            g_title_pressed_x = ex;
+            g_title_pressed_y = ey;
             g_drag_win = Some(win);
             g_drag_last_x = ex;
             g_drag_last_y = ey;
@@ -194,8 +221,16 @@ void on_press(i32 ex, i32 ey) {
         None -> ({ return; });
     };
     case kind of {
-        NodeKind::TEXT_INPUT -> ({ dom_focus.set_focus(hit); return; });
-        NodeKind::TEXT_AREA  -> ({ dom_focus.set_focus(hit); return; });
+        NodeKind::TEXT_INPUT -> ({
+            dom_focus.set_focus(hit);
+            dom_text_edit.place_caret(hit, ex, ey);
+            return;
+        });
+        NodeKind::TEXT_AREA  -> ({
+            dom_focus.set_focus(hit);
+            dom_text_edit.place_caret(hit, ex, ey);
+            return;
+        });
         NodeKind::TERMINAL   -> ({ dom_focus.set_focus(hit); return; });
         NodeKind::LIST       -> ({
             dom_focus.set_focus(hit);

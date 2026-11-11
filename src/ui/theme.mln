@@ -60,6 +60,11 @@ export const i32 GRAPH_FILL = 0x383B82F6;
 export const i32 GRAPH_GRID = 0x14000000;
 export const i32 GRAPH_SECOND = 0xF59E0B;
 
+// Scroll thumb: how much of a list or text is in view, over light boxes and
+// over the terminal's dark screen.
+export const i32 SCROLL_THUMB = 0x50000000;
+export const i32 SCROLL_THUMB_ON_DARK = 0x60FFFFFF;
+
 // Terminal: light text on a dark screen, and the caret block.
 export const i32 TERMINAL_BG = 0x1E2128;
 export const i32 TERMINAL_TEXT = 0xE6E8EC;

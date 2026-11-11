@@ -17,6 +17,18 @@ def wait_unchecked(locator, timeout: float = 5.0) -> None:
             raise AssertionError("checkbox stayed checked")
 
 
+def click_point(os, x, y, timeout: float = 2.0):
+    """Click at (x, y) and wait until the DOM reacts; the guest runs only
+    while a request is served, so a host-side sleep would let nothing happen."""
+    before = os.snapshot().revision
+    os._pointer_sequence([{"type": "move", "x": x, "y": y},
+                          {"type": "down", "button": "left"},
+                          {"type": "up", "button": "left"}])
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and os.snapshot().revision == before:
+        pass
+
+
 def main() -> int:
     firmware = REPO_ROOT / "build" / "firmware_linked.mbin"
     disk = REPO_ROOT / "build" / "disk.img"
@@ -47,6 +59,14 @@ def main() -> int:
             title.fill("Hello")
             expect(title).to_have_value("Hello")
             expect(os.get_by_text("You typed: Hello")).to_be_visible()
+
+            # A click in a field puts the caret where it lands: just inside
+            # the left padding is before the first letter.
+            box = title.snapshot().bounds
+            click_point(os, box.x + 17, box.y + box.height // 2)
+            os._type(">")
+            expect(title).to_have_value(">Hello")
+            title.fill("Hello")
 
             # Clear writes to the fields and to the state the echo reads.
             os.get_by_role("button", name="Clear").click()

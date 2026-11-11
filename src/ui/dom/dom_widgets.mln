@@ -12,7 +12,7 @@ import dom_menu from "dom_menu.mln";
 import dom_text_edit from "dom_text_edit.mln";
 import dom_terminal from "dom_terminal.mln";
 import { EditResult } from "dom_text_edit.mln";
-import { NodeKind, NodeState, NewNode } from "dom.mln";
+import { NodeKind, NodeState, NodeStyle, NewNode } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
@@ -43,7 +43,28 @@ export i32 taskbar_node_height() {
 }
 
 /**
- * Activates a window, bringing it to front and focusing it.
+ * The dialog an app has up over `win`, if any: a dialog window of the same
+ * owner on the desktop. While it is up, the window under it waits.
+ * @param win Window DOM Node ID.
+ * @return Some(dialog), or None for a window with none over it, or a dialog.
+ */
+export Option<NodeId> dialog_over(NodeId win) {
+    borrow NodeRow n = case dom.find_row(win) of { Some(row) -> row; None -> ({ return None; }); };
+    if (n.kind != NodeKind::WINDOW || dom.is_dialog(&n)) { return None; }
+    Pid owner = case n.owner of { Some(pid) -> pid; None -> ({ return None; }); };
+    for (NodeId child_id in dom.children(dom.desktop_id())) {
+        borrow NodeRow c = dom.row_of(child_id);
+        if (dom.is_dialog(&c)) {
+            bool mine = case c.owner of { Some(pid) -> pid == owner; None -> false; };
+            if (mine) { return Some(child_id); }
+        }
+    }
+    return None;
+}
+
+/**
+ * Activates a window, bringing it to front and focusing it. A window with a
+ * dialog over it comes up under the dialog, which gets the focus.
  * @param win Window DOM Node ID.
  */
 export void focus_window(NodeId win) {
@@ -64,6 +85,10 @@ export void focus_window(NodeId win) {
         dom.damage_taskbar(); // the active entry's highlight moved
     }
     dom.bring_to_front(win);
+    case dialog_over(win) of {
+        Some(dialog) -> focus_window(dialog);
+        None -> _;
+    };
 }
 
 /**
@@ -127,7 +152,8 @@ export void resize_window(NodeId win, i32 w, i32 h) {
  * @param win Window DOM Node ID.
  */
 export void minimize_window(NodeId win) {
-    if (!dom.node_exists(win)) { return; }
+    borrow NodeRow n = case dom.find_row(win) of { Some(row) -> row; None -> ({ return; }); };
+    if (dom.is_dialog(&n)) { return; }
     dom.set_state_flag(win, NodeState::MINIMIZED, 1);
     dom.set_state_flag(win, NodeState::VISIBLE, 0);
     if (dom_focus.focus_is_in(win)) { dom_focus.clear_focus(); }
@@ -155,6 +181,7 @@ export bool is_maximized(NodeId win) {
  */
 export void maximize_window(NodeId win) {
     borrow NodeRow n = case dom.find_row(win) of { Some(row) -> row; None -> ({ return; }); };
+    if (dom.is_dialog(&n)) { return; }
     if (n.state & NodeState::MAXIMIZED) {
         i32 rx = n.sx;
         i32 ry = n.sy;
@@ -187,6 +214,19 @@ fn(Option<Pid> owner, i32 code, i32 mods) -> bool g_key_filter = no_key_filter;
  */
 export void set_key_filter(fn(Option<Pid> owner, i32 code, i32 mods) -> bool handler) { g_key_filter = handler; }
 
+// The first primary button under `parent`, depth first.
+Option<NodeId> primary_button(NodeId parent) {
+    for (NodeId child in dom.children(parent)) {
+        borrow NodeRow c = dom.row_of(child);
+        if (c.kind == NodeKind::BUTTON && (c.style & NodeStyle::PRIMARY) != 0) { return Some(child); }
+        case primary_button(child) of {
+            Some(found) -> ({ return Some(found); });
+            None -> _;
+        };
+    }
+    return None;
+}
+
 /**
  * Dispatches a keyboard event to the currently focused node or handles window/menu shortcuts.
  * @param type KeyEventType value from the shared keyboard contract.
@@ -197,6 +237,24 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
     if (type == KeyEventType::DOWN) {
         if (code == KeyCode::ESCAPE) {
             if (dom_menu.menu_id().is_some()) { dom_menu.close_menu(); return; }
+        }
+        // A dialog takes Esc as its close button, and Enter as its primary
+        // button unless a button has the keyboard.
+        Option<NodeId> active = dom.active_window_id();
+        bool in_dialog = case dom.row_in(active) of { Some(win) -> dom.is_dialog(&win); None -> false; };
+        if (in_dialog) {
+            NodeId dialog = case active of { Some(id) -> id; None -> ({ return; }); };
+            if (code == KeyCode::ESCAPE) {
+                close_window(dialog);
+                return;
+            }
+            bool on_button = case dom.row_in(dom.focus_id()) of { Some(f) -> f.kind == NodeKind::BUTTON; None -> false; };
+            if (code == KeyCode::ENTER && !on_button) {
+                case primary_button(dialog) of {
+                    Some(button) -> ({ dom.dispatch_click(button); return; });
+                    None -> _;
+                };
+            }
         }
         if (code == KeyCode::TAB) {
             dom_focus.focus_next(mods & KeyModifier::SHIFT);

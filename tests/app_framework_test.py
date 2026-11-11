@@ -9,7 +9,8 @@ framework, not any one app, is responsible for:
   - @key shortcuts reach the active window's app (Ctrl+S saves in the editor);
   - ui.open() routes a path to the app that declares `opens` (Files -> Editor);
   - closing a window frees the instance: a relaunch starts from initial state;
-  - a dialog an app opened is a window of its own and closes with Cancel;
+  - a dialog an app opened is a window of its own, the window under it takes
+    no clicks, and it closes with Cancel or Esc;
   - every app is an executable on the disk (an MBIN file with an @app row,
     read from its header at boot): the launcher lists exactly those, and
     each launch is a process.
@@ -122,15 +123,27 @@ def main() -> int:
             expect(os.get_by_role("window", name="Editor")).to_have_count(1)
             wait_text_contains(os.get_by_test_id("editor-status"), "loaded ")
 
-            # 5. A dialog the app built is its own window; Cancel closes it.
+            # 5. A dialog the app built is its own window; Cancel closes it,
+            #    and so does Esc. While it is up the window under it takes no
+            #    clicks: Refresh would have replaced the status.
             os.raise_window("Files")
             listing = os.get_by_test_id("file-list").snapshot()
             click_point(os, listing.bounds.x + 40, listing.bounds.y + 20)  # first row
             wait_text_contains(os.get_by_test_id("files-status"), "selected ")
             os.get_by_role("button", name="Delete").click()
-            expect(os.get_by_role("window", name="Delete file?")).to_be_visible()
+            dialog = os.get_by_role("window", name="Delete file?")
+            expect(dialog).to_be_visible()
+            refresh = os.get_by_role("button", name="Refresh").snapshot().bounds
+            click_point(os, refresh.x + refresh.width // 2, refresh.y + refresh.height // 2)
+            expect(dialog).to_be_visible()
+            assert "selected " in os.get_by_test_id("files-status").snapshot().text, \
+                "the window under a dialog took a click"
             os.get_by_role("button", name="Cancel").click()
-            expect(os.get_by_role("window", name="Delete file?")).to_have_count(0)
+            expect(dialog).to_have_count(0)
+            os.get_by_role("button", name="Delete").click()
+            expect(dialog).to_be_visible()
+            os._press("escape")
+            expect(dialog).to_have_count(0)
 
             # 6. Closing a window frees only that instance: Files goes, the
             #    Editor stays.

@@ -6,6 +6,8 @@ import ascii from "@std/text/ascii.mln";
 import { Text } from "@std/text/text.mln";
 import dom from "@os/ui/dom/dom.mln";
 import { NodeRow } from "@os/ui/dom/dom_model.mln";
+import { NodeKind, NodeState, NodeStyle } from "@os/ui/dom/dom.mln";
+import ui_metrics from "@os/ui/ui_metrics.mln";
 import dom_widgets from "@os/ui/dom/dom_widgets.mln";
 import dom_menu from "@os/ui/dom/dom_menu.mln";
 import dom_render from "@os/ui/dom/dom_render.mln";
@@ -57,17 +59,14 @@ import shell_install from "install.mln";
 // --- registry --------------------------------------------------------------------------------
 
 i32 APPS_MAX = 16;
-i32 DIALOG_OFFSET_X = 60;
-i32 DIALOG_OFFSET_Y = 90;
 
-// Where a new window goes. Each steps down and right of the last, by more than
-// a title bar so the ones behind can still be raised, and after the last step
-// they start over.
-i32 CASCADE_X = 60;
-i32 CASCADE_Y = 40;
-i32 CASCADE_STEP = 36;
-i32 CASCADE_STEPS = 6;
-i32 cascade_next = 0;
+// Where a new window goes: of the places on a grid over the desktop, the one
+// where it covers least of the windows already there, and of those the one
+// nearest the centre. While there is room windows open beside each other; on a
+// full desktop they overlap as little as they can.
+const i32 PLACE_GRID = 32;    // logical pixels between the places tried
+const i32 PLACE_MARGIN = 12;  // kept clear at the desktop's edges
+const i32 PLACE_MAX = 16;     // windows looked at
 
 /**
  * Metadata read from an installed executable's @app annotation.
@@ -198,14 +197,84 @@ Result<Instance, AppError> mount(i32 a) {
     return Ok(instance);
 }
 
-// Moves a new window to the next step of the cascade.
+// The windows a new one should keep clear of: every visible window on the
+// desktop but `win`, as rectangles.
+i32 g_place_count = 0;
+i32 g_place_x[16];
+i32 g_place_y[16];
+i32 g_place_w[16];
+i32 g_place_h[16];
+
+void collect_windows(NodeId win) {
+    g_place_count = 0;
+    for (NodeId child in dom.children(dom.desktop_id())) {
+        borrow NodeRow c = dom.row_of(child);
+        bool shown = (c.state & NodeState::VISIBLE) != 0;
+        if (c.kind == NodeKind::WINDOW && shown && (i32)child != (i32)win && g_place_count < PLACE_MAX) {
+            g_place_x[g_place_count] = c.x;
+            g_place_y[g_place_count] = c.y;
+            g_place_w[g_place_count] = c.w;
+            g_place_h[g_place_count] = c.h;
+            g_place_count++;
+        }
+    }
+}
+
+// How much of those windows a w x h window at (x, y) would cover, in units of
+// 4 x 4 display pixels.
+i32 covered(i32 x, i32 y, i32 w, i32 h) {
+    i32 total = 0;
+    i32 i = 0;
+    while (i < g_place_count) {
+        i32 left = x > g_place_x[i] ? x : g_place_x[i];
+        i32 right = x + w < g_place_x[i] + g_place_w[i] ? x + w : g_place_x[i] + g_place_w[i];
+        i32 top = y > g_place_y[i] ? y : g_place_y[i];
+        i32 bottom = y + h < g_place_y[i] + g_place_h[i] ? y + h : g_place_y[i] + g_place_h[i];
+        if (right > left && bottom > top) { total = total + ((right - left) >> 2) * ((bottom - top) >> 2); }
+        i++;
+    }
+    return total;
+}
+
+i32 distance(i32 a, i32 b) { return a > b ? a - b : b - a; }
+
+// Moves a new window to the place that covers least of the others, nearest
+// the centre among equals (PLACE_GRID).
 void place_window(NodeId win) {
     borrow NodeRow n = case dom.find_row(win) of { Some(found) -> found; None -> ({ return; }); };
     i32 s = dom.ui_scale();
-    i32 step = CASCADE_STEP * cascade_next;
-    dom.move_node(win, (CASCADE_X + step) * s - n.x, (CASCADE_Y + step) * s - n.y);
-    cascade_next++;
-    if (cascade_next == CASCADE_STEPS) { cascade_next = 0; }
+    i32 dw = ui_metrics.display_width();
+    i32 dh = ui_metrics.display_height() - dom_widgets.taskbar_node_height();
+    i32 margin = PLACE_MARGIN * s;
+    i32 grid = PLACE_GRID * s;
+    i32 w = n.w;
+    i32 h = n.h;
+    collect_windows(win);
+    i32 best_x = (dw - w) / 2;
+    i32 best_y = (dh - h) / 2;
+    if (best_x < 0) { best_x = 0; }
+    if (best_y < 0) { best_y = 0; }
+    i32 best_cover = covered(best_x, best_y, w, h);
+    i32 best_distance = 0;
+    i32 y = margin;
+    while (y + h + margin <= dh) {
+        i32 x = margin;
+        while (x + w + margin <= dw) {
+            i32 cover = covered(x, y, w, h);
+            if (cover <= best_cover) {
+                i32 away = distance(x + w / 2, dw / 2) + distance(y + h / 2, dh / 2);
+                if (cover < best_cover || away < best_distance) {
+                    best_x = x;
+                    best_y = y;
+                    best_cover = cover;
+                    best_distance = away;
+                }
+            }
+            x = x + grid;
+        }
+        y = y + grid;
+    }
+    dom.move_node(win, best_x - n.x, best_y - n.y);
 }
 
 // MAIN_WINDOW from an instance: its view() built `win`. Put it on the
@@ -267,8 +336,11 @@ export void show_dialog(Pid owner, NodeId win) {
     NodeId main_window = case row.win of { Some(value) -> value; None -> ({ return; }); };
     borrow NodeRow over = case dom.find_row(main_window) of { Some(found) -> found; None -> ({ return; }); };
     borrow NodeRow dialog = case dom.find_row(win) of { Some(found) -> found; None -> ({ return; }); };
-    i32 s = dom.ui_scale();
-    dom.move_node(win, over.x + DIALOG_OFFSET_X * s - dialog.x, over.y + DIALOG_OFFSET_Y * s - dialog.y);
+    // Centred across its app's window, a third of the way down.
+    i32 x = over.x + (over.w - dialog.w) / 2;
+    i32 y = over.y + (over.h - dialog.h) / 3;
+    dom.move_node(win, x - dialog.x, y - dialog.y);
+    dom.set_style(win, NodeStyle::DIALOG);
     dom.set_on_close(win, window_closed);
     case dom.append_child(dom.desktop_id(), win) of {
         Ok(_) -> _;

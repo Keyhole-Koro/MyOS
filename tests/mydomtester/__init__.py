@@ -167,8 +167,8 @@ class MyOS:
     def raise_window(self, name: str) -> None:
         """Bring a window to the front by clicking a part of it nothing covers.
 
-        New windows cascade, so a raised window can bury the title bars of the
-        ones after it; their bottom edges still show. The left of the title bar
+        Windows overlap, so a raised window can bury the title bars of others;
+        their bottom edges may still show. The left of the title bar
         holds the window's buttons."""
         window = self.get_by_role("window", name=name).snapshot()
         box = window.bounds

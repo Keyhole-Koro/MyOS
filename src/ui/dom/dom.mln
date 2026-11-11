@@ -94,6 +94,8 @@ export enum NodeStyle {
     PRIMARY  = 2, // Button: accent-coloured call to action
     CENTER   = 4, // Text: centre within w when w > 0
     READONLY = 8, // TextArea: displays text, no editing (console output)
+    DIALOG   = 16, // Window: a dialog over its app's window -- only a close button,
+                   // no resizing, no taskbar entry, and the window under it waits
 }
 
 // Handlers all share one ABI, `void handler(Option<Pid> owner, NodeId id, i32 arg)`:
@@ -139,6 +141,7 @@ DamageRect g_paint;
 bool g_painting_all = true;
 
 i32 g_revision = 0;     // increments on externally observable DOM mutation
+i32 g_serial = 0;       // the last node's creation number (NodeRow.serial)
 NodeId g_root_node_id;
 NodeId g_desktop_node_id;  // set while the desktop is built; UI attaches under this
 
@@ -390,6 +393,8 @@ export Result<NodeId, UiError> create_node(i32 kind, str name) {
     if (has_owner_slot) { g_owner_nodes[oslot].count = g_owner_nodes[oslot].count + 1; }
     borrow NodeRow n = made.row();
     n.id = id;
+    g_serial++;
+    n.serial = g_serial;
     n.kind = (u16)kind;
     n.name = replaced_text(n.name, name);
     n.owner = g_current_owner;
@@ -1342,6 +1347,14 @@ export impl Iterator<NodeId> for Children {
 export Children children(NodeId id) {
     if (!node_exists(id)) { return Children {}; }
     return Children { rows: dom_model.node_from_raw((i32)id).children() };
+}
+
+/**
+ * Whether a node is a dialog window (NodeStyle::DIALOG).
+ * @param n Node row.
+ */
+export bool is_dialog(borrow NodeRow n) {
+    return n.kind == NodeKind::WINDOW && (n.style & NodeStyle::DIALOG) != 0;
 }
 
 /**
