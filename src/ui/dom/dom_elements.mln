@@ -328,6 +328,28 @@ export Result<NodeId, UiError> create_terminal(str name, i32 x, i32 y, i32 w, i3
 }
 
 /**
+ * Creates a MENU_BUTTON: a flat button in a window's menu bar that opens a
+ * popup menu of its items below it (dom_widgets.open_menu_button). Picking an
+ * item is a change carrying its index. Its items are set like a List's rows.
+ * @param title The button's text, and its accessible name.
+ * @param x Logical X coordinate.
+ * @param y Logical Y coordinate.
+ * @param w Logical width.
+ * @param h Logical height.
+ * @return DOM Node ID.
+ */
+export Result<NodeId, UiError> create_menu_button(str title, i32 x, i32 y, i32 w, i32 h) {
+    NewNode node = NewNode { id: dom.create_node(NodeKind::MENU_BUTTON, title)? };
+    NodeId id = node.id;
+    dom.set_role(id, NodeRole::MENUBUTTON);
+    dom.set_bounds(id, dom.scale_ui(x), dom.scale_ui(y), dom.scale_ui(w), dom.scale_ui(h));
+    dom.set_state_flag(id, NodeState::VISIBLE, 1);
+    dom.set_state_flag(id, NodeState::ENABLED, 1);
+    dom.set_state_flag(id, NodeState::HIT_TESTABLE, 1);
+    return Ok(node.keep());
+}
+
+/**
  * Creates a scrollable single-selection LIST control.
  * @param name Node identifier name.
  * @param x Logical X coordinate.
@@ -379,5 +401,6 @@ export str role_name(NodeRole role) {
     if (role == NodeRole::SEPARATOR) { return "separator"; }
     if (role == NodeRole::GRAPH) { return "graph"; }
     if (role == NodeRole::TERMINAL) { return "terminal"; }
+    if (role == NodeRole::MENUBUTTON) { return "menubutton"; }
     return "none";
 }

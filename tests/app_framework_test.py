@@ -8,7 +8,8 @@ framework, not any one app, is responsible for:
   - @app(single) brings the running instance forward instead of a second one;
   - @key shortcuts reach the active window's app (Ctrl+S saves in the editor);
   - ui.open() routes a path to the app that declares `opens` (Files -> Editor);
-  - closing a window frees the instance: a relaunch starts from initial state;
+  - closing a window frees the instance: a relaunch starts from initial state,
+    and an app may ask first (the editor, about unsaved changes);
   - a dialog an app opened is a window of its own, the window under it takes
     no clicks, and it closes with Cancel or Esc;
   - every app is an executable on the disk (an MBIN file with an @app row,
@@ -29,7 +30,7 @@ from mydomtester import MyOS, expect  # noqa: E402
 
 # Registry order: the executables on the disk that declare @app, in MFS
 # entry order (tools/mkfs.py adds them sorted by name).
-MENU = ["Editor", "Files", "Notes", "Task Manager", "Terminal"]
+MENU = ["Editor", "Files", "Task Manager", "Terminal"]
 MOD_CTRL = 2
 ROW_H = 39  # menu row height at 2x UI scale (see apps_e2e_test.py)
 
@@ -72,7 +73,7 @@ def launch_app(os, name):
     click_point(os, menu.bounds.x + 40, menu.bounds.y + 16 + ROW_H * row + ROW_H // 2)
     deadline = time.monotonic() + 10.0
     while not [n for n in os.snapshot().nodes
-               if n.role == "window" and n.text == name and n.visible]:
+               if n.role == "window" and n.name == name and n.visible]:
         if time.monotonic() > deadline:
             raise AssertionError(f"{name} window did not open")
         time.sleep(0.05)
@@ -94,26 +95,30 @@ def main() -> int:
         with MyOS.launch(firmware, disk=disk,
                          artifacts=REPO_ROOT / "qa" / "outputs" / "app-framework") as os:
             # Boot's windows arrive in any order, and each lands on top.
-            for name in ("Notes", "Terminal"):
+            for name in ("Editor", "Terminal"):
                 expect(os.get_by_role("window", name=name)).to_be_visible()
 
-            # 1. The launcher lists the manifest and starts an app.
+            # 1. The launcher lists the manifest and starts an app; the
+            #    editor, started at boot, is an untitled text.
             launch_app(os, "Editor")
             editor = os.get_by_role("window", name="Editor")
             expect(editor).to_be_visible()
-            expect(os.get_by_test_id("editor-name")).to_have_value("untitled.txt")
+            assert editor.snapshot().text == "Untitled - Editor", editor.snapshot().text
 
             # 2. @app(single): a second launch is the same window.
             launch_app(os, "Editor")
             expect(os.get_by_role("window", name="Editor")).to_have_count(1)
 
-            # 3. @key("Ctrl+S") on the editor saves (status label changes).
-            #    The disk image keeps earlier runs' saves, so only the verb
-            #    is checked, not the byte count.
+            # 3. @key("Ctrl+S") on the editor saves: an untitled text asks for
+            #    a name first, and the title takes it.
             os.get_by_test_id("editor-text").click()
             os._type("via framework")
             os._press("s", MOD_CTRL)
-            wait_text_contains(os.get_by_test_id("editor-status"), "saved ")
+            expect(os.get_by_role("window", name="Save As")).to_be_visible()
+            os.get_by_test_id("editor-name").fill("framework.txt")
+            os._press("enter")
+            wait_text_contains(os.get_by_test_id("editor-status"), "saved")
+            assert editor.snapshot().text == "framework.txt - Editor", editor.snapshot().text
 
             # 4. ui.open() from Files reaches the editor's `open`: "New" loads
             #    untitled.txt into the (still single) editor and raises it.
@@ -121,7 +126,7 @@ def main() -> int:
             expect(os.get_by_role("window", name="Files")).to_be_visible()
             os.get_by_role("button", name="New").click()
             expect(os.get_by_role("window", name="Editor")).to_have_count(1)
-            wait_text_contains(os.get_by_test_id("editor-status"), "loaded ")
+            wait_text_contains(editor, "untitled.txt - Editor")
 
             # 5. A dialog the app built is its own window; Cancel closes it,
             #    and so does Esc. While it is up the window under it takes no
@@ -151,15 +156,21 @@ def main() -> int:
             expect(os.get_by_role("window", name="Files")).to_have_count(0)
             expect(os.get_by_role("window", name="Editor")).to_have_count(1)
 
-            # 7. A relaunch after close starts from the initial state.
-            os.raise_window("Notes")
-            os.get_by_role("textbox", name="Title").fill("Hello")
-            expect(os.get_by_text("You typed: Hello")).to_be_visible()
-            close_window(os, "Notes")
-            expect(os.get_by_role("window", name="Notes")).to_have_count(0)
-            launch_app(os, "Notes")
-            expect(os.get_by_role("textbox", name="Title")).to_have_value("")
-            expect(os.get_by_text("You typed: Hello")).to_have_count(0)
+            # 7. Closing a window with unsaved changes asks first (the app's
+            #    can_close); Don't Save closes it, and a relaunch starts from
+            #    the initial state.
+            os.raise_window("Editor")
+            os.get_by_test_id("editor-text").click()
+            os._type("Hello")
+            close_window(os, "Editor")
+            expect(os.get_by_role("button", name="Don't Save")).to_be_visible()
+            os.get_by_role("button", name="Don't Save").click()
+            expect(os.get_by_role("window", name="Editor")).to_have_count(0)
+            launch_app(os, "Editor")
+            editor = os.get_by_role("window", name="Editor")
+            expect(editor).to_be_visible()
+            wait_text_contains(editor, "Untitled - Editor")
+            assert "Hello" not in os.get_by_test_id("editor-text").snapshot().text
 
             # 8. The launcher is the disk: the shell read each executable's
             #    `@app(name = ...)` from its MBIN header without loading it.
@@ -179,19 +190,19 @@ def main() -> int:
 
             def close_focused(name):
                 # The launched instance is the active window.
-                w = [n for n in os.snapshot().nodes if n.role == "window" and n.text == name and n.focused][0]
+                w = [n for n in os.snapshot().nodes if n.role == "window" and n.name == name and n.focused][0]
                 click_point(os, w.bounds.x + 30, w.bounds.y + 16)
 
-            launch_app(os, "Notes")
-            expect(os.get_by_role("window", name="Notes")).to_have_count(2)
-            close_focused("Notes")
-            expect(os.get_by_role("window", name="Notes")).to_have_count(1)
+            launch_app(os, "Terminal")
+            expect(os.get_by_role("window", name="Terminal")).to_have_count(2)
+            close_focused("Terminal")
+            expect(os.get_by_role("window", name="Terminal")).to_have_count(1)
             first = max_id()
             for _ in range(6):
-                launch_app(os, "Notes")
-                expect(os.get_by_role("window", name="Notes")).to_have_count(2)
-                close_focused("Notes")
-                expect(os.get_by_role("window", name="Notes")).to_have_count(1)
+                launch_app(os, "Terminal")
+                expect(os.get_by_role("window", name="Terminal")).to_have_count(2)
+                close_focused("Terminal")
+                expect(os.get_by_role("window", name="Terminal")).to_have_count(1)
             if max_id() > first + 2:
                 raise AssertionError(f"node ids are not reused: high-water mark {first} -> {max_id()}")
 

@@ -692,3 +692,29 @@ checked/hitTestableを含める。host側は`MyOS` / strict `Locator` / `expect`
 - **新しいウィンドウの位置（`shell/app.mln`）:** 32 論理ピクセルおきの格子の各位置で、
   既にあるウィンドウと重なる面積を測る。一番重ならない位置を選び、同じなら画面の中央に
   近い位置を選ぶ。
+
+## 2026-11-12: メニューボタン、大きさへの追従、折り返し
+
+- **MENU_BUTTON**（role `menubutton`）: `dom_elements.create_menu_button(title, x, y, w, h)` が作る。
+  name が見出しで、text が改行区切りの項目（`LIST_SET_ITEMS` で入れる）。押すと
+  `dom_widgets.open_menu_button` がポップアップを下に開き、選んだ項目の番号を CHANGE で
+  アプリへ渡す（`dom.fire_menu_choice`）。ポインタが上にある間は下地を明るくする。
+- **大きさへの追従:** `NodeStyle::GROW_W`・`GROW_H` のノードは、ウィンドウの大きさの変化
+  （`dom_widgets.resize_window`、最大化を含む）と同じだけ幅・高さが変わる。`PIN_BOTTOM` の
+  ノードは、中身ごと下端と一緒に動く。アプリは `UiOp::ADD_STYLE` でこれらと `WRAP`、
+  `REPORT_CARET` だけを足せる。
+- **TextArea の段:** 描く・スクロールする・上下キーで動く単位は「段」。`WRAP` が無ければ段は行と同じで、
+  あれば行を幅（`dom_text_edit.row_width`）で折り返したもの。折り返しは収まる最後の空白の後で、
+  1 語で収まらなければ語の途中。`scroll` は段を数える。折り返しの境目にあるバイトは次の段に属する。
+  上下キーとページキーは、画面の上での横の位置を保つ。Home と End はその段の端へ、Ctrl+Home と
+  Ctrl+End は文字列の端へ動く。
+- **キャレットの報告:** `REPORT_CARET` の TextArea は、キーかクリックでキャレットが動くたびに、
+  行と列（どちらも 1 から、行は折り返さない行）を `UiEventKind::CARET`（`行 << 16 | 列`）で
+  アプリへ渡す。
+- **ダイアログとキーボード:** ダイアログが出ると、最初の TextInput・TextArea・List がキーボードを
+  受ける（`dom_focus.focus_first_field`）。閉じると、アプリのウィンドウでキーボードを持っていた
+  ノードへ戻る。ダイアログを × か Esc で閉じると、シェルはアプリに CLOSE を送り、ダイアログを
+  消さない（アプリが `onCancel` で隠す）。以前はこの場合ダイアログを消していたので、アプリの側では
+  まだ出ていることになり、二度と出せなかった。
+- ウィンドウの文字列を `SET_TEXT` で変えると、タスクバーのエントリも描き直す。ウィンドウの name
+  （自動操作で探す名前）は作った時のまま。

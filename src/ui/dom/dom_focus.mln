@@ -90,6 +90,26 @@ export void collect_focusable(NodeId id) {
 }
 
 /**
+ * Gives the keyboard to the first field in a window -- a TextInput, TextArea
+ * or List -- if it has one.
+ * @param win Window DOM Node ID.
+ */
+export void focus_first_field(NodeId win) {
+    g_focus_ring_count = 0;
+    collect_focusable(win);
+    i32 i = 0;
+    while (i < g_focus_ring_count) {
+        NodeId id = g_focus_ring[i];
+        i32 kind = case dom.kind_of(id) of { Some(value) -> value; None -> 0; };
+        if (kind == NodeKind::TEXT_INPUT || kind == NodeKind::TEXT_AREA || kind == NodeKind::LIST) {
+            set_focus(id);
+            return;
+        }
+        i++;
+    }
+}
+
+/**
  * Moves keyboard focus to next or previous focusable control in the active window.
  * @param backwards Non-zero to move focus backward (Shift-Tab), 0 forward (Tab).
  */

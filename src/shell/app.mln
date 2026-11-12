@@ -9,6 +9,7 @@ import { NodeRow } from "@os/ui/dom/dom_model.mln";
 import { NodeKind, NodeState, NodeStyle } from "@os/ui/dom/dom.mln";
 import ui_metrics from "@os/ui/ui_metrics.mln";
 import dom_widgets from "@os/ui/dom/dom_widgets.mln";
+import dom_focus from "@os/ui/dom/dom_focus.mln";
 import dom_menu from "@os/ui/dom/dom_menu.mln";
 import dom_render from "@os/ui/dom/dom_render.mln";
 import dom_automation from "@os/ui/dom/dom_automation.mln";
@@ -336,6 +337,10 @@ export void show_dialog(Pid owner, NodeId win) {
     NodeId main_window = case row.win of { Some(value) -> value; None -> ({ return; }); };
     borrow NodeRow over = case dom.find_row(main_window) of { Some(found) -> found; None -> ({ return; }); };
     borrow NodeRow dialog = case dom.find_row(win) of { Some(found) -> found; None -> ({ return; }); };
+    // The keyboard comes back where it was in the app's window once the
+    // dialog goes; meanwhile it is in the dialog's first field, if any.
+    row.focus_before_dialog = None;
+    if (dom_focus.focus_is_in(main_window)) { row.focus_before_dialog = dom.focus_id(); }
     // Centred across its app's window, a third of the way down.
     i32 x = over.x + (over.w - dialog.w) / 2;
     i32 y = over.y + (over.h - dialog.h) / 3;
@@ -347,6 +352,7 @@ export void show_dialog(Pid owner, NodeId win) {
         Err(_) -> ({ return; });
     };
     dom_widgets.focus_window(win);
+    dom_focus.focus_first_field(win);
 }
 
 /**
@@ -361,6 +367,18 @@ export void hide_dialog(Pid owner, NodeId win) {
     dom.unlink(&dialog);
     dom.touch();
     dom_widgets.activate_topmost();
+    // Back to what had the keyboard before the dialog, if it is still there.
+    case instances.instance_by_pid(owner) of {
+        Some(instance) -> ({
+            borrow InstanceRow row = instance.row();
+            case row.focus_before_dialog of {
+                Some(node) -> ({ if (dom.node_exists(node)) { dom_focus.set_focus(node); } });
+                None -> _;
+            };
+            row.focus_before_dialog = None;
+        });
+        None -> _;
+    };
 }
 
 // The on_close handler every app window carries: tell the instance its
@@ -381,7 +399,10 @@ void window_closed(Option<Pid> owner, NodeId win, i32 arg) {
                     // window that is gone, and must not close the new instance.
                     borrow InstanceRow row = instance.row();
                     bool current = case row.win of { Some(held) -> held == win; None -> false; };
-                    if (current) {
+                    // Its window or one of its dialogs: the app decides what
+                    // closing means, so a dialog it still counts as up is
+                    // never taken from under it.
+                    if (current || owns(pid, win)) {
                         push_app_event(pid, win, ShellEventKind::CLOSE, 0, 0, "");
                         return;
                     }

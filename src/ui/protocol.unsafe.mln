@@ -13,7 +13,7 @@ import { Pid } from "@contracts/process/control.contract.mln";
 import { Result } from "@std/core/result.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import dom from "dom/dom.mln";
-import { NodeKind } from "dom/dom.mln";
+import { NodeKind, NodeStyle } from "dom/dom.mln";
 import dom_widgets from "dom/dom_widgets.mln";
 import dom_focus from "dom/dom_focus.mln";
 import dom_list from "dom/dom_list.mln";
@@ -91,6 +91,7 @@ RequestStatus run_request(Request *m) {
     if (op == UiOp::LIST_SET_ITEMS) { list_set_items(id, m->s0); return RequestStatus::OK; }
     if (op == UiOp::LIST_SELECT)    { dom_list.list_select(id, m->a1); return RequestStatus::OK; }
     if (op == UiOp::GRAPH_SET)      { dom_graph.graph_set(id, m->a1, str.from_c(m->s0)); return RequestStatus::OK; }
+    if (op == UiOp::ADD_STYLE)      { add_style(id, m->a1); return RequestStatus::OK; }
     if (op == UiOp::FOCUS)          { focus(id); return RequestStatus::OK; }
     if (op == UiOp::SEND_KEY)       { send_key(m->a0, m->a1, m->a2); return RequestStatus::OK; }
     if (op >= UiOp::CREATE_WINDOW && op <= UiOp::APPEND_CHILD) {
@@ -156,12 +157,29 @@ void area_append(NodeId id, char *s) {
 }
 
 /**
- * Replaces the item list of a list widget with newline-separated strings.
+ * Replaces the items of a List or a MenuButton with newline-separated strings.
  *
  * @param id UI node ID.
  * @param items Newline-separated item string.
  */
-void list_set_items(NodeId id, char *items) { dom_list.list_set_items(id, str.from_c(items)); }
+void list_set_items(NodeId id, char *items) {
+    bool menu = case dom.kind_of(id) of { Some(kind) -> kind == NodeKind::MENU_BUTTON; None -> false; };
+    if (menu) { dom.set_text(id, str.from_c(items)); }
+    else { dom_list.list_set_items(id, str.from_c(items)); }
+}
+
+/**
+ * Adds NodeStyle bits an app may set: how a node follows its window's size,
+ * a TextArea's wrapping, and whether it reports its caret.
+ *
+ * @param id UI node ID.
+ * @param bits NodeStyle bits; any others are ignored.
+ */
+void add_style(NodeId id, i32 bits) {
+    i32 allowed = NodeStyle::GROW_W | NodeStyle::GROW_H | NodeStyle::PIN_BOTTOM
+        | NodeStyle::WRAP | NodeStyle::REPORT_CARET;
+    dom.add_style(id, bits & allowed);
+}
 
 // --- focus and windows ------------------------------------------------------------------------
 

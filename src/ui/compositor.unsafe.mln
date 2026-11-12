@@ -232,6 +232,7 @@ void on_press(i32 ex, i32 ey) {
             return;
         });
         NodeKind::TERMINAL   -> ({ dom_focus.set_focus(hit); return; });
+        NodeKind::MENU_BUTTON -> ({ dom_widgets.open_menu_button(hit); return; });
         NodeKind::LIST       -> ({
             dom_focus.set_focus(hit);
             dom_list.list_click(hit, ex, ey);

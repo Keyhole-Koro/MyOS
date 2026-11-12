@@ -48,7 +48,8 @@ void forward_ui_event(Pid owner, NodeId id, i32 kind, i32 arg) {
     if (kind == UiEventKind::CLICK ||
         kind == UiEventKind::CHANGE ||
         kind == UiEventKind::ACTIVATE ||
-        kind == UiEventKind::TIMER) {
+        kind == UiEventKind::TIMER ||
+        kind == UiEventKind::CARET) {
         push(owner, (i32)id, kind, arg, 0, "");
     }
 }

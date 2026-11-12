@@ -82,7 +82,7 @@ def main() -> int:
             expect(term).to_be_visible()
             wait_text_contains(term, "$ ")
             # Boot's windows arrive in any order, and each lands on top.
-            expect(os.get_by_role("window", name="Notes")).to_be_visible()
+            expect(os.get_by_role("window", name="Editor")).to_be_visible()
             os.raise_window("Terminal")
             term.click()
             os._type("hello")
@@ -131,23 +131,24 @@ def main() -> int:
             os._press("enter")
             wait_text_contains(term, "ls: no such file or directory")
 
-            # 2. The editor saves a new file to the disk.
+            # 2. The editor saves a new file to the disk: File > Save As asks
+            #    for its name.
             launch_app(os, "Editor")
             editor = os.get_by_role("window", name="Editor")
             expect(editor).to_be_visible()
-            # The editor opens with "untitled.txt" in the name field; clear it
-            # from the end (Locator.fill clears from Home, which a left-anchored
-            # caret ignores) before typing the new name.
-            name_field = os.get_by_test_id("editor-name")
-            name_field.click()
-            os._press("end")
-            for _ in range(len("untitled.txt")):
-                os._press("backspace")
-            os._type("note.txt")
             os.get_by_test_id("editor-text").click()
             os._type("saved from the editor")
-            os.get_by_role("button", name="Save").click()
+            menu = os.get_by_test_id("editor-file-menu").snapshot().bounds
+            click_point(os, menu.x + menu.width // 2, menu.y + menu.height // 2)
+            expect(os.get_by_role("menu")).to_be_visible()
+            items = os.get_by_role("menu").snapshot()
+            row = [line.split("\t")[0] for line in items.text.split("\n")].index("Save As...")
+            click_point(os, items.bounds.x + 40, items.bounds.y + 16 + ROW_H * row + ROW_H // 2)
+            expect(os.get_by_role("window", name="Save As")).to_be_visible()
+            os.get_by_test_id("editor-name").fill("note.txt")
+            os._press("enter")
             wait_text_contains(os.get_by_test_id("editor-status"), "saved")
+            wait_text_contains(editor, "note.txt - Editor")
 
             # 3. The file manager lists the disk, including the file the
             #    editor just wrote -- proof the save reached the disk image --
@@ -230,7 +231,7 @@ def main() -> int:
             procs = os.get_by_test_id("process-list")
             rows = wait_text_contains(procs, "\ntasks\t").split("\n")
             names = [row.split("\t")[0] for row in rows]
-            for name in ("MyOS", "notes", "terminal", "sh", "tasks"):
+            for name in ("MyOS", "editor", "terminal", "sh", "tasks"):
                 assert name in names, f"{name} missing from the process list:\n{rows}"
             wait_text_contains(os.get_by_test_id("tasks-summary"), "processes")
             graph = os.get_by_test_id("cpu-graph")

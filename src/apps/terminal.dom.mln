@@ -34,7 +34,7 @@ impl App for Terminal {
 
     View (Self t) view() {
         return <Window title="Terminal" w={600} h={400}>
-            <Terminal screen={t.screen} w={600} h={368} focus={true} testId="terminal" />
+            <Terminal screen={t.screen} w={600} h={368} focus={true} anchor={ui.GROW_W | ui.GROW_H} testId="terminal" />
         </Window>;
     }
 

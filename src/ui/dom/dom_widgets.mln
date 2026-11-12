@@ -140,11 +140,61 @@ export void resize_window(NodeId win, i32 w, i32 h) {
     i32 min_h = 120 * s;
     if (w < min_w) { w = min_w; }
     if (h < min_h) { h = min_h; }
+    i32 dw = w - n.w;
+    i32 dh = h - n.h;
     dom.damage_row(&n);
     n.w = (u16)w;
     n.h = (u16)h;
+    follow_size(win, dw, dh);
     dom.damage_row(&n);
     dom.touch();
+}
+
+// The nodes under `parent` that follow their window's size take a change of
+// dw x dh: GROW_W and GROW_H nodes change size, PIN_BOTTOM nodes move with
+// the bottom edge, along with what is in them.
+void follow_size(NodeId parent, i32 dw, i32 dh) {
+    i32 least = 16 * dom.ui_scale();
+    for (NodeId child in dom.children(parent)) {
+        i32 style = dom.row_of(child).style;
+        if ((style & (NodeStyle::GROW_W | NodeStyle::GROW_H)) != 0) {
+            borrow NodeRow c = dom.row_of(child);
+            i32 w = c.w;
+            i32 h = c.h;
+            if ((style & NodeStyle::GROW_W) != 0) { w = w + dw; }
+            if ((style & NodeStyle::GROW_H) != 0) { h = h + dh; }
+            c.w = (u16)(w < least ? least : w);
+            c.h = (u16)(h < least ? least : h);
+        }
+        if ((style & NodeStyle::PIN_BOTTOM) != 0) { dom.move_node(child, 0, dh); }
+        follow_size(child, dw, dh);
+    }
+}
+
+// --- menu buttons ------------------------------------------------------------------------------
+
+// The MenuButton whose menu is open: a pick goes to it.
+Option<NodeId> g_menu_button;
+
+void menu_button_picked(i32 index) {
+    NodeId id = case g_menu_button of { Some(value) -> value; None -> ({ return; }); };
+    g_menu_button = None;
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    dom.fire_menu_choice(&n, index);
+}
+
+/**
+ * Opens a MenuButton's menu below it; picking an item reports its index.
+ * @param id DOM Node ID of a MenuButton.
+ */
+export void open_menu_button(NodeId id) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    if (n.kind != NodeKind::MENU_BUTTON || !n.text.is_live()) { return; }
+    g_menu_button = Some(id);
+    case dom_menu.open_menu(n.x, n.y + n.h, n.text.as_str(), menu_button_picked, None) of {
+        Ok(_) -> _;
+        Err(_) -> ({ g_menu_button = None; });
+    };
 }
 
 /**
@@ -293,10 +343,12 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
                 dom.damage_row(&n);
                 dom.touch();
                 dom.fire_change(&n);
+                dom_text_edit.report_caret(&n);
             });
             EditResult::Moved -> ({
                 dom.damage_row(&n);
                 dom.touch();
+                dom_text_edit.report_caret(&n);
             });
             EditResult::Unhandled -> _;
         };

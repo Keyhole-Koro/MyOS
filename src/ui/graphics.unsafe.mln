@@ -799,6 +799,18 @@ export i32 text_width_n(str s, i32 n, bool bold, i32 scale) {
 }
 
 /**
+ * The advance of one character of the regular UI font; a tab counts as one tab stop.
+ * @param ch ASCII character code.
+ * @param scale Scaling factor.
+ * @return Advance in pixels.
+ */
+@safe
+export i32 char_width(i32 ch, i32 scale) {
+    if (ch == 9) { return TAB_STOP * scale; }
+    return font_sans.advance(font_sans.face_for(false, scale), ch);
+}
+
+/**
  * Renders a single anti-aliased font_sans glyph and returns its horizontal advance.
  * @param x Left position of line box.
  * @param y Top position of line box.

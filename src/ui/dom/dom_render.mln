@@ -277,30 +277,34 @@ export void draw_text_area(borrow NodeRow n) {
     Blob buf = n.text;
     i32 len = n.len;
     graphics.push_clip(x + s, y + s, w - 2 * s, h - 2 * s);
+    // Rows: lines, or lines broken to fit with NodeStyle::WRAP (dom_text_edit).
+    str text = n.text.as_str();
     i32 rows = dom_text_edit.visible_lines(&n);
     i32 first = n.scroll;
-    i32 start = dom_text_edit.line_start(&n, first);
+    i32 start = dom_text_edit.row_start(&n, first);
     i32 row = 0;
     bool has_caret = false;
     i32 caret_x = 0;
     i32 caret_y = 0;
     while (row < rows) {
-        if (start > len) { break; }
-        i32 llen = dom_text_edit.line_len_at(&n, start);
+        i32 end = dom_text_edit.row_end(&n, text, start);
+        i32 llen = end - start;
         i32 ty = y + pad + row * lh;
         Text<160> line = copy_line(buf, start, llen);
         str label_3 = line.as_str();
         graphics.draw_label(x + pad, ty, label_3, fg, 0, s);
+        // The caret is in this row up to its end, unless a wrapped row breaks
+        // there: then it starts the next row.
         i32 cur = n.cursor;
-        if (cur >= start) {
-            if (cur <= start + llen) {
-                str label_4 = line.as_str();
-                caret_x = x + pad + graphics.text_width_n(label_4, cur - start, 0, s);
-                caret_y = ty;
-                has_caret = true;
-            }
+        bool line_end = end >= len || text.byte(end) == '\n';
+        if (cur >= start && (cur < end || cur == end && line_end)) {
+            str label_4 = line.as_str();
+            caret_x = x + pad + graphics.text_width_n(label_4, cur - start, 0, s);
+            caret_y = ty;
+            has_caret = true;
         }
-        start = start + llen + 1;
+        if (end >= len) { break; }
+        start = dom_text_edit.next_row_start(text, end);
         row++;
     }
     if (focused != 0) {
@@ -312,7 +316,7 @@ export void draw_text_area(borrow NodeRow n) {
         }
     }
     graphics.pop_clip();
-    draw_scroll_thumb(x + w, y + pad, h - 2 * pad, dom_text_edit.line_of(&n, len) + 1,
+    draw_scroll_thumb(x + w, y + pad, h - 2 * pad, dom_text_edit.row_count(&n),
                       rows, first, theme.SCROLL_THUMB);
     // Empty editable area: placeholder from the node name.
     if (len == 0) {
@@ -389,6 +393,22 @@ export void draw_terminal(borrow NodeRow n) {
     }
     graphics.pop_clip();
     draw_scroll_thumb(n.x + n.w, top, rows * lh, total, rows, first, theme.SCROLL_THUMB_ON_DARK);
+}
+
+/**
+ * Renders a MENU_BUTTON: its title, on a highlight while the pointer is over it.
+ * @param n MenuButton node row.
+ */
+export void draw_menu_button(borrow NodeRow n) {
+    i32 s = dom.ui_scale();
+    if ((n.state & NodeState::HOVERED) != 0) {
+        graphics.fill_round_rect(n.x, n.y, n.w, n.h, 4 * s, theme.MENU_BUTTON_HOVER);
+    }
+    if (n.name.is_live()) {
+        i32 th = graphics.text_height(0, s);
+        str title = n.name.as_str();
+        graphics.draw_label_centered(n.x, n.y + (n.h - th) / 2, n.w, title, theme.TEXT_PRIMARY, 0, s);
+    }
 }
 
 /**
@@ -884,6 +904,8 @@ export void draw_node(borrow NodeRow n) {
         draw_graph(&n);
     } else if (kind == NodeKind::TERMINAL) {
         draw_terminal(&n);
+    } else if (kind == NodeKind::MENU_BUTTON) {
+        draw_menu_button(&n);
     } else if (kind == NodeKind::MENU) {
         draw_menu(&n);
     } else if (kind == NodeKind::BOX) {

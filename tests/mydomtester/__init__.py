@@ -347,8 +347,9 @@ class Locator:
 
     def fill(self, text: str, *, timeout: float = COMMAND_TIMEOUT_S) -> None:
         self.focus(timeout=timeout)
-        self._os._press("home")
-        # MyOS currently lacks selection/delete-all; clear with backspace.
+        self._os._press("end")
+        # MyOS currently lacks selection/delete-all; clear with backspace
+        # from the end, wherever the click put the caret.
         node = self.snapshot()
         for _ in node.value:
             self._os._press("backspace")

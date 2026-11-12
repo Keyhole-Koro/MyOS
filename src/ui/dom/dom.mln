@@ -54,6 +54,7 @@ export enum NodeKind {
     MENU,
     GRAPH,
     TERMINAL,
+    MENU_BUTTON,
 }
 
 /** Accessibility and automation roles assigned to DOM nodes. */
@@ -73,6 +74,7 @@ export enum NodeRole {
     MENU,
     GRAPH,
     TERMINAL,
+    MENUBUTTON,
 }
 
 /** Bit flags describing visibility, interaction, focus, and widget state. */
@@ -96,6 +98,12 @@ export enum NodeStyle {
     READONLY = 8, // TextArea: displays text, no editing (console output)
     DIALOG   = 16, // Window: a dialog over its app's window -- only a close button,
                    // no resizing, no taskbar entry, and the window under it waits
+    // How a node follows its window's size (dom_widgets.resize_window):
+    GROW_W     = 32,  // it widens and narrows with the window
+    GROW_H     = 64,  // it grows and shrinks with the window's height
+    PIN_BOTTOM = 128, // it keeps its distance from the window's bottom edge
+    WRAP         = 256, // TextArea: long lines break to fit its width
+    REPORT_CARET = 512, // TextArea: tells its app where the caret is (CARET events)
 }
 
 // Handlers all share one ABI, `void handler(Option<Pid> owner, NodeId id, i32 arg)`:
@@ -922,6 +930,7 @@ export void set_text(NodeId id, str text) {
         n.h = (u16)text_height_of(&n);
         relayout_parent(id);
     }
+    if (n.kind == NodeKind::WINDOW) { damage_taskbar(); } // its entry shows the title
     damage_row(&n);   // new string may be longer
     touch();
 }
@@ -973,6 +982,16 @@ export void set_color(NodeId id, i32 color) {
 }
 
 /**
+ * Adds style bits to a node, keeping those it has.
+ * @param id DOM Node ID.
+ * @param bits NodeStyle bits.
+ */
+export void add_style(NodeId id, i32 bits) {
+    borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    set_style(id, n.style | bits);
+}
+
+/**
  * Sets the text style flags (e.g. NodeStyle::BOLD) for a node.
  * @param id DOM Node ID.
  * @param style Style bitmask.
@@ -1012,6 +1031,7 @@ export bool state_is_visible(borrow NodeRow n, i32 flag) {
         if (kind == NodeKind::BUTTON) { return true; }
         if (kind == NodeKind::CHECKBOX) { return true; }
         if (kind == NodeKind::WINDOW) { return true; } // title-bar button highlight
+        if (kind == NodeKind::MENU_BUTTON) { return true; }
         if (kind == NodeKind::MENU) { return true; }
         return false;
     }
@@ -1162,6 +1182,25 @@ export void fire_change(borrow NodeRow n) {
  */
 export void fire_activate(borrow NodeRow n) {
     emit(&n, UiEventKind::ACTIVATE, n.on_click, change_value(&n));
+}
+
+/**
+ * Reports that the user picked item `index` of a MenuButton's menu, as a
+ * change carrying the index.
+ * @param n The MenuButton.
+ * @param index 0-based item.
+ */
+export void fire_menu_choice(borrow NodeRow n, i32 index) {
+    emit(&n, UiEventKind::CHANGE, n.on_change, index);
+}
+
+/**
+ * Reports where a TextArea's caret is.
+ * @param n The TextArea.
+ * @param packed line << 16 | column, both counted from 1.
+ */
+export void fire_caret(borrow NodeRow n, i32 packed) {
+    emit(&n, UiEventKind::CARET, n.on_change, packed);
 }
 
 // The value a change event carries, which is the node's new value.

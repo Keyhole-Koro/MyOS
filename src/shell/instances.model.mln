@@ -12,6 +12,7 @@ entity Instance max 32 {
     Option<NodeId> win; // main window; None until MAIN_WINDOW
     bool open;          // open_path waits for the window
     bool done;          // it sent EXIT; reap once it has exited
+    Option<NodeId> focus_before_dialog; // what had the keyboard when a dialog came up
     // A path per instance: a single scratch buffer loses the first path when
     // two applications are still starting at the same time.
     Text<64> open_path;

@@ -7,131 +7,406 @@ import ui from "@app/ui.mln";
 import { TextField } from "@app/ui.mln";
 import { app, key } from "@app/annotations.mln";
 import fs from "@std/hosted/fs.mln";
-import { FsChunk } from "@std/hosted/fs.mln";
+import { DirEntry, FsChunk } from "@std/hosted/fs.mln";
 import str from "@std/text/str.mln";
+import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
 import { Text } from "@std/text/text.mln";
-import { KeyEventType, KeyCode } from "@contracts/input/keyboard.contract.mln";
+import { KeyEventType, KeyCode, KeyModifier } from "@contracts/input/keyboard.contract.mln";
 
-// Text editor: a TextArea over one file on the MFS disk. Save rewrites the
-// file (MFS writes are append-only, so the file is removed and recreated).
+// Editor: a text editor after Windows' Notepad. One document fills the window:
+// a File menu (New, Open, Save, Save As, Exit), the text with long lines
+// wrapped, and a status line with the caret's line and column. The title names
+// the file, with a * while it has changes not saved; New, Open, closing and
+// Exit ask first about such changes.
 //
-// The text being edited stays in the DOM and is read on save. Single instance:
-// `single` makes a second launch focus the existing window, and `ui.open(path)`
-// from another app (Files) lands in `open` of the running instance, or of a
-// fresh one if none is open.
+// Files are in the disk's root. MFS writes are append-only, so Save removes
+// the file and writes it again. The text stays in the DOM and is read on save.
+// Single instance: a second launch focuses the window, and ui.open(path) from
+// Files lands in `open`.
+
+/** What to go on with once the question about unsaved changes is answered. */
+enum Then {
+    Nothing,
+    NewFile,
+    PickFile,  // the Open dialog
+    OpenPath,  // the path in `pending`
+    Quit,
+}
 
 /**
  * The editor's state.
- * @property name The file name field.
- * @property body The text being edited.
- * @property status What the last load or save did.
+ * @property body The text.
+ * @property name The Save As dialog's file name field.
+ * @property path The file, or empty while untitled.
+ * @property title The window's title.
+ * @property line The caret's line, from 1.
+ * @property column The caret's column, from 1.
+ * @property note What the last load or save did, or why it failed.
+ * @property dirty Whether the text has changes not saved.
+ * @property saving_as Whether the Save As dialog is up.
+ * @property picking Whether the Open dialog is up.
+ * @property asking Whether the question about unsaved changes is up.
+ * @property question That question.
+ * @property then What to go on with once it is answered.
+ * @property pending A path to open once it is answered.
+ * @property files The Open dialog's files, a line each.
+ * @property chosen The file picked there.
  */
 @app(name = "Editor", single, opens)
 struct Editor {
-    TextField name;
     TextField body;
-    Text<96> status;
+    TextField name;
+    Text<32> path;
+    Text<48> title;
+    i32 line;
+    i32 column;
+    Text<64> note;
+    bool dirty;
+    bool saving_as;
+    bool picking;
+    bool asking;
+    Text<64> question;
+    Then then;
+    Text<32> pending;
+    Text<512> files;
+    Option<i32> chosen;
 };
 
 impl App for Editor {
-    Self start() { return Editor { name: ui.field(), body: ui.field() }; }
+    // The window is made with the title "Editor", which stays its name; what
+    // its title bar shows follows the file.
+    Self start() {
+        Editor e = Editor { body: ui.field(), name: ui.field(), line: 1, column: 1 };
+        e.title.append("Editor");
+        return e;
+    }
 
     View (Self e) view() {
-        return <Window title="Editor" w={520} h={420}>
-            <Row x={12} y={12} w={496} h={34} gap={8}>
-                <TextInput field={e.name} placeholder="file name" w={300} h={34} capacity={16} testId="editor-name" />
-                <PrimaryButton text="Save" w={90} h={34} onClick={e.save} />
-            </Row>
-            <TextArea field={e.body} name="Type here..." x={12} y={56} w={496} h={294} capacity={4096} testId="editor-text" />
-            <Label text={e.status} x={12} y={360} color={ui.TEXT_SECONDARY} testId="editor-status" />
+        return <Window title={e.title} w={640} h={480}>
+            <Box w={640} h={30} background={ui.MENU_BAR} border={ui.MENU_BAR} anchor={ui.GROW_W} />
+            <Menu title="File" items="New\t\t\t\t\tCtrl+N\nOpen...\t\t\t\t\tCtrl+O\nSave\t\t\t\t\tCtrl+S\nSave As...\nExit" x={4} y={2} w={52} h={26} onSelect={e.file_menu} testId="editor-file-menu" />
+            <TextArea field={e.body} name="" y={30} w={640} h={394} capacity={4096} wrap={true} anchor={ui.GROW_W | ui.GROW_H} onEdit={e.edited} onCaret={e.moved} testId="editor-text" />
+            <Label text={"Ln %d, Col %d", e.line, e.column} x={12} y={428} color={ui.TEXT_SECONDARY} anchor={ui.PIN_BOTTOM} testId="editor-position" />
+            <Label text={e.note} x={160} y={428} color={ui.TEXT_SECONDARY} anchor={ui.PIN_BOTTOM} testId="editor-status" />
+            <Dialog when={e.saving_as} title="Save As" text="File name:" confirm="Save" w={360} h={170} onConfirm={e.save_named} onCancel={e.stop_saving}>
+                <TextInput field={e.name} placeholder="file name" x={20} y={44} w={320} h={34} capacity={16} testId="editor-name" />
+            </Dialog>
+            <Dialog when={e.picking} title="Open" text="Pick a file:" confirm="Open" w={360} h={320} onConfirm={e.open_chosen} onCancel={e.stop_picking}>
+                <List name="files" items={e.files} selected={e.chosen} x={20} y={44} w={320} h={180} onChange={e.choose} onActivate={e.open_row} testId="editor-files" />
+            </Dialog>
+            <Dialog when={e.asking} title="Editor" text={e.question} confirm="Save" other="Don't Save" w={380} h={150} onConfirm={e.answer_save} onOther={e.answer_discard} onCancel={e.answer_cancel} />
         </Window>;
     }
 
     /**
-     * Loads a file, or leaves an empty document for a new path.
-     * @param path File path to load; a plain launch starts on a scratch file.
+     * A launch starts on an untitled text; a path from another app opens it,
+     * asking first about unsaved changes.
+     * @param path The file to open, or "" for a launch.
      */
     void (borrow Self e) open(str path) {
-        if (path.is_empty()) { e.open("untitled.txt"); return; }
-        e.name.write(path);
-        e.body.clear();
-        e.body.focus();
-        i32 fd = case fs.open(path) of {
-            Ok(v) -> v;
-            Err(_) -> ({ e.show("new file"); return; });
-        };
-        i32 total = 0;
-        while (1) {
-            FsChunk chunk = case fs.read(fd) of {
-                Ok(v) -> v;
-                Err(error) -> ({
-                    fs.close(fd);
-                    e.show_error("read failed", error.describe());
-                    return;
-                });
-            };
-            if (chunk.got <= 0) { break; }
-            e.body.append(chunk.text.as_str());
-            total = total + chunk.got;
+        if (path.is_empty()) { e.new_file(); return; }
+        if (e.dirty) {
+            e.pending.clear();
+            e.pending.append(path);
+            e.ask(Then::OpenPath);
+            return;
         }
-        fs.close(fd);
-        // Appending leaves the caret at the end; start at the top instead.
-        ui.send_key(KeyEventType::DOWN, KeyCode::HOME, 0); // Home of the last line
-        e.show_bytes("loaded", total);
+        e.load(path);
+    }
+
+    /** Closing with unsaved changes asks first, and quits once answered. */
+    bool (borrow Self e) can_close() {
+        if (!e.dirty) { return true; }
+        e.ask(Then::Quit);
+        return false;
     }
 }
 
+// --- the document ------------------------------------------------------------------------------
+
+/** Puts the file and whether it has changes not saved in the title. */
+void (borrow Editor e) retitle() {
+    e.title.clear();
+    if (e.dirty) { e.title.append("*"); }
+    if (e.path.length == 0) { e.title.append("Untitled"); }
+    else { e.title.append(e.path.as_str()); }
+    e.title.append(" - Editor");
+}
+
 /** Puts `text` on the status line. */
-void (borrow Editor e) show(str text) {
-    e.status.clear();
-    e.status.append(text);
+void (borrow Editor e) tell(str text) {
+    e.note.clear();
+    e.note.append(text);
 }
 
 /** Shows a failure as `what: <message>`. */
-void (borrow Editor e) show_error(str what, str message) {
-    e.show(what);
-    e.status.append(": ");
-    e.status.append(message);
+void (borrow Editor e) tell_error(str what, str message) {
+    e.tell(what);
+    e.note.append(": ");
+    e.note.append(message);
 }
 
-/** Shows `<verb> <n> bytes`. */
-void (borrow Editor e) show_bytes(str verb, i32 n) {
-    Text<12> count = n.to_string();
-    e.show(verb);
-    e.status.append(" ");
-    e.status.append(count.as_str());
-    e.status.append(" bytes");
+/** An empty, untitled text. */
+void (borrow Editor e) new_file() {
+    e.path.clear();
+    e.body.clear();
+    e.dirty = false;
+    e.line = 1;
+    e.column = 1;
+    e.tell("");
+    e.retitle();
+    e.body.focus();
 }
 
-@key("Ctrl+S")
-/** Saves the body under the file name in the name field. */
-void (borrow Editor e) save() {
-    // A read lasts until the next one, and the body is read next.
+/**
+ * Reads a file into the text, with the caret at its start. A file that is not
+ * there yet is an empty text under its name.
+ * @param path The file.
+ */
+void (borrow Editor e) load(str path) {
     Text<32> name = Text<32> {};
-    name.append(e.name.read());
-    str path = name.as_str();
-    if (path.is_empty()) { e.show("enter a file name first"); return; }
-    str body = e.body.read();
-    fs.remove(path);
-    i32 fd = case fs.create(path) of {
+    name.append(path);
+    e.body.clear();
+    e.body.focus();
+    e.path.clear();
+    e.path.append(name.as_str());
+    e.dirty = false;
+    e.retitle();
+    i32 fd = case fs.open(name.as_str()) of {
         Ok(v) -> v;
-        Err(error) -> ({ e.show_error("save failed", error.describe()); return; });
+        Err(_) -> ({ e.tell("new file"); return; });
     };
-    i32 written = 0;
-    if (!body.is_empty()) {
-        written = case fs.write(fd, body) of {
+    while (1) {
+        FsChunk chunk = case fs.read(fd) of {
             Ok(v) -> v;
             Err(error) -> ({
                 fs.close(fd);
-                e.show_error("save failed", error.describe());
+                e.tell_error("read failed", error.describe());
                 return;
+            });
+        };
+        if (chunk.got <= 0) { break; }
+        e.body.append(chunk.text.as_str());
+    }
+    fs.close(fd);
+    // Appending leaves the caret at the end.
+    ui.send_key(KeyEventType::DOWN, KeyCode::HOME, KeyModifier::CTRL);
+    e.tell("");
+}
+
+/**
+ * Writes the text to a file.
+ * @param path The file.
+ * @return Whether it was written; a failure is on the status line.
+ */
+bool (borrow Editor e) write_to(str path) {
+    // A read lasts until the next one, and the body is read next.
+    Text<32> name = Text<32> {};
+    name.append(path);
+    str body = e.body.read();
+    fs.remove(name.as_str());
+    i32 fd = case fs.create(name.as_str()) of {
+        Ok(v) -> v;
+        Err(error) -> ({ e.tell_error("save failed", error.describe()); return false; });
+    };
+    if (!body.is_empty()) {
+        case fs.write(fd, body) of {
+            Ok(_) -> _;
+            Err(error) -> ({
+                fs.close(fd);
+                e.tell_error("save failed", error.describe());
+                return false;
             });
         };
     }
     fs.close(fd);
-    e.show_bytes("saved", written);
+    e.path.clear();
+    e.path.append(name.as_str());
+    e.dirty = false;
+    e.retitle();
+    e.tell("saved");
+    return true;
+}
+
+/** The text changed: the title says so. */
+void (borrow Editor e) edited() {
+    if (e.dirty) { return; }
+    e.dirty = true;
+    e.retitle();
+}
+
+/** The caret moved. */
+void (borrow Editor e) moved(i32 line, i32 column) {
+    e.line = line;
+    e.column = column;
+}
+
+// --- the File menu ------------------------------------------------------------------------------
+
+/** New, Open, Save, Save As, Exit. */
+void (borrow Editor e) file_menu(i32 index) {
+    if (index == 0) { e.new_command(); }
+    if (index == 1) { e.open_command(); }
+    if (index == 2) { e.save(); }
+    if (index == 3) { e.save_as(); }
+    if (index == 4) { e.exit_command(); }
+}
+
+@key("Ctrl+N")
+/** A new text, asking first about unsaved changes. */
+void (borrow Editor e) new_command() {
+    if (e.dirty) { e.ask(Then::NewFile); return; }
+    e.new_file();
+}
+
+@key("Ctrl+O")
+/** The Open dialog, asking first about unsaved changes. */
+void (borrow Editor e) open_command() {
+    if (e.dirty) { e.ask(Then::PickFile); return; }
+    e.pick();
+}
+
+@key("Ctrl+S")
+/** Saves to the file, or asks for a name for an untitled text. */
+void (borrow Editor e) save() {
+    if (e.path.length == 0) { e.save_as(); return; }
+    Text<32> path = Text<32> {};
+    path.append(e.path.as_str());
+    e.write_to(path.as_str());
+}
+
+/** Asks for a name to save under, offering the file's own. */
+void (borrow Editor e) save_as() {
+    e.name.write(e.path.as_str());
+    e.saving_as = true;
+}
+
+/** Quits, asking first about unsaved changes. */
+void (borrow Editor e) exit_command() {
+    if (e.dirty) { e.ask(Then::Quit); return; }
+    app.quit();
+}
+
+// --- Save As ------------------------------------------------------------------------------------
+
+/** Saves under the name typed; what waited for the save goes on. */
+void (borrow Editor e) save_named() {
+    Text<32> name = Text<32> {};
+    name.append(e.name.read());
+    if (name.length == 0) { e.tell("type a file name"); return; }
+    e.saving_as = false;
+    if (e.write_to(name.as_str())) { e.carry_on(); }
+}
+
+/** Save As cancelled, and with it whatever waited for it. */
+void (borrow Editor e) stop_saving() {
+    e.saving_as = false;
+    e.then = Then::Nothing;
+}
+
+// --- Open ---------------------------------------------------------------------------------------
+
+/** Lists the files in the disk's root, and puts the Open dialog up. */
+void (borrow Editor e) pick() {
+    e.files.clear();
+    i32 start = 0;
+    while (1) {
+        DirEntry entry = case fs.next_entry("", start) of {
+            Ok(v) -> case v of { Some(found) -> found; None -> ({ break; }); };
+            Err(error) -> ({ e.tell_error("list failed", error.describe()); return; });
+        };
+        bool directory = case fs.is_dir(entry.index) of { Ok(value) -> value; Err(_) -> true; };
+        if (!directory) {
+            if (e.files.length > 0) { e.files.append("\n"); }
+            e.files.append(entry.name.as_str());
+        }
+        start = entry.index + 1;
+    }
+    e.chosen = None;
+    e.picking = true;
+}
+
+/** A file picked in the list. */
+void (borrow Editor e) choose(i32 row) { e.chosen = Some(row); }
+
+/** A file picked again, or with Enter: open it. */
+void (borrow Editor e) open_row(i32 row) {
+    e.chosen = Some(row);
+    e.open_chosen();
+}
+
+/** Opens the file picked. */
+void (borrow Editor e) open_chosen() {
+    i32 row = case e.chosen of { Some(value) -> value; None -> ({ return; }); };
+    str files = e.files.as_str();
+    i32 start = 0;
+    i32 at = 0;
+    while (at < row && start < files.length) {
+        if (files.byte(start) == '\n') { at++; }
+        start++;
+    }
+    i32 end = start;
+    while (end < files.length && files.byte(end) != '\n') { end++; }
+    Option<str> view = files.slice(start, end);
+    str picked = case view of { Some(found) -> found; None -> ""; };
+    Text<32> name = Text<32> {};
+    name.append(picked);
+    e.picking = false;
+    if (name.length > 0) { e.load(name.as_str()); }
+}
+
+/** The Open dialog closed with nothing opened. */
+void (borrow Editor e) stop_picking() { e.picking = false; }
+
+// --- unsaved changes ----------------------------------------------------------------------------
+
+/** Asks whether to save the changes before going on with `then`. */
+void (borrow Editor e) ask(Then then) {
+    e.then = then;
+    e.question.clear();
+    e.question.append("Save changes to ");
+    if (e.path.length == 0) { e.question.append("Untitled"); }
+    else { e.question.append(e.path.as_str()); }
+    e.question.append("?");
+    e.asking = true;
+}
+
+/** Save, then go on; an untitled text asks for a name first. */
+void (borrow Editor e) answer_save() {
+    e.asking = false;
+    if (e.path.length == 0) { e.save_as(); return; }
+    Text<32> path = Text<32> {};
+    path.append(e.path.as_str());
+    if (e.write_to(path.as_str())) { e.carry_on(); }
+}
+
+/** Don't save: go on, and the changes are lost. */
+void (borrow Editor e) answer_discard() {
+    e.asking = false;
+    e.dirty = false;
+    e.carry_on();
+}
+
+/** Cancel: stay as it was. */
+void (borrow Editor e) answer_cancel() {
+    e.asking = false;
+    e.then = Then::Nothing;
+}
+
+/** Goes on with what waited for the question. */
+void (borrow Editor e) carry_on() {
+    Then then = e.then;
+    e.then = Then::Nothing;
+    if (then == Then::NewFile) { e.new_file(); }
+    if (then == Then::PickFile) { e.pick(); }
+    if (then == Then::OpenPath) {
+        Text<32> path = Text<32> {};
+        path.append(e.pending.as_str());
+        e.load(path.as_str());
+    }
+    if (then == Then::Quit) { app.quit(); }
 }
 
 i32 main() { return app.run<Editor>(); }

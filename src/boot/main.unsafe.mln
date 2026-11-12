@@ -136,7 +136,7 @@ void kernel_init() {
     // Open a few apps at boot; the last one launched is the active window.
     // Each is a process (the scheduler is up now): its window appears once
     // it has run view() and the server has answered its requests.
-    app.launch_named("Notes");
+    app.launch_named("Editor");
     app.launch_named("Terminal");
     dom_automation.note_app_starting(-1);
 

@@ -60,6 +60,9 @@ export const i32 GRAPH_FILL = 0x383B82F6;
 export const i32 GRAPH_GRID = 0x14000000;
 export const i32 GRAPH_SECOND = 0xF59E0B;
 
+// A menu button under the pointer (the bar it sits on is the app's, ui.MENU_BAR).
+export const i32 MENU_BUTTON_HOVER = 0xDDE1E7;
+
 // Scroll thumb: how much of a list or text is in view, over light boxes and
 // over the terminal's dark screen.
 export const i32 SCROLL_THUMB = 0x50000000;

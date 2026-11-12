@@ -11,7 +11,7 @@ import { Text } from "@std/text/text.mln";
 import ascii from "@std/text/ascii.mln";
 import str from "@std/text/str.mln";
 import { NodeId } from "@contracts/ui/widget.contract.mln";
-import { KeyEventType, KeyCode } from "@contracts/input/keyboard.contract.mln";
+import { KeyEventType, KeyCode, KeyModifier } from "@contracts/input/keyboard.contract.mln";
 
 // Editing for the text controls: a TextInput's line and a TextArea's
 // document, each kept in the node's text buffer with `cursor` a byte index.
@@ -194,34 +194,152 @@ export i32 visible_lines(borrow NodeRow n) {
     return rows;
 }
 
+// --- rows ---------------------------------------------------------------------------------------
+// What a TextArea draws, scrolls and moves through with Up and Down are its
+// rows: its lines, or with NodeStyle::WRAP its lines broken to fit its width,
+// after the last space that fits, or mid-word when one word does not fit.
+// `scroll` counts rows. A byte where a wrapped row breaks starts the next row.
+
+/** The width a TextArea's text may take: its inside, less room for the scroll thumb. */
+export i32 row_width(borrow NodeRow n) {
+    i32 s = dom.ui_scale();
+    i32 room = n.w - 24 * s;
+    return room < 8 * s ? 8 * s : room;
+}
+
 /**
- * Adjusts TextArea scroll offset to ensure the cursor line is visible.
+ * Where the row that starts at `start` ends: at its newline, at the end of the
+ * text, or where a wrapped row breaks.
+ * @param n TextArea node row.
+ * @param text Its text.
+ * @param start A row's first byte.
+ * @return The index just past the row's last byte, its newline not included.
+ */
+export i32 row_end(borrow NodeRow n, str text, i32 start) {
+    i32 i = start;
+    if ((n.style & NodeStyle::WRAP) == 0) {
+        while (i < text.length && text.byte(i) != '\n') { i++; }
+        return i;
+    }
+    i32 s = dom.ui_scale();
+    i32 room = row_width(&n);
+    i32 used = 0;
+    i32 after_space = -1;
+    while (i < text.length) {
+        i32 c = text.byte(i);
+        if (c == '\n') { return i; }
+        used = used + ui_metrics.char_width(c, s);
+        if (used > room && i > start) {
+            if (c == ' ') { return i + 1; }
+            return after_space > start ? after_space : i;
+        }
+        if (c == ' ') { after_space = i + 1; }
+        i++;
+    }
+    return i;
+}
+
+/** Where the row after one ending at `end` starts: past a newline, or right there. */
+export i32 next_row_start(str text, i32 end) {
+    if (end < text.length && text.byte(end) == '\n') { return end + 1; }
+    return end;
+}
+
+// Whether a row ending at `end` holds the caret at `end`: it does when the row
+// ends a line, and a wrapped row's break belongs to the next row.
+bool ends_line(str text, i32 end) {
+    return end >= text.length || text.byte(end) == '\n';
+}
+
+/**
+ * The row holding byte `at` of a TextArea.
+ * @param n TextArea node row.
+ * @param at Byte offset, up to its length.
+ * @return 0-based row.
+ */
+export i32 row_of(borrow NodeRow n, i32 at) {
+    str text = n.text.as_str();
+    i32 row = 0;
+    i32 start = 0;
+    while (1) {
+        i32 end = row_end(&n, text, start);
+        if (at < end || ends_line(text, end) && at == end || end >= text.length) { return row; }
+        start = next_row_start(text, end);
+        row++;
+    }
+}
+
+/**
+ * The first byte of a row of a TextArea, or of its last row.
+ * @param n TextArea node row.
+ * @param row 0-based row.
+ */
+export i32 row_start(borrow NodeRow n, i32 row) {
+    str text = n.text.as_str();
+    i32 start = 0;
+    i32 r = 0;
+    while (r < row) {
+        i32 end = row_end(&n, text, start);
+        if (end >= text.length) { return start; }
+        start = next_row_start(text, end);
+        r++;
+    }
+    return start;
+}
+
+/** How many rows a TextArea's text takes. */
+export i32 row_count(borrow NodeRow n) {
+    return row_of(&n, n.len) + 1;
+}
+
+/**
+ * Adjusts TextArea scroll offset to ensure the cursor's row is visible.
  * @param n TextArea node row.
  */
 export void text_area_reveal_cursor(borrow NodeRow n) {
-    i32 line = line_of(&n, n.cursor);
+    i32 row = row_of(&n, n.cursor);
     i32 rows = visible_lines(&n);
     i32 scroll = n.scroll;
-    if (line < scroll) { scroll = line; }
-    if (line >= scroll + rows) { scroll = line - rows + 1; }
+    if (row < scroll) { scroll = row; }
+    if (row >= scroll + rows) { scroll = row - rows + 1; }
     n.scroll = (u16)scroll;
 }
 
 /**
- * Moves TextArea cursor to the same column on target line.
+ * Moves the caret of a TextArea to a row, as near as it can to where it is
+ * across: Up, Down and the page keys keep to a column of the screen.
  * @param n TextArea node row.
- * @param line Target line index.
+ * @param row Target row, clamped to the text.
  */
-export void text_area_goto_line(borrow NodeRow n, i32 line) {
-    i32 total = line_of(&n, n.len) + 1;
-    if (line < 0) { line = 0; }
-    if (line >= total) { line = total - 1; }
-    i32 cur_start = line_start(&n, line_of(&n, n.cursor));
-    i32 col = n.cursor - cur_start;
-    i32 start = line_start(&n, line);
-    i32 llen = line_len_at(&n, start);
-    if (col > llen) { col = llen; }
-    n.cursor = (u16)(start + col);
+export void text_area_goto_row(borrow NodeRow n, i32 row) {
+    i32 last = row_count(&n) - 1;
+    if (row < 0) { row = 0; }
+    if (row > last) { row = last; }
+    str text = n.text.as_str();
+    i32 s = dom.ui_scale();
+    i32 here = row_start(&n, row_of(&n, n.cursor));
+    Option<str> before = text.slice(here, n.cursor);
+    i32 across = case before of { Some(part) -> ui_metrics.text_width(part, false, s); None -> 0; };
+    i32 start = row_start(&n, row);
+    i32 end = row_end(&n, text, start);
+    Option<str> view = text.slice(start, end);
+    str piece = case view of { Some(found) -> found; None -> ""; };
+    i32 at = start + nearest_boundary(piece, across, s);
+    // A wrapped row's break belongs to the row after it.
+    if (at == end && !ends_line(text, end) && at > start) { at--; }
+    n.cursor = (u16)at;
+}
+
+/**
+ * Tells a TextArea's app where its caret is, when it asked to know
+ * (NodeStyle::REPORT_CARET): the line and the column, counted from 1.
+ * @param n TextArea node row.
+ */
+export void report_caret(borrow NodeRow n) {
+    if ((n.style & NodeStyle::REPORT_CARET) == 0) { return; }
+    i32 line = line_of(&n, n.cursor);
+    i32 column = n.cursor - line_start(&n, line);
+    dom.fire_caret(&n, (line + 1) << 16 | (column + 1));
 }
 
 /**
@@ -281,32 +399,47 @@ export EditResult text_area_handle(borrow NodeRow n, i32 type, i32 code, i32 mod
         return EditResult::Moved;
     }
     if (code == KeyCode::UP) {
-        text_area_goto_line(&n, line_of(&n, cur) - 1);
+        text_area_goto_row(&n, row_of(&n, cur) - 1);
         text_area_reveal_cursor(&n);
         return EditResult::Moved;
     }
     if (code == KeyCode::DOWN) {
-        text_area_goto_line(&n, line_of(&n, cur) + 1);
+        text_area_goto_row(&n, row_of(&n, cur) + 1);
         text_area_reveal_cursor(&n);
         return EditResult::Moved;
     }
     if (code == KeyCode::PAGE_UP) {
-        text_area_goto_line(&n, line_of(&n, cur) - visible_lines(&n));
+        text_area_goto_row(&n, row_of(&n, cur) - visible_lines(&n));
         text_area_reveal_cursor(&n);
         return EditResult::Moved;
     }
     if (code == KeyCode::PAGE_DOWN) {
-        text_area_goto_line(&n, line_of(&n, cur) + visible_lines(&n));
+        text_area_goto_row(&n, row_of(&n, cur) + visible_lines(&n));
+        text_area_reveal_cursor(&n);
+        return EditResult::Moved;
+    }
+    // Ctrl+Home and Ctrl+End go to either end of the text.
+    if (code == KeyCode::HOME && (mods & KeyModifier::CTRL) != 0) {
+        n.cursor = 0;
+        text_area_reveal_cursor(&n);
+        return EditResult::Moved;
+    }
+    if (code == KeyCode::END && (mods & KeyModifier::CTRL) != 0) {
+        n.cursor = (u16)len;
         text_area_reveal_cursor(&n);
         return EditResult::Moved;
     }
     if (code == KeyCode::HOME) {
-        n.cursor = (u16)line_start(&n, line_of(&n, cur));
+        n.cursor = (u16)row_start(&n, row_of(&n, cur));
         return EditResult::Moved;
     }
     if (code == KeyCode::END) {
-        i32 start = line_start(&n, line_of(&n, cur));
-        n.cursor = (u16)(start + line_len_at(&n, start));
+        str text = n.text.as_str();
+        i32 start = row_start(&n, row_of(&n, cur));
+        i32 end = row_end(&n, text, start);
+        // A wrapped row's break belongs to the row after it.
+        if (!ends_line(text, end) && end > start) { end--; }
+        n.cursor = (u16)end;
         return EditResult::Moved;
     }
     return EditResult::Unhandled;
@@ -347,13 +480,14 @@ export void place_caret(NodeId id, i32 px, i32 py) {
         i32 pad = 8 * s;
         i32 row = (py - n.y - pad) / ui_metrics.text_height(false, s);
         if (row < 0) { row = 0; }
-        i32 line = n.scroll + row;
-        i32 last = line_of(&n, n.len);
-        if (line > last) { line = last; }
-        i32 start = line_start(&n, line);
-        Option<str> view = text.slice(start, start + line_len_at(&n, start));
+        i32 start = row_start(&n, n.scroll + row);
+        i32 end = row_end(&n, text, start);
+        Option<str> view = text.slice(start, end);
         str piece = case view of { Some(found) -> found; None -> ""; };
-        n.cursor = (u16)(start + nearest_boundary(piece, px - n.x - pad, s));
+        i32 at = start + nearest_boundary(piece, px - n.x - pad, s);
+        if (at == end && !ends_line(text, end) && at > start) { at--; }
+        n.cursor = (u16)at;
+        report_caret(&n);
     } else {
         return;
     }
@@ -455,7 +589,7 @@ export void clear_text_area(NodeId id) {
 export void scroll_by(NodeId id, i32 lines) {
     borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
     if (n.kind != NodeKind::TEXT_AREA) { if (n.kind != NodeKind::LIST) { return; } }
-    i32 total = line_of(&n, n.len) + 1;
+    i32 total = n.kind == NodeKind::TEXT_AREA ? row_count(&n) : line_of(&n, n.len) + 1;
     i32 rows = visible_lines(&n);
     i32 max_scroll = total - rows;
     if (max_scroll < 0) { max_scroll = 0; }

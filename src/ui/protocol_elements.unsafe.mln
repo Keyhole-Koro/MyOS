@@ -103,6 +103,8 @@ export Result<NodeId, UiError> create(Request *m) {
         id = dom_elements.create_graph(x, y, w, h, m->a4)?;
     } else if (op == UiOp::CREATE_TERMINAL) {
         id = dom_elements.create_terminal(s0, x, y, w, h, m->a4)?;
+    } else if (op == UiOp::CREATE_MENU_BUTTON) {
+        id = dom_elements.create_menu_button(s0, x, y, w, h)?;
     } else {
         return Err(UiError::UnknownOperation(op));
     }

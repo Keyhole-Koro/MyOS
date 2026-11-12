@@ -1,0 +1,82 @@
+import assert from "@std/testing/assert.mln";
+import dom from "@os/ui/dom/dom.mln";
+import desktop from "@os/ui/desktop.mln";
+import dom_elements from "@os/ui/dom/dom_elements.mln";
+import dom_text_edit from "@os/ui/dom/dom_text_edit.mln";
+import ui_metrics from "@os/ui/ui_metrics.mln";
+import heap from "@kernel/mm/heap.mln";
+import allocator from "@std/memory/allocator.mln";
+import str from "@std/text/str.mln";
+import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
+import { NodeRow } from "@os/ui/dom/dom_model.mln";
+import { NodeStyle } from "@os/ui/dom/dom.mln";
+import { Blob } from "@std/memory/blob.mln";
+import { KeyEventType, KeyCode, KeyModifier } from "@contracts/input/keyboard.contract.mln";
+
+// A TextArea's rows (src/ui/dom/dom_text_edit.mln): with NodeStyle::WRAP its
+// lines break to fit its width. Where they break depends on the font, so these
+// check what must hold of any break.
+
+bool g_ready = false;
+
+NodeId wrapped_area(str text) {
+    if (!g_ready) {
+        heap.init();
+        allocator.configure(heap.alloc, heap.free);
+        desktop.init();
+        g_ready = true;
+    }
+    NodeId id = case dom_elements.create_text_area("t", 0, 0, 160, 200, 1024, 0) of {
+        Ok(value) -> value;
+        Err(_) -> ({ assert.assert_true(false, "the text area is created"); (NodeId)0; });
+    };
+    dom.add_style(id, NodeStyle::WRAP);
+    dom_text_edit.set_input_text(id, text);
+    return id;
+}
+
+/*@Test "wrapped rows fit, break after spaces and keep every byte" { step: 200000000; }*/
+void wrapped_rows_fit_break_after_spaces_and_keep_every_byte() {
+    NodeId id = wrapped_area("one two three four five six seven eight nine ten\nshort\n");
+    borrow NodeRow n = dom.row_of(id);
+    str text = n.text.as_str();
+    i32 s = dom.ui_scale();
+    i32 rows = dom_text_edit.row_count(&n);
+    assert.assert_true(rows > 3, "a long line takes more than one row");
+    i32 start = 0;
+    i32 row = 0;
+    while (row < rows) {
+        assert.assert_true(dom_text_edit.row_start(&n, row) == start, "row_start finds each row");
+        assert.assert_true(dom_text_edit.row_of(&n, start) == row, "row_of finds the row of its first byte");
+        i32 end = dom_text_edit.row_end(&n, text, start);
+        Option<str> view = text.slice(start, end);
+        str piece = case view of { Some(found) -> found; None -> ""; };
+        assert.assert_true(ui_metrics.text_width(piece, false, s) <= dom_text_edit.row_width(&n), "a row fits");
+        bool line_end = end >= text.length || text.byte(end) == '\n';
+        if (!line_end) {
+            assert.assert_true(text.byte(end - 1) == ' ', "a wrapped row breaks after a space");
+        }
+        start = dom_text_edit.next_row_start(text, end);
+        row++;
+    }
+    assert.assert_true(start == text.length, "the rows hold every byte");
+}
+
+/*@Test "keys move through rows and to either end" { step: 200000000; }*/
+void keys_move_through_rows_and_to_either_end() {
+    NodeId id = wrapped_area("one two three four five six seven eight nine ten");
+    borrow NodeRow n = dom.row_of(id);
+    assert.assert_true(n.cursor == n.len, "a set text leaves the caret at its end");
+    dom_text_edit.text_area_handle(&n, KeyEventType::DOWN, KeyCode::HOME, KeyModifier::CTRL);
+    assert.assert_true(n.cursor == 0, "Ctrl+Home goes to the start");
+    dom_text_edit.text_area_handle(&n, KeyEventType::DOWN, KeyCode::DOWN, 0);
+    assert.assert_true(dom_text_edit.row_of(&n, n.cursor) == 1, "Down goes to the next row of the same line");
+    dom_text_edit.text_area_handle(&n, KeyEventType::DOWN, KeyCode::HOME, 0);
+    assert.assert_true(n.cursor == dom_text_edit.row_start(&n, 1), "Home goes to the start of the row");
+    dom_text_edit.text_area_handle(&n, KeyEventType::DOWN, KeyCode::END, 0);
+    assert.assert_true(dom_text_edit.row_of(&n, n.cursor) == 1, "End stays in the row");
+    dom_text_edit.text_area_handle(&n, KeyEventType::DOWN, KeyCode::END, KeyModifier::CTRL);
+    assert.assert_true(n.cursor == n.len, "Ctrl+End goes to the end");
+}

@@ -9,14 +9,6 @@ from tools.project_paths import REPO_ROOT
 from mydomtester import MyOS, expect
 
 
-def wait_unchecked(locator, timeout: float = 5.0) -> None:
-    """Poll until a checkbox is unchecked: expect() has no negative form."""
-    deadline = time.monotonic() + timeout
-    while locator.snapshot().checked:
-        if time.monotonic() > deadline:
-            raise AssertionError("checkbox stayed checked")
-
-
 def click_point(os, x, y, timeout: float = 2.0):
     """Click at (x, y) and wait until the DOM reacts; the guest runs only
     while a request is served, so a host-side sleep would let nothing happen."""
@@ -37,42 +29,42 @@ def main() -> int:
         return 1
     try:
         with MyOS.launch(firmware, disk=disk, artifacts=REPO_ROOT / "qa" / "outputs" / "dom-click") as os:
-            notes = os.get_by_role("window", name="Notes")
-            clear = notes.get_by_role("button", name="Clear")
-            expect(clear).to_be_visible()
-            expect(clear).to_be_enabled()
-            expect(clear).to_have_count(1)
+            editor = os.get_by_role("window", name="Editor")
+            menu_button = editor.get_by_role("menubutton", name="File")
+            expect(menu_button).to_be_visible()
+            expect(menu_button).to_have_count(1)
 
             # Boot's windows arrive in any order, and each lands on top.
             expect(os.get_by_role("window", name="Terminal")).to_be_visible()
-            os.raise_window("Notes")
+            os.raise_window("Editor")
 
-            # A checkbox toggles on click, with no handler behind it.
-            done = notes.get_by_role("checkbox", name="Mark as done")
-            expect(done).to_be_checked()
-            done.click()
-            wait_unchecked(done)
-            done.click()
-            expect(done).to_be_checked()
+            # A menu button opens its menu; Esc closes it.
+            menu_button.click()
+            expect(os.get_by_role("menu")).to_be_visible()
+            os._press("escape")
+            expect(os.get_by_role("menu")).to_have_count(0)
 
-            title = os.get_by_role("textbox", name="Title")
-            title.fill("Hello")
-            expect(title).to_have_value("Hello")
-            expect(os.get_by_text("You typed: Hello")).to_be_visible()
+            # Typing marks the text changed in the title.
+            text = os.get_by_test_id("editor-text")
+            text.click()
+            os._type("Hello")
+            expect(text).to_have_value("Hello")
+            assert editor.snapshot().text == "*Untitled - Editor", editor.snapshot().text
 
-            # A click in a field puts the caret where it lands: just inside
-            # the left padding is before the first letter.
-            box = title.snapshot().bounds
+            # A dialog's field takes fill; a click in it puts the caret where
+            # it lands: just inside the left padding is before the first letter.
+            os._press("s", 2)
+            name = os.get_by_test_id("editor-name")
+            expect(name).to_be_visible()
+            name.fill("abc")
+            expect(name).to_have_value("abc")
+            box = name.snapshot().bounds
             click_point(os, box.x + 17, box.y + box.height // 2)
             os._type(">")
-            expect(title).to_have_value(">Hello")
-            title.fill("Hello")
-
-            # Clear writes to the fields and to the state the echo reads.
-            os.get_by_role("button", name="Clear").click()
-            expect(title).to_have_value("")
-            expect(os.get_by_text("You typed: Hello")).to_have_count(0)
-        print("PASS: strict locators, click, checkbox and fill via automation bridge")
+            expect(name).to_have_value(">abc")
+            os._press("escape")
+            expect(os.get_by_role("window", name="Save As")).to_have_count(0)
+        print("PASS: strict locators, click, menu, fill and caret via automation bridge")
         return 0
     except (AssertionError, RuntimeError) as error:
         print(f"FAIL: {error}")

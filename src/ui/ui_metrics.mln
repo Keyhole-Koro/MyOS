@@ -28,6 +28,11 @@ export i32 text_width(str text, bool bold, i32 scale) {
     return graphics.text_width(text, bold, scale);
 }
 
+/** The advance of one character of the regular font; a tab counts as one tab stop. */
+export i32 char_width(i32 ch, i32 scale) {
+    return graphics.char_width(ch, scale);
+}
+
 /** Returns one line of text height using the active graphics font. */
 export i32 text_height(bool bold, i32 scale) {
     return graphics.text_height(bold, scale);
