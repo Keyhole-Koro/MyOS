@@ -1,4 +1,4 @@
-package ui_metrics;
+namespace ui_metrics;
 
 import graphics from "graphics.mln";
 import theme from "theme.mln";

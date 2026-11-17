@@ -1,4 +1,4 @@
-package ulib;
+namespace ulib;
 
 import { sys_read, sys_write } from "sys.masm";
 import { sys_yield, sys_exit, sys_wait_notification } from "@std/platform/myos/syscall.masm";

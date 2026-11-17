@@ -1,4 +1,4 @@
-package desktop;
+namespace desktop;
 
 import debug from "@kernel/debug/debug.mln";
 import dom from "dom/dom.mln";

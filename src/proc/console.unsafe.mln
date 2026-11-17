@@ -1,4 +1,4 @@
-package console;
+namespace console;
 
 import serial from "@kernel/io/serial.mln";
 import heap from "@kernel/mm/heap.mln";

@@ -5,7 +5,7 @@
  * The kernel keeps the numbers; this module adds the one thing it cannot know,
  * the name each process was started under, and reads it all at once.
  */
-package proc_stats;
+namespace proc_stats;
 
 import { Option } from "@std/core/option.mln";
 import { Text } from "@std/text/text.mln";

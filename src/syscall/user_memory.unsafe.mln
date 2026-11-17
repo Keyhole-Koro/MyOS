@@ -4,7 +4,7 @@
  * Provides safe buffer copy routines across active user-process page tables.
  * Syscall endpoints must copy data into kernel buffers before passing it across tasks.
  */
-package user_memory;
+namespace user_memory;
 
 import mem from "@kernel/mm/mem.mln";
 import bytes from "@std/text/bytes.mln";

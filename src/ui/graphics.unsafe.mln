@@ -1,4 +1,4 @@
-package graphics;
+namespace graphics;
 
 import display_config from "display_config.mln";
 import ui_config from "config.mln";

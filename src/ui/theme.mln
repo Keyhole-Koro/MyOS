@@ -1,4 +1,4 @@
-package theme;
+namespace theme;
 
 // Desktop theme constants. Colors use the same 0xAARRGGBB representation as
 // graphics.rgba; RGB colors leave the alpha byte at zero. Metrics are logical

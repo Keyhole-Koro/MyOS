@@ -1,4 +1,4 @@
-package fs_config;
+namespace fs_config;
 
 // ============================================================================
 // MyFileSystem (MFS1) Configuration & Storage Limits

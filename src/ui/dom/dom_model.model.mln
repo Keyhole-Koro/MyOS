@@ -1,4 +1,4 @@
-package dom_model;
+namespace dom_model;
 
 import { Blob } from "@std/memory/blob.mln";
 import { NodeId } from "@contracts/ui/widget.contract.mln";

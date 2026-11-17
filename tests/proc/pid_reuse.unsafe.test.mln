@@ -1,4 +1,4 @@
-package test_pid_reuse;
+namespace test_pid_reuse;
 
 import assert from "@std/testing/assert.mln";
 import { assert_eq } from "@std/testing/assert.mln";

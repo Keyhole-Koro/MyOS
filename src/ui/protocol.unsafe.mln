@@ -5,7 +5,7 @@
  * Automatically sets the DOM current owner to the requesting process so that
  * any newly created nodes, windows, or dialogs belong to that application.
  */
-package ui_protocol;
+namespace ui_protocol;
 
 import str from "@std/text/str.mln";
 import { Option } from "@std/core/option.mln";

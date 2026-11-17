@@ -7,7 +7,7 @@
  *
  * An owner is a PID. Events for an owner without an active channel binding are dropped.
  */
-package app_events;
+namespace app_events;
 
 import ipc from "@kernel/kernel/ipc.mln";
 import { ChannelId } from "@kernel/kernel/ipc.mln";

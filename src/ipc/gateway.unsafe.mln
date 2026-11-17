@@ -4,7 +4,7 @@
  * Copies pointers, strings, and output buffers across page tables into kernel-owned
  * memory. Ensures the service task sees only validated, kernel-resident data.
  */
-package request_gateway;
+namespace request_gateway;
 
 import mem from "@kernel/mm/mem.mln";
 import ipc from "@kernel/kernel/ipc.mln";

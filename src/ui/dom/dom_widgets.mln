@@ -1,4 +1,4 @@
-package dom_widgets;
+namespace dom_widgets;
 
 import scheduler from "@kernel/kernel/scheduler.mln";
 import ui_metrics from "@os/ui/ui_metrics.mln";

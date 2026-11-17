@@ -4,7 +4,7 @@
  * Handles lifecycle, window discovery, key claims, and app opening requests
  * originating from application processes, delegating them to the shell.
  */
-package shell_protocol;
+namespace shell_protocol;
 
 import app from "app.mln";
 import str from "@std/text/str.mln";

@@ -1,4 +1,4 @@
-package dom_terminal;
+namespace dom_terminal;
 
 import dom from "dom.mln";
 import graphics from "@os/ui/graphics.mln";

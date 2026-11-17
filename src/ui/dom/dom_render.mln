@@ -1,4 +1,4 @@
-package dom_render;
+namespace dom_render;
 import debug from "@kernel/debug/debug.mln";
 import blob from "@std/memory/blob.mln";
 import graphics from "@os/ui/graphics.mln";

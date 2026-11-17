@@ -1,4 +1,4 @@
-package app;
+namespace app;
 
 import icons from "@os/ui/icons.mln";
 import debug from "@kernel/debug/debug.mln";

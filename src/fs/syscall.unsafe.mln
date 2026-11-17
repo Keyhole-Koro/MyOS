@@ -7,7 +7,7 @@
  * buffers must be copied or chunked across address spaces.
  * Result and FsError values are transferred intact without conversion to integer codes.
  */
-package fs_syscall;
+namespace fs_syscall;
 
 import mem from "@kernel/mm/mem.mln";
 import str from "@std/text/str.mln";

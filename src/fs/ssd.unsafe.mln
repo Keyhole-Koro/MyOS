@@ -1,4 +1,4 @@
-package ssd;
+namespace ssd;
 
 import mem from "@kernel/mm/mem.mln";
 import { wfi_cpu } from "@kernel/arch/wfi.masm";

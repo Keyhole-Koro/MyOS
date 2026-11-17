@@ -1,7 +1,7 @@
 import str from "@std/text/str.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
-package compositor;
+namespace compositor;
 
 import blob from "@std/memory/blob.mln";
 import dom from "dom/dom.mln";

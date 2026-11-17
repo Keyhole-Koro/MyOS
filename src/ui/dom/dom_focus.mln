@@ -1,4 +1,4 @@
-package dom_focus;
+namespace dom_focus;
 
 import dom from "dom.mln";
 import { NodeRow } from "dom_model.mln";

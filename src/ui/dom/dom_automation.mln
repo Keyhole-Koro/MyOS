@@ -1,6 +1,6 @@
 import dom_elements from "dom_elements.mln";
 import { Option } from "@std/core/option.mln";
-package dom_automation;
+namespace dom_automation;
 
 import dom from "dom.mln";
 import { NodeRow } from "dom_model.mln";

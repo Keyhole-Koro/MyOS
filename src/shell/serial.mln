@@ -1,4 +1,4 @@
-package shell;
+namespace shell;
 
 import debug from "@kernel/debug/debug.mln";
 import fs from "@os/fs/fs.mln";

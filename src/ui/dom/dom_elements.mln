@@ -1,4 +1,4 @@
-package dom_elements;
+namespace dom_elements;
 import blob from "@std/memory/blob.mln";
 import theme from "@os/ui/theme.mln";
 import ui_metrics from "@os/ui/ui_metrics.mln";

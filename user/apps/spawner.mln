@@ -1,4 +1,4 @@
-package app;
+namespace app;
 
 import process from "@std/hosted/process.mln";
 import { Pid, ProcessExitStatus } from "@contracts/process/control.contract.mln";

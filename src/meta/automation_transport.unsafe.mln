@@ -1,4 +1,4 @@
-package automation_transport;
+namespace automation_transport;
 
 import mem from "@kernel/mm/mem.mln";
 

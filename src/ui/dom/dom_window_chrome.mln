@@ -1,4 +1,4 @@
-package dom_window_chrome;
+namespace dom_window_chrome;
 
 import dom from "dom.mln";
 import { NodeRow } from "dom_model.mln";

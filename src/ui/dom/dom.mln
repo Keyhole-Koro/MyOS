@@ -1,4 +1,4 @@
-package dom;
+namespace dom;
 
 import dom_model from "dom_model.mln";
 import { Node, NodeRow, node_children_Iter, node_all_Iter } from "dom_model.mln";

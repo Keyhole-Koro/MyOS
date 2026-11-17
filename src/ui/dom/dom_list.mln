@@ -1,4 +1,4 @@
-package dom_list;
+namespace dom_list;
 
 import dom from "dom.mln";
 import { NodeRow } from "dom_model.mln";

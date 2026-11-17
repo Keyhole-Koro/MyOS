@@ -1,4 +1,4 @@
-package consoles;
+namespace consoles;
 
 import { Pid } from "@contracts/process/control.contract.mln";
 

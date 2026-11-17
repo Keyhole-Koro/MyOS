@@ -1,6 +1,6 @@
 // Geometry is supplied by the display device. Board defaults are configured
 // in runtime/MyEmulator/config/hardware.conf; no emulator dependency on MyOS.
-package display_config;
+namespace display_config;
 
 import mem from "@kernel/mm/mem.mln";
 

@@ -1,4 +1,4 @@
-package myos_test_alloc;
+namespace myos_test_alloc;
 
 import heap from "@kernel/mm/heap.mln";
 import { Result } from "@std/core/result.mln";

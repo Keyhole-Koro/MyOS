@@ -1,4 +1,4 @@
-package dom_text_edit;
+namespace dom_text_edit;
 
 import dom from "dom.mln";
 import { NodeRow } from "dom_model.mln";

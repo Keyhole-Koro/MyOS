@@ -1,4 +1,4 @@
-package terminal;
+namespace terminal;
 
 import app from "@app/app.mln";
 import { App, View } from "@app/app.mln";

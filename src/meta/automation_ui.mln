@@ -1,4 +1,4 @@
-package automation_ui;
+namespace automation_ui;
 
 import automation_transport from "automation_transport.mln";
 import dom_automation from "@os/ui/dom/dom_automation.mln";

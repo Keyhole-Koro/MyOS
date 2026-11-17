@@ -1,4 +1,4 @@
-package dom_hit_test;
+namespace dom_hit_test;
 
 import dom from "dom.mln";
 import dom_menu from "dom_menu.mln";

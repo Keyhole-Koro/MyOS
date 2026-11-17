@@ -1,4 +1,4 @@
-package shell_install;
+namespace shell_install;
 
 import fs from "@os/fs/fs.mln";
 import heap from "@kernel/mm/heap.mln";

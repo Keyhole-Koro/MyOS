@@ -1,4 +1,4 @@
-package fs;
+namespace fs;
 
 import fs_config from "fs_config.mln";
 

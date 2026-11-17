@@ -1,4 +1,4 @@
-package ui_config;
+namespace ui_config;
 
 // ============================================================================
 // MyOS GUI / DOM / Compositor Configuration & Resource Limits

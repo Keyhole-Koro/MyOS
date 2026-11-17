@@ -1,4 +1,4 @@
-package dom_graph;
+namespace dom_graph;
 
 import dom from "dom.mln";
 import { NodeRow } from "dom_model.mln";

@@ -4,7 +4,7 @@
  * Domain syscall endpoints and the UI request gateway handle user-memory
  * copying before invoking MyOS implementations.
  */
-package os_call_router;
+namespace os_call_router;
 
 import syscall from "@kernel/kernel/syscall.mln";
 import debug from "@kernel/debug/debug.mln";

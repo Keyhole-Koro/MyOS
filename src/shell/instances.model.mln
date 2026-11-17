@@ -1,4 +1,4 @@
-package instances;
+namespace instances;
 
 import { Text } from "@std/text/text.mln";
 import { NodeId } from "@contracts/ui/widget.contract.mln";

@@ -1,4 +1,4 @@
-package shell_event;
+namespace shell_event;
 
 // Application lifecycle notifications produced by shell policy. These are
 // domain values; the IPC event endpoint maps them to the SDK wire contract.

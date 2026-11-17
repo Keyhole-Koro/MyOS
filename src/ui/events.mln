@@ -1,4 +1,4 @@
-package ui_event;
+namespace ui_event;
 
 import { NodeId } from "@contracts/ui/widget.contract.mln";
 import { Pid } from "@contracts/process/control.contract.mln";

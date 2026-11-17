@@ -4,7 +4,7 @@
  * Exposes process lifecycle, console/TextArea binding, status query, and stdin
  * feed operations to user-space processes via OS_CALL.
  */
-package process_syscall;
+namespace process_syscall;
 
 import { OsService, OsServiceError } from "@contracts/myos/services.contract.mln";
 import {

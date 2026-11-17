@@ -1,4 +1,4 @@
-package dom_menu;
+namespace dom_menu;
 
 import dom_text_edit from "dom_text_edit.mln";
 import dom from "dom.mln";

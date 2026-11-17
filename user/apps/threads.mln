@@ -1,4 +1,4 @@
-package app;
+namespace app;
 
 import thread from "@std/hosted/thread.mln";
 import { Thread } from "@std/hosted/thread.mln";

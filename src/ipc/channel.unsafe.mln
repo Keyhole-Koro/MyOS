@@ -7,7 +7,7 @@
  * Requests enter this channel via the OS_CALL gateway, which copies user-space
  * memory into kernel-owned buffers.
  */
-package request_channel;
+namespace request_channel;
 
 import ipc from "@kernel/kernel/ipc.mln";
 import { ChannelId } from "@kernel/kernel/ipc.mln";

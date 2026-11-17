@@ -8,7 +8,7 @@
  * Applications retain event handlers (onClick, onChange) in their own processes;
  * the DOM emits events back through the transport system rather than holding function pointers.
  */
-package protocol_elements;
+namespace protocol_elements;
 
 import str from "@std/text/str.mln";
 import dom from "dom/dom.mln";

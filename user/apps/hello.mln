@@ -1,4 +1,4 @@
-package app;
+namespace app;
 
 import ulib from "../lib/ulib.mln";
 
