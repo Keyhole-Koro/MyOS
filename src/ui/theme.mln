@@ -78,6 +78,10 @@ export const i32 INPUT_BORDER = 0x3C000000;
 export const i32 INPUT_BORDER_FOCUS = ACCENT;
 export const i32 INPUT_PLACEHOLDER = TEXT_DISABLED;
 export const i32 CARET = ACCENT;
+// Selected text's background in a text field, a light ACCENT under dark text;
+// on a terminal's dark grid, a translucent white.
+export const i32 SELECTION = 0xBFDBFE;
+export const i32 TERMINAL_SELECTION = 0x50FFFFFF;
 export const i32 INPUT_RADIUS = 6;
 export const i32 INPUT_PADDING_X = 8;
 

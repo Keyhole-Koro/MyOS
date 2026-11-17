@@ -84,13 +84,38 @@ export void set_cursor(i32 x, i32 y) {
     *cy = y;
 }
 
+// CURSOR_CTRL: bit 0 shows the sprite, bits 1-2 pick its shape.
+i32 g_cursor_visible = 0;
+i32 g_cursor_shape = 0;
+
+/** Shapes of the hardware cursor sprite. */
+export enum CursorShape {
+    ARROW = 0,
+    IBEAM = 1,   // over text the user can place a caret in
+}
+
+void write_cursor_ctrl() {
+    i32* ctrl = (i32*)CURSOR_CTRL_ADDR;
+    *ctrl = g_cursor_visible | (g_cursor_shape << 1);
+}
+
 /**
  * Shows or hides the hardware cursor sprite.
  * @param on True to show, false to hide.
  */
 export void show_cursor(bool on) {
-    i32* ctrl = (i32*)CURSOR_CTRL_ADDR;
-    *ctrl = (i32)on;
+    g_cursor_visible = (i32)on;
+    write_cursor_ctrl();
+}
+
+/**
+ * Picks the hardware cursor sprite's shape; a register write, no repaint.
+ * @param shape CursorShape value.
+ */
+export void set_cursor_shape(i32 shape) {
+    if (shape == g_cursor_shape) { return; }
+    g_cursor_shape = shape;
+    write_cursor_ctrl();
 }
 
 // ---------------------------------------------------------------------------

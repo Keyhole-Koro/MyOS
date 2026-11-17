@@ -61,7 +61,9 @@ export void put_json_string(str s) {
     i32 i = 0;
     while (i < s.length) {
         i32 c = s.data[i] & 255;
-        if (c == '"' || c == '\\') {
+        if (c >= 1 && c <= 8) {
+            // A row's icon (contracts/ui/icon.contract.mln), not text.
+        } else if (c == '"' || c == '\\') {
             mem.write_word(TX_ADDR, '\\');
             mem.write_word(TX_ADDR, c);
         } else if (c == '\n') {

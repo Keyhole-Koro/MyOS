@@ -10,7 +10,8 @@ import { Text } from "@std/text/text.mln";
 import str from "@std/text/str.mln";
 import ascii from "@std/text/ascii.mln";
 import { NodeId } from "@contracts/ui/widget.contract.mln";
-import { KeyEventType, KeyCode } from "@contracts/input/keyboard.contract.mln";
+import { KeyEventType, KeyCode, KeyModifier } from "@contracts/input/keyboard.contract.mln";
+import dom_clipboard from "dom_clipboard.mln";
 
 // The Terminal control: a grid of fixed-width cells that shows what the
 // processes attached to it wrote, followed by the line being typed.
@@ -22,8 +23,10 @@ import { KeyEventType, KeyCode } from "@contracts/input/keyboard.contract.mln";
 // while someone types does not split what they typed.
 //
 // The node's text buffer holds what was written, then the typed line. `cursor`
-// is where the typed line starts and `scroll` how many rows the view is back
-// from the end. When the buffer is full, the oldest lines go.
+// is where the typed line starts, `edit` the caret in it, and `scroll` how
+// many rows the view is back from the end. When the buffer is full, the oldest
+// lines go. Up and Down recall earlier lines; Ctrl+C ends the program running
+// on the terminal (set_interrupt_sink).
 //
 // Of the control characters in output, '\n' ends a line, '\t' moves to the
 // next multiple of TAB_WIDTH columns and '\f' clears the screen. The others
@@ -73,6 +76,7 @@ void make_room(borrow NodeRow n, i32 add) {
     buf.put(len - drop, (char)0);
     n.len = (u16)(len - drop);
     n.cursor = (u16)(n.cursor - drop);
+    n.sel = None;
 }
 
 // One byte of output, in before the typed line.
@@ -142,68 +146,347 @@ export void write(NodeId id, str bytes) {
         i++;
     }
     n.scroll = 0;
+    n.sel = None;
     dom.damage_row(&n);
     dom.touch();
 }
 
+// --- the typed line ------------------------------------------------------------------------------
+// The typed line runs from `cursor` to the end of the text, and its caret is
+// `edit` bytes into it: printable keys go in there, Left, Right, Home and End
+// move it, Backspace and Delete take from either side of it.
+
+/** @return How long the typed line is, in bytes. */
+i32 typed_length(borrow NodeRow n) { return n.len - n.cursor; }
+
+/** @return The typed line's caret, kept inside the line. */
+i32 typed_caret(borrow NodeRow n) {
+    i32 at = n.edit;
+    i32 length = typed_length(&n);
+    return at > length ? length : at;
+}
+
+// Puts bytes into the typed line at its caret, as many as fit in the line.
+// Each must be printable.
+bool type_bytes(borrow NodeRow n, str bytes) {
+    i32 count = bytes.length;
+    if (count > LINE_MAX - typed_length(&n)) { count = LINE_MAX - typed_length(&n); }
+    if (count <= 0) { return false; }
+    make_room(&n, count);
+    i32 len = n.len;
+    if (len + count >= n.cap) { return false; }
+    Blob buf = n.text;
+    i32 at = n.cursor + typed_caret(&n);
+    i32 i = len - 1;
+    while (i >= at) {
+        buf.put(i + count, buf.at(i));
+        i--;
+    }
+    i32 k = 0;
+    while (k < count) {
+        buf.put(at + k, (char)bytes.byte(k));
+        k++;
+    }
+    buf.put(len + count, (char)0);
+    n.len = (u16)(len + count);
+    n.edit = (u16)(at + count - n.cursor);
+    return true;
+}
+
+// Takes the byte at `at`, which is in the typed line, out of it.
+void remove_typed(borrow NodeRow n, i32 at) {
+    Blob buf = n.text;
+    i32 len = n.len;
+    i32 i = at;
+    while (i < len - 1) {
+        buf.put(i, buf.at(i + 1));
+        i++;
+    }
+    buf.put(len - 1, (char)0);
+    n.len = (u16)(len - 1);
+}
+
+// Replaces the whole typed line, its caret at the end.
+void set_typed(borrow NodeRow n, str line) {
+    n.text.put(n.cursor, (char)0);
+    n.len = n.cursor;
+    n.edit = 0;
+    type_bytes(&n, line);
+}
+
+/** @return The typed line, valid until the terminal's text changes. */
+str typed_line(borrow NodeRow n) {
+    str text = n.text.as_str();
+    return case text.slice(n.cursor, n.len) of { Some(view) -> view; None -> ""; };
+}
+
+// --- history ---------------------------------------------------------------------------------------
+// The last HISTORY_LINES lines entered in any terminal, oldest first, one per
+// line. Up and Down bring them back into the typed line; going down past the
+// newest gives back what was being typed before.
+
+const i32 HISTORY_LINES = 16;
+
+Text<2048> g_history;
+i32 g_history_count = 0;
+Option<NodeId> g_browsing;   // the terminal going through the history
+i32 g_back = 0;              // how many lines back from the newest it is; 0: its own line
+Text<128> g_draft;           // what it was typing when it started
+
+/** @return Line `index` of the history, 0 the oldest. */
+str history_line(i32 index) {
+    str all = g_history.as_str();
+    i32 start = 0;
+    i32 line = 0;
+    while (line < index) {
+        while (start < all.length && all.byte(start) != '\n') { start++; }
+        start++;
+        line++;
+    }
+    i32 end = start;
+    while (end < all.length && all.byte(end) != '\n') { end++; }
+    return case all.slice(start, end) of { Some(view) -> view; None -> ""; };
+}
+
+// Keeps an entered line, unless it is empty or the newest already.
+void remember(str line) {
+    if (line.is_empty()) { return; }
+    if (g_history_count > 0 && history_line(g_history_count - 1) == line) { return; }
+    if (g_history_count >= HISTORY_LINES) {
+        // The oldest goes: the history is rebuilt from the rest.
+        Text<2048> kept = Text<2048> {};
+        i32 i = 1;
+        while (i < g_history_count) {
+            if (i > 1) { kept.append("\n"); }
+            kept.append(history_line(i));
+            i++;
+        }
+        g_history = kept;
+        g_history_count--;
+    }
+    if (g_history_count > 0) { g_history.append("\n"); }
+    g_history.append(line);
+    g_history_count++;
+}
+
+// Up (`older`) or Down through the history, for terminal `n`.
+bool browse(borrow NodeRow n, bool older) {
+    if (!dom.same_node(g_browsing, Some(n.id))) {
+        g_browsing = Some(n.id);
+        g_back = 0;
+    }
+    if (older) {
+        if (g_back >= g_history_count) { return false; }
+        if (g_back == 0) {
+            g_draft.clear();
+            g_draft.append(typed_line(&n));
+        }
+        g_back++;
+    } else {
+        if (g_back == 0) { return false; }
+        g_back--;
+    }
+    if (g_back == 0) {
+        Text<128> draft = g_draft;
+        set_typed(&n, draft.as_str());
+    } else {
+        set_typed(&n, history_line(g_history_count - g_back));
+    }
+    return true;
+}
+
 // --- keys ------------------------------------------------------------------------------------
+
+void no_interrupt_sink(NodeId id) { }
+
+fn(NodeId id) -> void g_interrupt_sink = no_interrupt_sink;
+
+/**
+ * Installs what Ctrl+C does: the process layer ends the newest program
+ * started on the terminal, as if it exited with 130.
+ * @param sink Called on the server task with the terminal.
+ */
+export void set_interrupt_sink(fn(NodeId id) -> void sink) { g_interrupt_sink = sink; }
 
 // Enter: the typed line stays in the text, and goes to the sink.
 void submit(borrow NodeRow n) {
-    Blob buf = n.text;
     Text<128> line = Text<128> {};
-    i32 i = n.cursor;
-    while (i < n.len) {
-        line.push((u8)buf.at(i));
-        i++;
-    }
+    line.append(typed_line(&n));
+    remember(line.as_str());
+    if (dom.same_node(g_browsing, Some(n.id))) { g_back = 0; }
     line.push((u8)'\n');
     make_room(&n, 1);
     i32 len = n.len;
     if (len + 1 < n.cap) {
-        buf.put(len, (char)'\n');
-        buf.put(len + 1, (char)0);
+        n.text.put(len, (char)'\n');
+        n.text.put(len + 1, (char)0);
         n.len = (u16)(len + 1);
     }
     n.cursor = n.len;
+    n.edit = 0;
     g_input_sink(n.id, line.as_str());
 }
 
+// Ctrl+C: "^C" ends the typed line, which goes nowhere; the newest program
+// started on the terminal ends. With none but the shell, the shell gets an
+// empty line, and so a new prompt.
+void interrupt(borrow NodeRow n) {
+    n.edit = (u16)typed_length(&n);
+    type_bytes(&n, "^C");
+    make_room(&n, 1);
+    i32 len = n.len;
+    if (len + 1 < n.cap) {
+        n.text.put(len, (char)'\n');
+        n.text.put(len + 1, (char)0);
+        n.len = (u16)(len + 1);
+    }
+    n.cursor = n.len;
+    n.edit = 0;
+    NodeId id = n.id;
+    g_interrupt_sink(id);
+}
+
 /**
- * Applies a key to the typed line of a focused Terminal.
+ * Applies a key to the typed line of a focused Terminal. Ctrl+C interrupts;
+ * copying and pasting take Shift too (Ctrl+Shift+C, Ctrl+Shift+V).
  * @param n Terminal node row.
  * @param type KeyEventType value.
  * @param code Key code, or the character of a CHAR event.
+ * @param mods KeyModifier bits.
  * @return True when the node changed.
  */
-export bool handle_key(borrow NodeRow n, i32 type, i32 code) {
+export bool handle_key(borrow NodeRow n, i32 type, i32 code, i32 mods) {
+    bool ctrl = (mods & KeyModifier::CTRL) != 0;
+    bool shift = (mods & KeyModifier::SHIFT) != 0;
     if (type == KeyEventType::CHAR) {
-        if (!ascii.is_printable(code) || n.len - n.cursor >= LINE_MAX) { return false; }
-        make_room(&n, 1);
-        i32 len = n.len;
-        if (len + 1 >= n.cap) { return false; }
-        Blob buf = n.text;
-        buf.put(len, (char)code);
-        buf.put(len + 1, (char)0);
-        n.len = (u16)(len + 1);
+        if (ctrl || !ascii.is_printable(code)) { return false; }
+        Text<4> one = Text<4> {};
+        one.push((u8)code);
+        if (!type_bytes(&n, one.as_str())) { return false; }
         n.scroll = 0;
         return true;
     }
     if (type != KeyEventType::DOWN) { return false; }
+    if (ctrl) {
+        if (code == 'c' && shift) { copy_selection(&n); return true; }
+        if (code == 'v' && shift) { return paste(&n); }
+        if (code == 'c') {
+            interrupt(&n);
+            n.scroll = 0;
+            return true;
+        }
+        return false;
+    }
+    i32 at = typed_caret(&n);
+    i32 length = typed_length(&n);
     if (code == KeyCode::BACKSPACE) {
-        if (n.len <= n.cursor) { return false; }
-        i32 len = n.len - 1;
-        n.text.put(len, (char)0);
-        n.len = (u16)len;
-        n.scroll = 0;
-        return true;
-    }
-    if (code == KeyCode::ENTER) {
+        if (at == 0) { return false; }
+        remove_typed(&n, n.cursor + at - 1);
+        n.edit = (u16)(at - 1);
+    } else if (code == KeyCode::DELETE) {
+        if (at >= length) { return false; }
+        remove_typed(&n, n.cursor + at);
+    } else if (code == KeyCode::LEFT) {
+        if (at == 0) { return false; }
+        n.edit = (u16)(at - 1);
+    } else if (code == KeyCode::RIGHT) {
+        if (at >= length) { return false; }
+        n.edit = (u16)(at + 1);
+    } else if (code == KeyCode::HOME) {
+        n.edit = 0;
+    } else if (code == KeyCode::END) {
+        n.edit = (u16)length;
+    } else if (code == KeyCode::UP || code == KeyCode::DOWN) {
+        if (!browse(&n, code == KeyCode::UP)) { return false; }
+    } else if (code == KeyCode::ENTER) {
         submit(&n);
-        n.scroll = 0;
-        return true;
+    } else {
+        return false;
     }
-    return false;
+    n.scroll = 0;
+    return true;
+}
+
+// --- selection and the clipboard -----------------------------------------------------------------
+// A drag over the grid selects from `sel` to `sel_end`, bytes of the text;
+// Ctrl+Shift+C copies it. New output ends it, since it moves the text.
+
+/** @return Whether text is selected. */
+export bool has_selection(borrow NodeRow n) {
+    return case n.sel of { Some(start) -> start != n.sel_end; None -> false; };
+}
+
+/** @return The selection's first byte. */
+export i32 selection_start(borrow NodeRow n) {
+    i32 a = case n.sel of { Some(value) -> value; None -> 0; };
+    i32 b = n.sel_end;
+    i32 low = a < b ? a : b;
+    return low > n.len ? n.len : low;
+}
+
+/** @return The byte after the selection's last. */
+export i32 selection_end(borrow NodeRow n) {
+    i32 a = case n.sel of { Some(value) -> value; None -> 0; };
+    i32 b = n.sel_end;
+    i32 high = a > b ? a : b;
+    return high > n.len ? n.len : high;
+}
+
+void copy_selection(borrow NodeRow n) {
+    if (!has_selection(&n)) { return; }
+    str text = n.text.as_str();
+    case text.slice(selection_start(&n), selection_end(&n)) of {
+        Some(view) -> dom_clipboard.put(view);
+        None -> _;
+    };
+}
+
+// The clipboard's printable bytes go into the typed line, up to its first
+// line break: a paste never enters a command by itself.
+bool paste(borrow NodeRow n) {
+    str text = dom_clipboard.text();
+    Text<128> line = Text<128> {};
+    i32 i = 0;
+    while (i < text.length && line.len() < LINE_MAX) {
+        i32 c = text.byte(i);
+        if (c == '\n' || c == '\r') { break; }
+        if (c == '\t') { c = ' '; }
+        if (ascii.is_printable(c)) { line.push((u8)c); }
+        i++;
+    }
+    if (!type_bytes(&n, line.as_str())) { return false; }
+    n.scroll = 0;
+    return true;
+}
+
+/**
+ * A press on a Terminal: a drag from here selects.
+ * @param id DOM Node ID.
+ * @param x Press X, display pixels.
+ * @param y Press Y, display pixels.
+ */
+export void press(NodeId id, i32 x, i32 y) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    i32 at = byte_at(&n, x, y);
+    bool had = has_selection(&n);
+    n.sel = Some(at);
+    n.sel_end = (u16)at;
+    if (had) { dom.damage_row(&n); }
+}
+
+/**
+ * The pointer moved with the button down after press: the selection runs to it.
+ * @param id DOM Node ID.
+ * @param x Pointer X, display pixels.
+ * @param y Pointer Y, display pixels.
+ */
+export void drag(NodeId id, i32 x, i32 y) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    if (n.sel.is_none()) { return; }
+    i32 at = byte_at(&n, x, y);
+    if (at == n.sel_end) { return; }
+    n.sel_end = (u16)at;
+    dom.damage_row(&n);
 }
 
 // --- the grid --------------------------------------------------------------------------------
@@ -253,6 +536,48 @@ export i32 row_count(str text, i32 cols) {
     }
     return rows + line_rows(text.length - start, true, cols);
 }
+
+/**
+ * The byte of a Terminal's text at a point, as draw_terminal lays the text
+ * out: the cell boundary nearest the point, in the row under it.
+ * @param n Terminal node row.
+ * @param x Display X.
+ * @param y Display Y.
+ * @return A byte index, 0 to the text's length.
+ */
+export i32 byte_at(borrow NodeRow n, i32 x, i32 y) {
+    i32 s = dom.ui_scale();
+    i32 cell = graphics.mono_cell_width(s);
+    i32 lh = graphics.mono_line_height(s);
+    i32 cols = columns(&n);
+    str text = n.text.as_str();
+    i32 first = row_count(text, cols) - visible_rows(&n) - n.scroll;
+    if (first < 0) { first = 0; }
+    i32 dy = y - n.y - PAD * s;
+    i32 target = first + (dy < 0 ? 0 : dy / lh);
+    i32 col = (x - n.x - PAD * s + cell / 2) / cell;
+    if (col < 0) { col = 0; }
+    if (col > cols) { col = cols; }
+    i32 row = 0;
+    i32 start = 0;
+    while (start <= text.length) {
+        i32 end = start;
+        while (end < text.length && text.byte(end) != '\n') { end++; }
+        bool last = end >= text.length;
+        i32 count = line_rows(end - start, last, cols);
+        if (target < row + count) {
+            i32 at = start + (target - row) * cols + col;
+            return at > end ? end : at;
+        }
+        if (last) { break; }
+        row = row + count;
+        start = end + 1;
+    }
+    return text.length;
+}
+
+/** @return The byte the caret is before: in the typed line, `edit` bytes in. */
+export i32 caret_byte(borrow NodeRow n) { return n.cursor + typed_caret(&n); }
 
 /**
  * Moves a Terminal's view back through its text, or forward toward the end.

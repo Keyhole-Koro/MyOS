@@ -12,6 +12,7 @@ import irq from "@kernel/arch/irq.mln";
 import kernel_config from "@kernel/kernel/kernel_config.mln";
 import process from "@kernel/kernel/process.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
+import { KernelSignal } from "@kernel/kernel/thread.mln";
 import thread from "@kernel/kernel/thread.mln";
 import { ProcessState } from "@kernel/kernel/process.mln";
 import { LoaderError } from "@contracts/process/loader.contract.mln";
@@ -229,6 +230,44 @@ void take_line(NodeId terminal, str line) {
     };
 }
 
+/** The exit code of a program ended with Ctrl+C: 128 plus SIGINT's 2. */
+i32 INTERRUPT_CODE = 130;
+
+/**
+ * Ctrl+C on a terminal: ends the newest program started on it, one whose
+ * parent writes there too -- not the process the terminal itself started
+ * (its shell), whose parent is the terminal's app. With none, the shell gets
+ * an empty line, so it prompts again.
+ * @param terminal Terminal node.
+ */
+void interrupt(NodeId terminal) {
+    Option<Pid> target = None;
+    {
+        bool was_enabled = irq.save_disable();
+        defer irq.restore(was_enabled);
+        i32 since = 0;
+        for (Console each in consoles.console_all()) {
+            borrow ConsoleRow row = each.row();
+            if (row.output != (i32)terminal || row.since <= since || !process.accepts_threads(each.pid())) { continue; }
+            bool parent_here = case process.parent_of(each.pid()) of {
+                Some(Some(parent)) -> case output_of(parent) of { Some(node) -> node == (i32)terminal; None -> false; };
+                _ -> false;
+            };
+            if (parent_here) {
+                target = Some(each.pid());
+                since = row.since;
+            }
+        }
+    }
+    case target of {
+        Some(pid) -> ({
+            ProcessExitStatus status = ProcessExitStatus::Code(INTERRUPT_CODE);
+            scheduler.terminate(pid, status);
+        });
+        None -> ({ take_line(terminal, "\n"); });
+    };
+}
+
 // --- syscall handlers (run in the calling process's context) ---
 
 /**
@@ -259,6 +298,7 @@ i32 on_write(Pid pid, UserAddress buf, i32 count) {
     bool terminal = case dom.kind_of(NodeId(out)) of { Some(kind) -> kind == NodeKind::TERMINAL; None -> false; };
     if (terminal) { dom_terminal.write(NodeId(out), user_memory.view(buf, count)); }
     else { dom_text_edit.append_bytes(NodeId(out), user_memory.view(buf, count)); }
+    scheduler.notify_armed(KernelSignal::SERVICE);   // the server task paints it
     return count;
 }
 
@@ -548,4 +588,5 @@ export void init() {
     syscall.set_console(on_write, on_read);
     syscall.set_spawn_handler(on_spawn);
     dom_terminal.set_input_sink(take_line);
+    dom_terminal.set_interrupt_sink(interrupt);
 }

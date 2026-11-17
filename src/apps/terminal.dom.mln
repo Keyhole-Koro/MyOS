@@ -5,7 +5,7 @@ import { App, View } from "@app/app.mln";
 import elements from "@app/elements.mln";
 import ui from "@app/ui.mln";
 import { Screen } from "@app/ui.mln";
-import { app, timer } from "@app/annotations.mln";
+import { app, icon, timer } from "@app/annotations.mln";
 import terminal from "@app/terminal.mln";
 import process from "@std/hosted/process.mln";
 import { Option } from "@std/core/option.mln";
@@ -24,6 +24,7 @@ import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/
  * @property shell The shell, while it runs.
  */
 @app
+@icon("terminal")
 struct Terminal {
     Screen screen;
     Option<Pid> shell;

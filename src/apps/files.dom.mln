@@ -4,7 +4,7 @@ import app from "@app/app.mln";
 import { App, View } from "@app/app.mln";
 import elements from "@app/elements.mln";
 import ui from "@app/ui.mln";
-import { app } from "@app/annotations.mln";
+import { app, icon } from "@app/annotations.mln";
 import fs from "@std/hosted/fs.mln";
 import { DirEntry } from "@std/hosted/fs.mln";
 import str from "@std/text/str.mln";
@@ -12,6 +12,7 @@ import { Text } from "@std/text/text.mln";
 import { Result } from "@std/core/result.mln";
 import { FsError } from "@contracts/io/fs.contract.mln";
 import { Option } from "@std/core/option.mln";
+import { Icon } from "@contracts/ui/icon.contract.mln";
 
 // File manager: lists the MFS disk, opens a file in the editor (activate a
 // row, or the Open button), deletes after a confirmation dialog, and creates
@@ -20,10 +21,20 @@ import { Option } from "@std/core/option.mln";
 //
 // The list and the dialog are values: `rows` and `selected` are what the list
 // shows, `asking` whether the dialog is up.
+//
+// The list is a table: a tab goes to the next tab stop counted from the start
+// of the line, so a file's size and the header's "Size" both start at
+// COL_SIZE stops, whatever the name before them. A directory's row is its
+// name and a slash, with nothing after. Each row starts with its icon's byte
+// (contracts/ui/icon.contract.mln), which the list draws as the icon.
+
+const i32 COL_SIZE = 14;
 
 /**
  * The file manager's state.
  * @property rows Newline-separated display rows of the directory shown.
+ * @property header The column titles over the list.
+ * @property where The directory shown, as a path from the root.
  * @property selected The selected row, if any.
  * @property name Name of the selected entry.
  * @property dir Current directory path; an empty string denotes the root.
@@ -32,8 +43,11 @@ import { Option } from "@std/core/option.mln";
  * @property asking Whether the delete confirmation is up.
  */
 @app(single)
+@icon("files")
 struct Files {
-    Text<1024> rows;
+    Text<2048> rows;
+    Text<32> header;
+    Text<80> where;
     Option<i32> selected;
     Text<16> name;
     Text<64> dir;
@@ -45,21 +59,27 @@ struct Files {
 impl App for Files {
     Self start() {
         Files f = Files {};
+        f.header.append("Name");
+        while (f.header.len() < 4 + COL_SIZE) { f.header.append("\t"); }
+        f.header.append("Size");
         f.reload();
         return f;
     }
 
     View (Self f) view() {
         return <Window title="Files" w={440} h={400}>
-            <List name="files" items={f.rows} selected={f.selected} x={12} y={12} w={416} h={270} capacity={1024}
-                  focus={true} onChange={f.select} onActivate={f.open_selected} testId="file-list" />
-            <Row x={12} y={294} w={416} h={34} gap={8}>
+            <Label text={f.where} x={12} y={10} bold={1} testId="files-path" />
+            <Label text={f.header} x={24} y={36} color={ui.TEXT_SECONDARY} />
+            <List name="files" items={f.rows} selected={f.selected} x={12} y={56} w={416} h={226} capacity={2048}
+                  focus={true} anchor={ui.GROW_W | ui.GROW_H}
+                  onChange={f.select} onActivate={f.open_selected} testId="file-list" />
+            <Row x={12} y={294} w={416} h={34} gap={8} anchor={ui.PIN_BOTTOM}>
                 <PrimaryButton text="Open" w={90} h={34} onClick={f.open_selected} />
                 <Button text="New" w={80} h={34} onClick={f.create} />
                 <Button text="Delete" w={90} h={34} onClick={f.ask} />
                 <Button text="Refresh" w={96} h={34} onClick={f.reload} />
             </Row>
-            <Label text={f.status} x={12} y={340} color={ui.TEXT_SECONDARY} testId="files-status" />
+            <Label text={f.status} x={12} y={340} color={ui.TEXT_SECONDARY} anchor={ui.PIN_BOTTOM} testId="files-status" />
             <Dialog when={f.asking} title="Delete file?" text={"Delete \"%s\" permanently?", f.name}
                     confirm="Delete" onConfirm={f.delete} onCancel={f.cancel} />
         </Window>;
@@ -129,9 +149,13 @@ void (borrow Files f) say_count(i32 count) {
 void (borrow Files f) reload() {
     f.rows.clear();
     f.selected = None;
+    f.where.clear();
+    f.where.append("/");
+    f.where.append(f.dir.as_str());
     i32 start = 0;
     i32 count = 0;
     if (!f.dir.is_empty()) {
+        f.rows.push((u8)Icon::FOLDER);
         f.rows.append("..");
         count++;
     }
@@ -143,11 +167,12 @@ void (borrow Files f) reload() {
         };
         i32 idx = entry.index;
         if (count > 0) { f.rows.append("\n"); }
-        f.rows.append(entry.name.as_str());
         bool is_directory = case fs.is_dir(idx) of {
             Ok(value) -> value;
             Err(e) -> ({ f.failed("cannot list", e.describe()); return; });
         };
+        f.rows.push((u8)(is_directory ? Icon::FOLDER : Icon::FILE));
+        f.rows.append(entry.name.as_str());
         if (is_directory) {
             f.rows.append("/");
         } else {
@@ -155,10 +180,11 @@ void (borrow Files f) reload() {
                 Ok(value) -> value;
                 Err(e) -> ({ f.failed("cannot list", e.describe()); return; });
             };
-            f.rows.append("   (");
+            i32 tab = 0;
+            while (tab < COL_SIZE) { f.rows.append("\t"); tab++; }
             Text<12> size_text = size.to_string();
             f.rows.append(size_text.as_str());
-            f.rows.append(" bytes)");
+            f.rows.append(" bytes");
         }
         count++;
         start = idx + 1;
@@ -182,6 +208,8 @@ str (Files f) row_text(i32 row) {
     }
     i32 end = start;
     while (end < rows.length && rows.byte(end) != '\n') { end++; }
+    // Past the icon's byte: the row's text.
+    if (start < end && rows.byte(start) < ' ' && rows.byte(start) != '\t') { start++; }
     return case rows.slice(start, end) of { Some(view) -> view; None -> ""; };
 }
 
@@ -216,7 +244,7 @@ void (borrow Files f) enter(str name) {
 }
 
 /**
- * Keeps the selected row, and the name in it: the part before the size.
+ * Keeps the selected row, and the name in it: the part before the size's tabs.
  * @param row The row the user selected.
  */
 void (borrow Files f) select(i32 row) {
@@ -226,7 +254,7 @@ void (borrow Files f) select(i32 row) {
     i32 i = 0;
     while (i < item.length && i < fs.NAME_MAX - 1) {
         i32 c = item.byte(i);
-        if (c == ' ' || c == '/') { break; }
+        if (c == '\t' || c == '/') { break; }
         f.name.push((u8)c);
         i++;
     }

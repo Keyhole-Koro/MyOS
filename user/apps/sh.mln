@@ -18,8 +18,9 @@ import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/
 // program to end before it asks for the next line. The program writes to the
 // same terminal, and the lines typed while it runs go to the program.
 //
-//     help, ls [dir], cat <file>, clear, exit
-//     <program>, or run <program>: looked up in /bin, then /apps
+//     help, ls [dir], clear, exit
+//     <program> [args], or run <program> [args]: looked up in /bin, then /apps;
+//     what follows its name is what it reads with process.args()
 
 /**
  * Writes `what: message` and a newline.
@@ -68,31 +69,6 @@ void list(str dir) {
     if (count == 0) { ulib.println("  (empty)"); }
 }
 
-/**
- * `cat <file>`: the file's bytes.
- * @param path The file.
- */
-void cat(str path) {
-    i32 fd = case fs.open(path) of {
-        Ok(v) -> v;
-        Err(e) -> ({ say_error("cat", e.describe()); return; });
-    };
-    while (1) {
-        FsChunk chunk = case fs.read(fd) of {
-            Ok(v) -> v;
-            Err(e) -> ({
-                fs.close(fd);
-                say_error("cat", e.describe());
-                return;
-            });
-        };
-        if (chunk.got <= 0) { break; }
-        ulib.print(chunk.text.as_str());
-    }
-    fs.close(fd);
-    ulib.println("");
-}
-
 /** `clear`: a form feed, which a terminal takes as "clear the screen". */
 void clear() {
     Text<4> form_feed = Text<4> {};
@@ -104,9 +80,10 @@ void clear() {
  * Starts a program and waits for it to end, then says how it ended: by then
  * nothing else writes, so the line cannot land inside the program's output.
  * @param name The program.
+ * @param arguments What follows its name on the line.
  */
-void run(str name) {
-    Pid pid = case process.spawn(name) of {
+void run(str name, str arguments) {
+    Pid pid = case process.spawn_with(name, arguments) of {
         Ok(child) -> child;
         Err(e) -> ({ say_error(name, e.describe()); return; });
     };
@@ -146,17 +123,18 @@ bool run_line(str line) {
     if (command == "help") {
         ulib.println("help          this text");
         ulib.println("ls [dir]      list the disk, or a directory (bin, apps)");
+        ulib.println("echo <text>   print the text");
         ulib.println("cat <file>    print a file");
         ulib.println("clear         clear the screen");
         ulib.println("exit          end the shell, and its window");
-        ulib.println("<program>     start a program in /bin or /apps (or: run <program>)");
+        ulib.println("<program> [args]  start a program in /bin or /apps (or: run <program>)");
+        ulib.println("Up and Down bring back earlier lines; Ctrl+C ends the program running.");
         return true;
     }
     if (command == "ls") { list(argument); return true; }
-    if (command == "cat") { cat(argument); return true; }
     if (command == "clear") { clear(); return true; }
-    if (command == "run") { run(argument); return true; }
-    run(command);
+    if (command == "run") { return run_line(argument); }
+    run(command, argument);
     return true;
 }
 
@@ -165,7 +143,7 @@ bool run_line(str line) {
  * @return Exit code 0.
  */
 export i32 main() {
-    ulib.println("MyOS sh. Type help, ls, or a program: hello, echo, count.");
+    ulib.println("MyOS sh. Type help, ls, or a program: hello, echo, cat, count.");
     Line line;
     while (1) {
         ulib.print("$ ");

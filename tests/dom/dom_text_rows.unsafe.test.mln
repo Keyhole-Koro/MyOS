@@ -80,3 +80,48 @@ void keys_move_through_rows_and_to_either_end() {
     dom_text_edit.text_area_handle(&n, KeyEventType::DOWN, KeyCode::END, KeyModifier::CTRL);
     assert.assert_true(n.cursor == n.len, "Ctrl+End goes to the end");
 }
+
+// --- selection and the clipboard ---
+
+void key(NodeId id, i32 code, i32 mods) {
+    borrow NodeRow n = dom.row_of(id);
+    dom_text_edit.edit_key(&n, KeyEventType::DOWN, code, mods);
+}
+
+void type_text(NodeId id, str text) {
+    i32 i = 0;
+    while (i < text.length) {
+        borrow NodeRow n = dom.row_of(id);
+        dom_text_edit.edit_key(&n, KeyEventType::CHAR, text.byte(i), 0);
+        i++;
+    }
+}
+
+/*@Test "Shift selects, and Cut, Copy and Paste move text through the clipboard" { step: 200000000; }*/
+void shift_selects_and_cut_copy_paste_move_text() {
+    NodeId id = wrapped_area("hello world");
+    key(id, KeyCode::LEFT, KeyModifier::SHIFT);
+    key(id, KeyCode::LEFT, KeyModifier::SHIFT);
+    borrow NodeRow n = dom.row_of(id);
+    assert.assert_true(dom_text_edit.has_selection(&n), "Shift with an arrow selects");
+    assert.assert_true(dom_text_edit.selection_start(&n) == 9 && dom_text_edit.selection_end(&n) == 11, "from the caret to where it moved");
+    key(id, 'x', KeyModifier::CTRL);
+    assert.assert_str_eq(dom.text_of(id), "hello wor", "Ctrl+X takes the selection out");
+    key(id, KeyCode::HOME, 0);
+    key(id, 'v', KeyModifier::CTRL);
+    assert.assert_str_eq(dom.text_of(id), "ldhello wor", "Ctrl+V puts it in at the caret");
+    key(id, 'a', KeyModifier::CTRL);
+    key(id, 'c', KeyModifier::CTRL);
+    type_text(id, "Z");
+    assert.assert_str_eq(dom.text_of(id), "Z", "typing replaces the selection");
+    key(id, 'v', KeyModifier::CTRL);
+    assert.assert_str_eq(dom.text_of(id), "Zldhello wor", "Ctrl+C copied all of it");
+    key(id, KeyCode::LEFT, KeyModifier::SHIFT);
+    key(id, KeyCode::BACKSPACE, 0);
+    assert.assert_str_eq(dom.text_of(id), "Zldhello wo", "Backspace takes the selection");
+    type_text(id, "q");
+    key(id, KeyCode::LEFT, KeyModifier::SHIFT);
+    key(id, KeyCode::RIGHT, 0);
+    borrow NodeRow m = dom.row_of(id);
+    assert.assert_true(!dom_text_edit.has_selection(&m) && m.cursor == m.len, "Right without Shift goes to the selection's end");
+}

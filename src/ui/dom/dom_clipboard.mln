@@ -1,0 +1,20 @@
+namespace dom_clipboard;
+
+import { Text } from "@std/text/text.mln";
+
+// The desktop's one clipboard. Cut and Copy in any text field or terminal put
+// text here, and Paste takes it into the field with the keyboard. Apps never
+// read it: what they get of it is what a paste put into their field, so text
+// goes from one app to another only by the user's hand.
+
+// It holds up to 4096 bytes; a longer copy keeps its start.
+Text<4096> g_text;
+
+/** @param text What was cut or copied; replaces what the clipboard held. */
+export void put(str text) {
+    g_text.clear();
+    g_text.append(text);
+}
+
+/** @return What the clipboard holds, valid until the next put. */
+export str text() { return g_text.as_str(); }

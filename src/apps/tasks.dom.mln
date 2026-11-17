@@ -4,7 +4,7 @@ import app from "@app/app.mln";
 import { App, View } from "@app/app.mln";
 import elements from "@app/elements.mln";
 import ui from "@app/ui.mln";
-import { app, timer } from "@app/annotations.mln";
+import { app, icon, timer } from "@app/annotations.mln";
 import process from "@std/hosted/process.mln";
 import { ProcStats, ProcInfo, ProcActivity, CpuTimes } from "@contracts/myos/process-args.contract.mln";
 import str from "@std/text/str.mln";
@@ -55,6 +55,7 @@ const i32 COL_STATE = 19;
  * @property summary The status line.
  */
 @app(name = "Task Manager", single)
+@icon("tasks")
 struct Tasks {
     ProcStats last;
     i32 keys[18];
@@ -94,11 +95,11 @@ impl App for Tasks {
         return <Window title="Task Manager" w={560} h={500}>
             <Label text={t.cpu} x={16} y={12} bold={1} testId="cpu-share" />
             <Label text={t.chosen} x={160} y={12} color={ui.GRAPH_SECOND} testId="selected-share" />
-            <Graph x={16} y={40} w={528} h={120} samples={60} fill={t.fill} line={t.line} testId="cpu-graph" />
+            <Graph x={16} y={40} w={528} h={120} samples={60} fill={t.fill} line={t.line} anchor={ui.GROW_W} testId="cpu-graph" />
             <Label text={t.header} x={28} y={174} color={ui.TEXT_SECONDARY} />
             <List name="processes" items={t.rows} selected={t.selected} x={16} y={196} w={528} h={236}
-                  capacity={1024} onChange={t.select} testId="process-list" />
-            <Label text={t.summary} x={16} y={444} color={ui.TEXT_SECONDARY} testId="tasks-summary" />
+                  capacity={1024} anchor={ui.GROW_W | ui.GROW_H} onChange={t.select} testId="process-list" />
+            <Label text={t.summary} x={16} y={444} color={ui.TEXT_SECONDARY} anchor={ui.PIN_BOTTOM} testId="tasks-summary" />
         </Window>;
     }
 }

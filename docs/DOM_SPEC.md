@@ -718,3 +718,41 @@ checked/hitTestableを含める。host側は`MyOS` / strict `Locator` / `expect`
   まだ出ていることになり、二度と出せなかった。
 - ウィンドウの文字列を `SET_TEXT` で変えると、タスクバーのエントリも描き直す。ウィンドウの name
   （自動操作で探す名前）は作った時のまま。
+
+## 2026-11-17: 選択とクリップボード、端末の行編集、アイコン、待機
+
+- **選択:** TextInput と TextArea の選択は、`sel`（選び始めた所）から `cursor`（動く端）まで。
+  Shift と矢印・Home・End・ページキー、またはドラッグで作り、Shift の無いキーやクリックで終わる。
+  Shift の無い左右キーは選択のその端へ動く。文字・Enter・Backspace・Delete・切り取り・貼り付けは
+  選択を置き換える。フォーカスのある欄だけが選択の下地（`theme.SELECTION`）を描く。
+  キーの処理は `dom_text_edit.edit_key` にまとまっている。
+- **クリップボード:** デスクトップ全体で 1 つ（`dom_clipboard`、4096 バイト）。Ctrl+X・C・V・A は
+  フォーカスのある欄で DOM が処理する。アプリの Edit メニューは `UiOp::TEXT_EDIT` で同じことをする。
+  アプリはクリップボードを読めず、中身は貼り付けた欄の変化としてだけ届く。Ctrl を伴う CHAR は
+  文字として入れない。
+- **端末:** 打ちかけの行の中のキャレットは `edit`（行の先頭からのバイト数）。左右・Home・End で動き、
+  文字と Backspace・Delete はその位置で働く。↑・↓ は全端末で共有する最近 16 行の履歴を出し、
+  最新より下へ戻ると打ちかけていた行が戻る。Ctrl+C は行を `^C` で終えて捨て、
+  `dom_terminal.set_interrupt_sink` の先（console）が、その端末で一番新しく始まったプログラム
+  （親も同じ端末に書いているもの。シェル自身は除く）を終了コード 130 で終わらせる。無ければシェルに
+  空の行を渡し、プロンプトを出し直させる。マウスのドラッグで `sel`〜`sel_end` を選び、
+  Ctrl+Shift+C でコピー、Ctrl+Shift+V で打ちかけの行へ貼り付ける（最初の改行まで）。出力が来ると
+  選択は消える。
+- **スクロールの目印:** TextArea・List・Terminal の目印の位置は `dom_scroll` が決め、描画と
+  ポインタの両方が使う。右端 10 論理ピクセルの帯の上で、目印を押せばドラッグ、外を押せば 1 ページ動く。
+- **TextInput の横スクロール:** 幅を超える文字列では `scroll` が「左へずらすピクセル数」になり、
+  キャレットが欄から出る時だけ動く（`dom_text_edit.input_scroll`。描く前に合わせるので、クリックは
+  見えている通りに当たる）。
+- **アイコン:** 組み込みのアイコン（`contracts/ui/icon.contract.mln` の `Icon`）は
+  `tools/icons.txt` から `tools/gen_icons.py` が作る `src/ui/icons.unsafe.mln` にある。色ごとの A8
+  マスクで、1 層が DMA2D の 1 命令。List と Menu の行は、先頭のバイトが 1〜8 ならそのアイコンを
+  文字の前に描く（スナップショットはそのバイトを出さない）。ウィンドウの `icon` はタスクバーに出る。
+  アプリは `@icon("terminal")` で自分のアイコンを選ぶ。
+- **起動中の表示:** 起動したがまだウィンドウの無いアプリは、タスクバーのウィンドウの後ろに
+  枠だけの薄いエントリで出る（`dom_render.note_starting` / `forget_starting`、シェルが呼ぶ）。
+- **マウスカーソルの形:** TextInput・TextArea・Terminal の文字の上では I 型（`graphics.set_cursor_shape`、
+  CURSOR_CTRL のビット 1〜2）。スクロールの帯の上は矢印。
+- **compositor の待機:** 1 tick ごとに起きるのをやめ、通知が来るか次の DOM タイマーの期限まで眠る
+  （`scheduler.await_notification`）。起こすのは入力の割り込み（`KernelSignal::INPUT`）、プロセスの
+  終了（`PROCESS_ENDED`、終わったプロセスの片付けもここで）、要求の到着とプロセスの出力
+  （`SERVICE`）。パスの最初に通知を受ける準備をするので、パスの間に来た通知も失われない。

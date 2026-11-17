@@ -1,0 +1,47 @@
+/**
+ * What each process was started with after its name: the rest of the command
+ * line that started it (PROC_SPAWN), which it reads back with PROC_ARGS.
+ */
+namespace proc_args;
+
+import { Text } from "@std/text/text.mln";
+import { Option } from "@std/core/option.mln";
+import str from "@std/text/str.mln";
+import process from "@kernel/kernel/process.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
+
+/**
+ * The arguments a process slot's process was started with.
+ * @property pid The process they were given for: a slot's next process has
+ *           none until it is given some, rather than the last one's.
+ * @property text The arguments, cut at ARGS_MAX bytes.
+ */
+struct ProcArgs {
+    i32 pid;
+    Text<128> text;
+};
+
+ProcArgs g_args[16];
+
+/**
+ * Remembers what a process was started with.
+ * @param pid The process just started.
+ * @param text Its arguments; empty for none.
+ */
+export void set(Pid pid, str text) {
+    i32 slot = case process.slot_of(pid) of { Some(value) -> value; None -> ({ return; }); };
+    ProcArgs given = ProcArgs { pid: (i32)pid, text: Text<128> {} };
+    given.text.append(text);
+    g_args[slot] = given;
+}
+
+/**
+ * @param pid A process.
+ * @return What it was started with; empty for nothing.
+ */
+export Text<128> given_to(Pid pid) {
+    i32 slot = case process.slot_of(pid) of { Some(value) -> value; None -> ({ return Text<128> {}; }); };
+    ProcArgs found = g_args[slot];
+    if (found.pid != (i32)pid) { return Text<128> {}; }
+    return found.text;
+}

@@ -20,9 +20,17 @@ import { Text } from "@std/text/text.mln";
 
 Text<32> scan_path;
 
+// The icon an image's @icon names for its app type `type`, or "" for none.
+str icon_of(str image, str type) {
+    Annotations rows = annotations.in_image(image);
+    rows.on("icon", type);
+    if (!rows.next()) { return ""; }
+    return case rows.text(0) of { Ok(value) -> value; Err(_) -> ""; };
+}
+
 // The @app row an image declares, if it does: read its header (MBIN, section
 // directory) for its annotation rows, without loading it.
-void read_app_row(str path, str image, fn(str path, str type, bool single, str name, bool opens) -> void found) {
+void read_app_row(str path, str image, fn(str path, str type, bool single, str name, bool opens, str icon) -> void found) {
     if (!mbin.is_image(image)) { return; }
     Annotations rows = annotations.in_image(image);
     rows.on("app", "");
@@ -43,12 +51,13 @@ void read_app_row(str path, str image, fn(str path, str type, bool single, str n
         Ok(value) -> value;
         Err(_) -> ({ return; });
     };
-    found(path, type, single, label, opens);
+    str icon = icon_of(image, type);
+    found(path, type, single, label, opens, icon);
 }
 
 // Read the file at `path`, `size` bytes, into a heap buffer for as long as its
 // row is being read.
-void read_image(str path, i32 size, fn(str path, str type, bool single, str name, bool opens) -> void found) {
+void read_image(str path, i32 size, fn(str path, str type, bool single, str name, bool opens, str icon) -> void found) {
     i32 fd = case fs.open(path) of {
         Ok(value) -> value;
         Err(_) -> ({ return; });
@@ -76,11 +85,11 @@ void read_image(str path, i32 size, fn(str path, str type, bool single, str name
  * Call after fs.init().
  * @param found Called with the executable's path, the row's receiver type,
  *        whether the app is single-instance, its launcher name ("" when the row
- *        has none) and whether it takes opened paths. The strings are valid until
- *        it returns.
+ *        has none), whether it takes opened paths and its icon's name ("" for
+ *        none). The strings are valid until it returns.
  */
 @safe
-export void each_app(fn(str path, str type, bool single, str name, bool opens) -> void found) {
+export void each_app(fn(str path, str type, bool single, str name, bool opens, str icon) -> void found) {
     Text<16> name = Text<16> {};
     i32 start = 0;
     while (1) {

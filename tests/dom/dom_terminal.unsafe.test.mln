@@ -11,7 +11,7 @@ import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import { NodeRow } from "@os/ui/dom/dom_model.mln";
-import { KeyEventType, KeyCode } from "@contracts/input/keyboard.contract.mln";
+import { KeyEventType, KeyCode, KeyModifier } from "@contracts/input/keyboard.contract.mln";
 
 // The Terminal node is a line discipline as well as a screen
 // (src/ui/dom/dom_terminal.mln): what is typed collects in its text and goes
@@ -37,6 +37,7 @@ NodeId terminal(i32 capacity) {
         allocator.configure(heap.alloc, heap.free);
         desktop.init();
         dom_terminal.set_input_sink(take_line);
+        dom_terminal.set_interrupt_sink(take_interrupt);
         g_ready = true;
     }
     return case dom_elements.create_terminal("t", 0, 0, 400, 200, capacity) of {
@@ -49,15 +50,21 @@ void type_text(NodeId id, str text) {
     i32 i = 0;
     while (i < text.length) {
         borrow NodeRow n = dom.row_of(id);
-        dom_terminal.handle_key(&n, KeyEventType::CHAR, text.byte(i));
+        dom_terminal.handle_key(&n, KeyEventType::CHAR, text.byte(i), 0);
         i++;
     }
 }
 
-void press(NodeId id, i32 code) {
+void press(NodeId id, i32 code) { press_with(id, code, 0); }
+
+void press_with(NodeId id, i32 code, i32 mods) {
     borrow NodeRow n = dom.row_of(id);
-    dom_terminal.handle_key(&n, KeyEventType::DOWN, code);
+    dom_terminal.handle_key(&n, KeyEventType::DOWN, code, mods);
 }
+
+i32 g_interrupts = 0;
+
+void take_interrupt(NodeId id) { g_interrupts++; }
 
 /*@Test "a typed line goes to the sink and stays on the screen" { step: 20000000; }*/
 void a_typed_line_goes_to_the_sink_and_stays_on_the_screen() {
@@ -149,4 +156,65 @@ void long_lines_wrap_and_the_view_scrolls_back_within_the_text() {
     dom_terminal.scroll_by(id, 5);
     dom_terminal.write(id, "new\n");
     assert.assert_true(dom.row_of(id).scroll == 0, "output brings the end back into view");
+}
+
+/*@Test "the caret moves in the typed line and keys work there" { step: 20000000; }*/
+void the_caret_moves_in_the_typed_line_and_keys_work_there() {
+    NodeId id = terminal(1024);
+    dom_terminal.write(id, "$ ");
+    type_text(id, "ecxoh");
+    press(id, KeyCode::LEFT);
+    press(id, KeyCode::LEFT);
+    press(id, KeyCode::BACKSPACE);
+    type_text(id, "h");
+    press(id, KeyCode::RIGHT);
+    press(id, KeyCode::DELETE);
+    assert.assert_str_eq(dom.text_of(id), "$ echo", "typing, Backspace and Delete act at the caret");
+    press(id, KeyCode::HOME);
+    type_text(id, ">");
+    press(id, KeyCode::END);
+    type_text(id, "!");
+    assert.assert_str_eq(dom.text_of(id), "$ >echo!", "Home and End go to either end of the typed line");
+    dom_terminal.write(id, "out\n");
+    assert.assert_str_eq(dom.text_of(id), "$ out\n>echo!", "output leaves the typed line alone");
+    g_lines = 0;
+    press(id, KeyCode::LEFT);
+    press(id, KeyCode::ENTER);
+    assert.assert_str_eq(g_line.as_str(), ">echo!\n", "Enter takes the whole line, wherever the caret is");
+}
+
+/*@Test "Up and Down bring back the lines entered" { step: 30000000; }*/
+void up_and_down_bring_back_the_lines_entered() {
+    NodeId id = terminal(1024);
+    type_text(id, "first");
+    press(id, KeyCode::ENTER);
+    type_text(id, "second");
+    press(id, KeyCode::ENTER);
+    type_text(id, "draft");
+    press(id, KeyCode::UP);
+    assert.assert_true(dom.text_of(id).ends_with("\nsecond"), "Up brings back the newest line");
+    press(id, KeyCode::UP);
+    assert.assert_true(dom.text_of(id).ends_with("\nfirst"), "and then the one before it");
+    press(id, KeyCode::DOWN);
+    press(id, KeyCode::DOWN);
+    assert.assert_true(dom.text_of(id).ends_with("\ndraft"), "Down past the newest gives back what was typed");
+    press(id, KeyCode::UP);
+    type_text(id, "!");
+    g_lines = 0;
+    press(id, KeyCode::ENTER);
+    assert.assert_str_eq(g_line.as_str(), "second!\n", "a line brought back can be changed and entered");
+}
+
+/*@Test "Ctrl+C ends the typed line and interrupts" { step: 20000000; }*/
+void ctrl_c_ends_the_typed_line_and_interrupts() {
+    NodeId id = terminal(1024);
+    g_interrupts = 0;
+    g_lines = 0;
+    type_text(id, "abc");
+    press_with(id, 'c', KeyModifier::CTRL);
+    assert.assert_true(g_interrupts == 1, "the interrupt sink hears of it");
+    assert.assert_true(g_lines == 0, "the typed line goes nowhere");
+    assert.assert_str_eq(dom.text_of(id), "abc^C\n", "it shows ^C and starts a new line");
+    type_text(id, "x");
+    assert.assert_str_eq(dom.text_of(id), "abc^C\nx", "typing goes on after it");
 }

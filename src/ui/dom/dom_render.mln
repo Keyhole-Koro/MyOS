@@ -9,6 +9,8 @@ import dom_graph from "dom_graph.mln";
 import { Samples } from "dom_graph.mln";
 import dom_text_edit from "dom_text_edit.mln";
 import dom_terminal from "dom_terminal.mln";
+import dom_scroll from "dom_scroll.mln";
+import icons from "@os/ui/icons.mln";
 import dom_window_chrome from "dom_window_chrome.mln";
 import dom from "dom.mln";
 import { NodeRow } from "dom_model.mln";
@@ -233,26 +235,18 @@ export void draw_rows_box(borrow NodeRow n, i32 focused) {
 }
 
 /**
- * Draws a scroll thumb at the right edge of a box when not all its rows fit:
- * its length is the share of the rows in view, its place where they are.
- * @param right The box's inner right edge.
- * @param top The top of the rows' area.
- * @param height The height of the rows' area.
- * @param total How many rows there are.
- * @param visible How many fit.
- * @param first The first row in view.
+ * Draws a box's scroll thumb when not all its rows fit (dom_scroll).
+ * @param n TextArea, List or Terminal node row.
  * @param color The thumb's ARGB colour.
  */
-void draw_scroll_thumb(i32 right, i32 top, i32 height, i32 total, i32 visible, i32 first, i32 color) {
-    if (total <= visible || height <= 0) { return; }
-    i32 s = dom.ui_scale();
-    i32 length = height * visible / total;
-    if (length < 16 * s) { length = 16 * s; }
-    i32 most = total - visible;
-    if (first > most) { first = most; }
-    if (first < 0) { first = 0; }
-    i32 y = top + (height - length) * first / most;
-    graphics.blend_rect(right - 6 * s, y, 3 * s, length, color);
+void draw_scroll_thumb(borrow NodeRow n, i32 color) {
+    case dom_scroll.bar_of(&n) of {
+        Some(b) -> ({
+            graphics.blend_rect(dom_scroll.thumb_left(b), dom_scroll.thumb_top(b),
+                                3 * dom.ui_scale(), dom_scroll.thumb_length(b), color);
+        });
+        None -> _;
+    };
 }
 
 /**
@@ -283,6 +277,9 @@ export void draw_text_area(borrow NodeRow n) {
     i32 first = n.scroll;
     i32 start = dom_text_edit.row_start(&n, first);
     i32 row = 0;
+    bool selecting = focused != 0 && dom_text_edit.has_selection(&n);
+    i32 sel_from = dom_text_edit.selection_start(&n);
+    i32 sel_to = dom_text_edit.selection_end(&n);
     bool has_caret = false;
     i32 caret_x = 0;
     i32 caret_y = 0;
@@ -292,6 +289,16 @@ export void draw_text_area(borrow NodeRow n) {
         i32 ty = y + pad + row * lh;
         Text<160> line = copy_line(buf, start, llen);
         str label_3 = line.as_str();
+        if (selecting && sel_from <= end && sel_to > start) {
+            // The part of this row inside the selection; a selected line break
+            // shows as a little more after the row's text.
+            i32 a = sel_from > start ? sel_from - start : 0;
+            i32 b = sel_to < end ? sel_to - start : llen;
+            i32 sel_left = x + pad + graphics.text_width_n(label_3, a, 0, s);
+            i32 sel_right = x + pad + graphics.text_width_n(label_3, b, 0, s);
+            if (sel_to > end && end < len) { sel_right = sel_right + 4 * s; }
+            if (sel_right > sel_left) { graphics.fill_rect(sel_left, ty, sel_right - sel_left, lh, theme.SELECTION); }
+        }
         graphics.draw_label(x + pad, ty, label_3, fg, 0, s);
         // The caret is in this row up to its end, unless a wrapped row breaks
         // there: then it starts the next row.
@@ -316,8 +323,7 @@ export void draw_text_area(borrow NodeRow n) {
         }
     }
     graphics.pop_clip();
-    draw_scroll_thumb(x + w, y + pad, h - 2 * pad, dom_text_edit.row_count(&n),
-                      rows, first, theme.SCROLL_THUMB);
+    draw_scroll_thumb(&n, theme.SCROLL_THUMB);
     // Empty editable area: placeholder from the node name.
     if (len == 0) {
         if (!ro) {
@@ -351,6 +357,9 @@ export void draw_terminal(borrow NodeRow n) {
     if (first < 0) { first = 0; }
     i32 left = n.x + pad;
     i32 top = n.y + pad;
+    bool selecting = dom_terminal.has_selection(&n);
+    i32 sel_from = dom_terminal.selection_start(&n);
+    i32 sel_to = dom_terminal.selection_end(&n);
     graphics.push_clip(n.x, n.y, n.w, n.h);
     // `row` counts the rows of the whole text; the visible ones are first..first+rows.
     i32 row = 0;
@@ -368,6 +377,12 @@ export void draw_terminal(borrow NodeRow n) {
             i32 b = a + cols;
             if (b > end) { b = end; }
             if (at >= 0 && a < b) {
+                if (selecting && sel_from < b && sel_to > a) {
+                    i32 lo = sel_from > a ? sel_from : a;
+                    i32 hi = sel_to < b ? sel_to : b;
+                    graphics.fill_rect(left + (lo - a) * cell, top + at * lh, (hi - lo) * cell, lh,
+                                       theme.TERMINAL_SELECTION);
+                }
                 Option<str> part = text.slice(a, b);
                 str piece = case part of { Some(view) -> view; None -> ""; };
                 graphics.draw_mono(left, top + at * lh, piece, theme.TERMINAL_TEXT, s);
@@ -381,18 +396,26 @@ export void draw_terminal(borrow NodeRow n) {
             start = end + 1;
         }
     }
-    // The caret follows the last byte, on the last row of the text.
+    // The caret is in the typed line, on the last line of the text, which
+    // takes the last rows; a caret over a byte shows it through.
     if ((n.state & NodeState::FOCUSED) != 0) {
         i32 line_start = text.length;
         while (line_start > 0 && text.byte(line_start - 1) != '\n') { line_start--; }
-        i32 at = total - 1 - first;
+        i32 caret = dom_terminal.caret_byte(&n);
+        i32 offset = caret - line_start;
+        i32 at = total - dom_terminal.line_rows(text.length - line_start, true, cols) + offset / cols - first;
         if (at >= 0 && at < rows) {
-            i32 column = (text.length - line_start) % cols;
+            i32 column = offset % cols;
             graphics.fill_rect(left + column * cell, top + at * lh, cell, lh, theme.TERMINAL_CARET);
+            if (caret < text.length) {
+                Option<str> under = text.slice(caret, caret + 1);
+                str glyph = case under of { Some(view) -> view; None -> ""; };
+                graphics.draw_mono(left + column * cell, top + at * lh, glyph, theme.TERMINAL_BG, s);
+            }
         }
     }
     graphics.pop_clip();
-    draw_scroll_thumb(n.x + n.w, top, rows * lh, total, rows, first, theme.SCROLL_THUMB_ON_DARK);
+    draw_scroll_thumb(&n, theme.SCROLL_THUMB_ON_DARK);
 }
 
 /**
@@ -451,7 +474,16 @@ export void draw_rows(borrow NodeRow n, i32 hl_color, i32 hl_fg) {
         }
         Text<160> line = copy_line(buf, start, llen);
         str label_6 = line.as_str();
-        graphics.draw_label(x + pad + 4 * s, ty, label_6, color, 0, s);
+        i32 tx = x + pad + 4 * s;
+        i32 icon = dom_text_edit.row_icon(label_6);
+        i32 skip = 0;
+        if (icon != 0) {
+            icons.draw(icon, tx, ty + (lh - icons.SIZE * s) / 2, s);
+            tx = tx + dom_text_edit.ROW_ICON_W * s;
+            skip = 1;
+        }
+        str shown = case label_6.slice(skip, label_6.length) of { Some(view) -> view; None -> ""; };
+        graphics.draw_label(tx, ty, shown, color, 0, s);
         start = start + llen + 1;
         row = row + 1;
     }
@@ -538,9 +570,7 @@ export void draw_list(borrow NodeRow n) {
         hl_fg = theme.TEXT_PRIMARY;
     }
     draw_rows(&n, hl, hl_fg);
-    i32 pad = 8 * dom.ui_scale();
-    draw_scroll_thumb(n.x + n.w, n.y + pad, n.h - 2 * pad, dom_text_edit.line_of(&n, n.len) + 1,
-                      dom_text_edit.visible_lines(&n), n.scroll, theme.SCROLL_THUMB);
+    draw_scroll_thumb(&n, theme.SCROLL_THUMB);
 }
 
 /**
@@ -608,8 +638,16 @@ export void draw_text_input(borrow NodeRow n) {
 
     i32 th = graphics.text_height(0, s);
     i32 ty = y + (h - th) / 2;
+    // Text wider than the field slides left to keep the caret in view.
+    i32 left = x + pad - dom_text_edit.input_scroll(&n);
     graphics.push_clip(x + pad / 2, y, w - pad, h);
     defer graphics.pop_clip();
+    if (focused != 0 && dom_text_edit.has_selection(&n)) {
+        str all = n.text.as_str();
+        i32 sel_left = left + graphics.text_width_n(all, dom_text_edit.selection_start(&n), 0, s);
+        i32 sel_right = left + graphics.text_width_n(all, dom_text_edit.selection_end(&n), 0, s);
+        graphics.fill_rect(sel_left, ty, sel_right - sel_left, th, theme.SELECTION);
+    }
     if (n.len == 0) {
         if (n.name.is_live()) {
             i32 ph = theme.INPUT_PLACEHOLDER;
@@ -620,12 +658,12 @@ export void draw_text_input(borrow NodeRow n) {
         i32 fg = theme.TEXT_PRIMARY;
         fg = node_fg(&n, fg);
         str label_10 = n.text.as_str();
-        graphics.draw_label(x + pad, ty, label_10, fg, 0, s);
+        graphics.draw_label(left, ty, label_10, fg, 0, s);
     }
     if (focused != 0) {
         i32 cur = n.cursor;
         str label_11 = n.text.as_str();
-        i32 caret_x = x + pad + graphics.text_width_n(label_11, cur, 0, s);
+        i32 caret_x = left + graphics.text_width_n(label_11, cur, 0, s);
         i32 caret = theme.CARET;
         graphics.fill_rect(caret_x, ty + s, s, th - 2 * s, caret);
     }
@@ -730,6 +768,68 @@ export Option<NodeId> next_window_after(i32 after) {
     return best;
 }
 
+// Apps started that have no window yet: the taskbar shows each after the
+// windows, dimmed, until its window comes or it ends. The shell says which.
+
+/**
+ * An app the taskbar shows as starting.
+ * @property key Whatever the shell knows it by: its process.
+ * @property icon Its icon (Icon).
+ * @property label Its name.
+ */
+struct Starting {
+    i32 key;
+    i32 icon;
+    Text<32> label;
+};
+
+const i32 STARTING_MAX = 4;
+Starting g_starting[4];
+i32 g_starting_count = 0;
+
+void damage_taskbar() {
+    case dom.row_in(dom.taskbar_id()) of {
+        Some(bar) -> ({ dom.damage_row(&bar); });
+        None -> _;
+    };
+}
+
+/**
+ * Shows an app on the taskbar as starting, until forget_starting.
+ * @param key What the shell knows it by.
+ * @param label Its name.
+ * @param icon Its icon (Icon).
+ */
+export void note_starting(i32 key, str label, i32 icon) {
+    if (g_starting_count >= STARTING_MAX) { return; }
+    Starting entry = Starting { key: key, icon: icon, label: Text<32> {} };
+    entry.label.append(label);
+    g_starting[g_starting_count] = entry;
+    g_starting_count++;
+    damage_taskbar();
+}
+
+/**
+ * Takes a starting app off the taskbar: its window came, or it ended.
+ * @param key What the shell knows it by.
+ */
+export void forget_starting(i32 key) {
+    i32 i = 0;
+    while (i < g_starting_count) {
+        if (g_starting[i].key == key) {
+            i32 j = i;
+            while (j + 1 < g_starting_count) {
+                g_starting[j] = g_starting[j + 1];
+                j++;
+            }
+            g_starting_count--;
+            damage_taskbar();
+            return;
+        }
+        i++;
+    }
+}
+
 // How many windows the taskbar lists.
 i32 taskbar_window_count() {
     i32 count = 0;
@@ -801,8 +901,8 @@ export void draw_taskbar(borrow NodeRow n) {
     graphics.draw_label(lx + 30 * s, y + (h - th_b) / 2, "MyOS", on_dark, 1, s);
 
     // One entry per window, in creation order, so raising a window does not
-    // shuffle the bar.
-    i32 ew = taskbar_entry_width(taskbar_window_count(), w);
+    // shuffle the bar; then the apps still starting.
+    i32 ew = taskbar_entry_width(taskbar_window_count() + g_starting_count, w);
     i32 active_bg = theme.TASKBAR_ENTRY_ACTIVE;
     i32 dim = theme.TEXT_ON_DARK_DIM;
     i32 th = graphics.text_height(0, s);
@@ -820,14 +920,32 @@ export void draw_taskbar(borrow NodeRow n) {
         if (active) {
             graphics.fill_round_rect(ex + 10 * s, y + h - 9 * s, ew - 20 * s, 2 * s, s, accent);
         }
-        if (c.text.is_live()) {
-            graphics.push_clip(ex + 10 * s, y, ew - 20 * s, h);
-            str label_13 = c.text.as_str();
-            graphics.draw_label(ex + 12 * s, y + (h - th) / 2, label_13, fg, 0, s);
-            graphics.pop_clip();
+        graphics.push_clip(ex + 10 * s, y, ew - 20 * s, h);
+        i32 tx = ex + 12 * s;
+        if (c.icon != 0) {
+            icons.draw(c.icon, ex + 10 * s, y + (h - icons.SIZE * s) / 2, s);
+            tx = ex + 32 * s;
         }
+        if (c.text.is_live()) {
+            str label_13 = c.text.as_str();
+            graphics.draw_label(tx, y + (h - th) / 2, label_13, fg, 0, s);
+        }
+        graphics.pop_clip();
         index = index + 1;
         after = c.serial;
+    }
+    i32 k = 0;
+    while (k < g_starting_count) {
+        Starting entry = g_starting[k];
+        i32 ex = x + taskbar_entry_x(index, ew);
+        graphics.draw_round_rect(ex, y + 6 * s, ew, h - 12 * s, er, s, entry_bg);
+        graphics.push_clip(ex + 10 * s, y, ew - 20 * s, h);
+        icons.draw(entry.icon, ex + 10 * s, y + (h - icons.SIZE * s) / 2, s);
+        str name = entry.label.as_str();
+        graphics.draw_label(ex + 32 * s, y + (h - th) / 2, name, dim, 0, s);
+        graphics.pop_clip();
+        index = index + 1;
+        k++;
     }
 }
 

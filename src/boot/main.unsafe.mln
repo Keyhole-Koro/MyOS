@@ -96,6 +96,7 @@ void kernel_init() {
     app.install();
     request_channel.init();   // application request/event channels
     compositor.set_request_pump(request_channel.serve);
+    compositor.set_ended_pump(console.sweep);
     os_call_router.init(); // what a process reaches through OS_CALL: UI, files, processes
 
     dom_automation.dump();

@@ -1,5 +1,6 @@
 package dom_menu;
 
+import dom_text_edit from "dom_text_edit.mln";
 import dom from "dom.mln";
 import { NodeRow } from "dom_model.mln";
 import blob from "@std/memory/blob.mln";
@@ -95,7 +96,14 @@ export Result<NodeId, UiError> open_menu(i32 x, i32 y, str items,
     while (j <= items.length) {
         if (j == items.length || items.byte(j) == 10) {
             str line = case items.slice(start, j) of { Some(view) -> view; None -> ""; };
-            i32 lw = ui_metrics.text_width(line, 0, s);
+            i32 lw = 0;
+            i32 skip = 0;
+            if (dom_text_edit.row_icon(line) != 0) {
+                lw = dom_text_edit.ROW_ICON_W * s;
+                skip = 1;
+            }
+            str text = case line.slice(skip, line.length) of { Some(view) -> view; None -> ""; };
+            lw = lw + ui_metrics.text_width(text, 0, s);
             if (lw > w) { w = lw; }
             start = j + 1;
         }

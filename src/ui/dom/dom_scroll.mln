@@ -1,0 +1,124 @@
+namespace dom_scroll;
+
+import dom from "dom.mln";
+import dom_text_edit from "dom_text_edit.mln";
+import dom_terminal from "dom_terminal.mln";
+import graphics from "@os/ui/graphics.mln";
+import { NodeRow } from "dom_model.mln";
+import { Blob } from "@std/memory/blob.mln";
+import { NodeKind } from "dom.mln";
+import { Option } from "@std/core/option.mln";
+import { NodeId } from "@contracts/ui/widget.contract.mln";
+
+// A TextArea, List or Terminal whose rows do not all fit shows a thumb at its
+// right edge: its length is the share of the rows in view, its place where
+// they are. The same geometry draws it (dom_render) and lets the pointer drag
+// it or page with a click beside it (the compositor).
+
+/**
+ * Where a box's rows scroll and its thumb runs, in display pixels.
+ * @property right The box's right edge; the thumb is drawn just inside it.
+ * @property top Top of the rows' area, where the thumb's track starts.
+ * @property height Height of the track.
+ * @property total How many rows there are; more than fit.
+ * @property visible How many rows fit.
+ * @property first The first row in view.
+ */
+export struct ScrollBar {
+    i32 right;
+    i32 top;
+    i32 height;
+    i32 total;
+    i32 visible;
+    i32 first;
+};
+
+/**
+ * @param n Node row.
+ * @return Its scroll bar, or None when it does not scroll or all its rows fit.
+ */
+export Option<ScrollBar> bar_of(borrow NodeRow n) {
+    i32 s = dom.ui_scale();
+    if (n.kind == NodeKind::TEXT_AREA || n.kind == NodeKind::LIST) {
+        i32 pad = 8 * s;
+        i32 total = n.kind == NodeKind::TEXT_AREA ? dom_text_edit.row_count(&n) : dom_text_edit.line_of(&n, n.len) + 1;
+        return bar(n.x + n.w, n.y + pad, n.h - 2 * pad, total, dom_text_edit.visible_lines(&n), n.scroll);
+    }
+    if (n.kind == NodeKind::TERMINAL) {
+        // A terminal's `scroll` counts rows back from the end.
+        i32 rows = dom_terminal.visible_rows(&n);
+        i32 total = dom_terminal.row_count(n.text.as_str(), dom_terminal.columns(&n));
+        i32 first = total - rows - n.scroll;
+        if (first < 0) { first = 0; }
+        return bar(n.x + n.w, n.y + dom_terminal.PAD * s, rows * graphics.mono_line_height(s), total, rows, first);
+    }
+    return None;
+}
+
+Option<ScrollBar> bar(i32 right, i32 top, i32 height, i32 total, i32 visible, i32 first) {
+    if (total <= visible || height <= 0) { return None; }
+    i32 most = total - visible;
+    if (first > most) { first = most; }
+    if (first < 0) { first = 0; }
+    return Some(ScrollBar { right: right, top: top, height: height, total: total, visible: visible, first: first });
+}
+
+/** @return The thumb's length: the share of the rows in view, at least 16 logical px. */
+export i32 thumb_length(ScrollBar b) {
+    i32 length = b.height * b.visible / b.total;
+    i32 least = 16 * dom.ui_scale();
+    if (length < least) { length = least; }
+    if (length > b.height) { length = b.height; }
+    return length;
+}
+
+/** @return The thumb's top: where the first row in view is among them all. */
+export i32 thumb_top(ScrollBar b) {
+    return b.top + (b.height - thumb_length(b)) * b.first / (b.total - b.visible);
+}
+
+/** @return The thumb's left edge; it is 3 logical px wide. */
+export i32 thumb_left(ScrollBar b) { return b.right - 6 * dom.ui_scale(); }
+
+/**
+ * @return Whether (x, y) is on the strip the thumb runs in: the box's right
+ *   10 logical px, as tall as the track. Wider than the thumb, to be easy to hit.
+ */
+export bool on_track(ScrollBar b, i32 x, i32 y) {
+    i32 s = dom.ui_scale();
+    return x >= b.right - 10 * s && x < b.right && y >= b.top && y < b.top + b.height;
+}
+
+/**
+ * @param b Scroll bar.
+ * @param thumb_y Where the thumb's top should be.
+ * @return The first row in view that puts it nearest there.
+ */
+export i32 first_at(ScrollBar b, i32 thumb_y) {
+    i32 room = b.height - thumb_length(b);
+    if (room <= 0) { return 0; }
+    i32 most = b.total - b.visible;
+    i32 first = ((thumb_y - b.top) * most + room / 2) / room;
+    if (first < 0) { first = 0; }
+    if (first > most) { first = most; }
+    return first;
+}
+
+/**
+ * Scrolls a TextArea, List or Terminal so that `first` is its first row in view.
+ * @param id DOM Node ID.
+ * @param first Row to show at the top; clamped to the rows there are.
+ */
+export void scroll_to(NodeId id, i32 first) {
+    i32 kind = 0;
+    i32 delta = 0;
+    {
+        borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+        ScrollBar b = case bar_of(&n) of { Some(value) -> value; None -> ({ return; }); };
+        kind = n.kind;
+        delta = first - b.first;
+    }
+    if (delta == 0) { return; }
+    if (kind == NodeKind::TERMINAL) { dom_terminal.scroll_by(id, -delta); }
+    else { dom_text_edit.scroll_by(id, delta); }
+}

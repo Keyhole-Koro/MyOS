@@ -24,12 +24,18 @@ entity Node max 512 {
     u16 len;         // TextInput: current text length
     u16 cursor;      // TextInput: caret position (0..len)
     u16 radius;      // Panel corner radius, display pixels
-    u16 scroll;      // TextArea/List: first visible line/row
-    Option<i32> sel; // List: selected row; Menu: hovered row
+    u16 scroll;      // TextArea/List: first visible row; Terminal: rows back from the end;
+                     // TextInput: display pixels its text is shifted left
+    Option<i32> sel; // List: selected row; Menu: hovered row; TextInput, TextArea and
+                     // Terminal: where a selection starts, the other end being
+                     // `cursor` (Terminal: `sel_end`); None = nothing selected
     u16 sx;          // Window: bounds saved by maximize_window
     u16 sy;
     u16 sw;
     u16 sh;
+    u16 sel_end;     // Terminal: where a selection made with the mouse ends
+    u16 edit;        // Terminal: the caret in the typed line, in bytes from its start
+    u16 icon;        // Window: its app's icon (Icon), for the taskbar
     Blob name;
     Blob text;       // display text / accessible name / edit buffer
     Blob test_id;    // stable automation identity

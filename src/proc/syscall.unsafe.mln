@@ -9,10 +9,11 @@ package process_syscall;
 import { OsService, OsServiceError } from "@contracts/myos/services.contract.mln";
 import {
     ProcSpawnArgs, ProcExitedArgs, ProcReapArgs, ProcFeedArgs,
-    ProcBindArgs, ProcUnbindArgs, ProcStatsArgs, ProcStats, ProcInfo, CpuTimes, ProcActivity
+    ProcBindArgs, ProcUnbindArgs, ProcStatsArgs, ProcStats, ProcInfo, CpuTimes, ProcActivity, ProcArgsArgs
 } from "@contracts/myos/process-args.contract.mln";
 import console from "console.mln";
 import proc_stats from "stats.mln";
+import proc_args from "args.mln";
 import user_memory from "@os/syscall/user_memory.mln";
 import { copy_in_text } from "@os/syscall/user_memory.mln";
 import { UserAddress } from "@std/core/address.mln";
@@ -23,6 +24,7 @@ import { Text } from "@std/text/text.mln";
 
 Text<64> g_path;
 Text<128> g_line;
+Text<128> g_args;
 
 /**
  * Puts a control result on the wire for a service with no result_out.
@@ -52,7 +54,12 @@ export Result<i32, OsServiceError> handle(Pid caller, i32 service, UserAddress a
         ProcSpawnArgs<Result<Pid, SpawnError>> request;
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
         copy_in_text<64>(UserAddress((i32)request.path), request.path_length, &g_path);
+        copy_in_text<128>(UserAddress((i32)request.args), request.args_length, &g_args);
         Result<Pid, SpawnError> result = console.spawn_file(Some(caller), g_path.as_str());
+        case result of {
+            Ok(pid) -> ({ proc_args.set(pid, g_args.as_str()); });
+            Err(_) -> _;
+        };
         // With no node named, the child writes where its parent does.
         i32 output = request.stdout_node;
         if (output == 0) {
@@ -108,6 +115,15 @@ export Result<i32, OsServiceError> handle(Pid caller, i32 service, UserAddress a
         user_memory.copy_in(args, (char*)(&request), sizeof(request));
         copy_in_text<128>(UserAddress((i32)request.line), request.line_length, &g_line);
         return Ok(answer(console.feed_line(caller, Pid(request.pid), g_line.as_str())));
+    }
+    if (service == OsService::PROC_ARGS) {
+        ProcArgsArgs request;
+        user_memory.copy_in(args, (char*)(&request), sizeof(request));
+        Text<128> given = proc_args.given_to(caller);
+        str own = given.as_str();
+        i32 length = own.length < request.capacity ? own.length : request.capacity;
+        if (length > 0) { user_memory.copy_out(UserAddress((i32)request.out), own.data, length); }
+        return Ok(length);
     }
     if (service == OsService::PROC_STATS) {
         // It controls nothing, so it answers anyone, about every process.

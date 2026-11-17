@@ -171,6 +171,39 @@ void follow_size(NodeId parent, i32 dw, i32 dh) {
     }
 }
 
+// --- text -----------------------------------------------------------------------------------------
+
+// After a TextInput or TextArea changed: repaint it, tell its app what changed
+// (CHANGE), and where a TextArea's caret is (CARET).
+void edited(borrow NodeRow n, EditResult r) {
+    case r of {
+        EditResult::Changed -> ({
+            dom.damage_row(&n);
+            dom.touch();
+            dom.fire_change(&n);
+            if (n.kind == NodeKind::TEXT_AREA) { dom_text_edit.report_caret(&n); }
+        });
+        EditResult::Moved -> ({
+            dom.damage_row(&n);
+            dom.touch();
+            if (n.kind == NodeKind::TEXT_AREA) { dom_text_edit.report_caret(&n); }
+        });
+        EditResult::Unhandled -> _;
+    };
+}
+
+/**
+ * Cuts, copies, pastes or selects all in a TextInput or TextArea, for an app's
+ * Edit menu: what the keys do (TextEdit).
+ * @param id TextInput or TextArea node.
+ * @param command TextEdit value.
+ */
+export void text_edit(NodeId id, i32 command) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    if (n.kind != NodeKind::TEXT_INPUT && n.kind != NodeKind::TEXT_AREA) { return; }
+    edited(&n, dom_text_edit.edit_command(&n, command));
+}
+
 // --- menu buttons ------------------------------------------------------------------------------
 
 // The MenuButton whose menu is open: a pick goes to it.
@@ -320,42 +353,12 @@ export void dispatch_key_event(i32 type, i32 code, i32 mods) {
     borrow NodeRow n = case dom.row_in(dom.focus_id()) of { Some(row) -> row; None -> ({ return; }); };
     NodeId id = n.id;
     i32 kind = n.kind;
-    if (kind == NodeKind::TEXT_INPUT) {
-        EditResult r = dom_text_edit.input_handle(&n, type, code);
-        case r of {
-            EditResult::Changed -> ({
-                dom.damage_row(&n);
-                dom.touch();
-                dom.fire_change(&n);
-            });
-            EditResult::Moved -> ({
-                dom.damage_row(&n);
-                dom.touch();
-            });
-            EditResult::Unhandled -> _;
-        };
-        return;
-    }
-    if (kind == NodeKind::TEXT_AREA) {
-        EditResult r = dom_text_edit.text_area_handle(&n, type, code, mods);
-        case r of {
-            EditResult::Changed -> ({
-                dom.damage_row(&n);
-                dom.touch();
-                dom.fire_change(&n);
-                dom_text_edit.report_caret(&n);
-            });
-            EditResult::Moved -> ({
-                dom.damage_row(&n);
-                dom.touch();
-                dom_text_edit.report_caret(&n);
-            });
-            EditResult::Unhandled -> _;
-        };
+    if (kind == NodeKind::TEXT_INPUT || kind == NodeKind::TEXT_AREA) {
+        edited(&n, dom_text_edit.edit_key(&n, type, code, mods));
         return;
     }
     if (kind == NodeKind::TERMINAL) {
-        if (dom_terminal.handle_key(&n, type, code)) {
+        if (dom_terminal.handle_key(&n, type, code, mods)) {
             dom.damage_row(&n);
             dom.touch();
         }
@@ -399,6 +402,26 @@ export void tick() {
         };
         i++;
     }
+}
+
+/**
+ * @return The tick at which the next timer falls due, or None with no timers.
+ */
+export Option<i32> next_timer_due() {
+    Option<i32> next = None;
+    i32 i = 0;
+    while (i < dom.timer_count()) {
+        case dom.find_row(dom.timer_id_at(i)) of {
+            Some(t) -> ({
+                i32 due = t.next_due;
+                bool sooner = case next of { Some(best) -> due < best; None -> true; };
+                if (sooner) { next = Some(due); }
+            });
+            None -> _;
+        };
+        i++;
+    }
+    return next;
 }
 
 /**

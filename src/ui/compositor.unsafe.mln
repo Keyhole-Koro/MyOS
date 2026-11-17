@@ -13,14 +13,19 @@ import dom_list from "dom/dom_list.mln";
 import dom_menu from "dom/dom_menu.mln";
 import dom_text_edit from "dom/dom_text_edit.mln";
 import dom_terminal from "dom/dom_terminal.mln";
+import dom_scroll from "dom/dom_scroll.mln";
+import { ScrollBar } from "dom/dom_scroll.mln";
+import { NodeRow } from "dom/dom_model.mln";
 import dom_window_chrome from "dom/dom_window_chrome.mln";
 import dom_render from "dom/dom_render.mln";
 import { TaskbarTarget } from "dom/dom_render.mln";
 import graphics from "graphics.mln";
+import { CursorShape } from "graphics.mln";
 import mouse from "@kernel/io/mouse.mln";
 import { PointerButton } from "@contracts/input/pointer.contract.mln";
 import keyboard from "@kernel/io/keyboard.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
+import { KernelSignal } from "@kernel/kernel/thread.mln";
 import irq from "@kernel/arch/irq.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 
@@ -34,6 +39,22 @@ fn() -> bool g_request_pump = no_requests;
  * @param pump Callback that reports whether it served anything.
  */
 export void set_request_pump(fn() -> bool pump) { g_request_pump = pump; }
+
+void no_ended() { }
+
+fn() -> void g_ended_pump = no_ended;
+/**
+ * Registers the callback that releases processes that have ended. It runs on
+ * this task, under the DOM lock, after the kernel says a process ended.
+ * @param pump Callback that sweeps ended processes.
+ */
+export void set_ended_pump(fn() -> void pump) { g_ended_pump = pump; }
+
+// What wakes the loop: input, a process ending, and SERVICE, the OS's work for
+// this task that it did not start itself -- a request queued
+// (request_channel.submit), output a process wrote into its terminal
+// (console.on_write). A wake while it is mid-pass makes it go round once more.
+i32 WAKE_BITS = KernelSignal::INPUT | KernelSignal::PROCESS_ENDED | KernelSignal::SERVICE;
 
 // Presents the DOM scene and turns mouse and keyboard events into DOM
 // interactions: hover, press/click, window focus and z-order, title-bar
@@ -68,6 +89,13 @@ export void paint_first_frame() {
 // applies only its own delta.
 Option<NodeId> g_drag_win;
 Option<NodeId> g_resize_win;
+// A scroll thumb being dragged, and how far below its top it was taken.
+Option<NodeId> g_scroll_drag;
+i32 g_scroll_grab = 0;
+// A TextInput or TextArea whose text is being selected with a drag.
+Option<NodeId> g_select_drag;
+// A Terminal whose text is being selected with a drag.
+Option<NodeId> g_terminal_drag;
 i32 g_drag_last_x = 0;
 i32 g_drag_last_y = 0;
 
@@ -216,6 +244,8 @@ void on_press(i32 ex, i32 ey) {
         return;
     }
 
+    if (scroll_press(hit, ex, ey)) { return; }
+
     NodeKind kind = case dom.kind_of(hit) of {
         Some(v) -> v;
         None -> ({ return; });
@@ -223,15 +253,22 @@ void on_press(i32 ex, i32 ey) {
     case kind of {
         NodeKind::TEXT_INPUT -> ({
             dom_focus.set_focus(hit);
-            dom_text_edit.place_caret(hit, ex, ey);
+            dom_text_edit.press_caret(hit, ex, ey);
+            g_select_drag = Some(hit);
             return;
         });
         NodeKind::TEXT_AREA  -> ({
             dom_focus.set_focus(hit);
-            dom_text_edit.place_caret(hit, ex, ey);
+            dom_text_edit.press_caret(hit, ex, ey);
+            g_select_drag = Some(hit);
             return;
         });
-        NodeKind::TERMINAL   -> ({ dom_focus.set_focus(hit); return; });
+        NodeKind::TERMINAL   -> ({
+            dom_focus.set_focus(hit);
+            dom_terminal.press(hit, ex, ey);
+            g_terminal_drag = Some(hit);
+            return;
+        });
         NodeKind::MENU_BUTTON -> ({ dom_widgets.open_menu_button(hit); return; });
         NodeKind::LIST       -> ({
             dom_focus.set_focus(hit);
@@ -242,6 +279,43 @@ void on_press(i32 ex, i32 ey) {
     };
     dom.set_pressed(hit, 1);
     g_pressed_id = Some(hit);
+}
+
+/**
+ * A press on a scroll bar's strip: on the thumb it starts dragging it, beside
+ * it it moves a page that way.
+ * @param id Node under the pointer.
+ * @param ex Press X, display pixels.
+ * @param ey Press Y, display pixels.
+ * @return Whether the press was the scroll bar's.
+ */
+bool scroll_press(NodeId id, i32 ex, i32 ey) {
+    ScrollBar b = case on_scroll_bar(id, ex, ey) of { Some(value) -> value; None -> ({ return false; }); };
+    i32 top = dom_scroll.thumb_top(b);
+    if (ey < top) {
+        dom_scroll.scroll_to(id, b.first - b.visible);
+    } else if (ey >= top + dom_scroll.thumb_length(b)) {
+        dom_scroll.scroll_to(id, b.first + b.visible);
+    } else {
+        g_scroll_drag = Some(id);
+        g_scroll_grab = ey - top;
+    }
+    return true;
+}
+
+/**
+ * @param id Node under the pointer.
+ * @param x Pointer X, display pixels.
+ * @param y Pointer Y, display pixels.
+ * @return The node's scroll bar when (x, y) is on its strip.
+ */
+Option<ScrollBar> on_scroll_bar(NodeId id, i32 x, i32 y) {
+    borrow NodeRow n = case dom.find_row(id) of { Some(row) -> row; None -> ({ return None; }); };
+    // Most pointers are nowhere near the strip; skip counting the rows.
+    if (x < n.x + n.w - 10 * dom.ui_scale()) { return None; }
+    ScrollBar b = case dom_scroll.bar_of(&n) of { Some(value) -> value; None -> ({ return None; }); };
+    if (!dom_scroll.on_track(b, x, y)) { return None; }
+    return Some(b);
 }
 
 /**
@@ -285,6 +359,18 @@ void on_right_press(i32 ex, i32 ey) {
  * @param ey Vertical mouse pointer coordinate in logical pixels.
  */
 void on_release(i32 ex, i32 ey) {
+    if (g_terminal_drag.is_some()) {
+        g_terminal_drag = None;
+        return;
+    }
+    if (g_select_drag.is_some()) {
+        g_select_drag = None;
+        return;
+    }
+    if (g_scroll_drag.is_some()) {
+        g_scroll_drag = None;
+        return;
+    }
     if (g_drag_win.is_some()) {
         g_drag_win = None;
         return;
@@ -311,6 +397,34 @@ void on_release(i32 ex, i32 ey) {
  * @param ey Current vertical pointer coordinate in logical pixels.
  */
 void on_motion(i32 ex, i32 ey) {
+    case g_terminal_drag of {
+        Some(id) -> ({
+            dom_terminal.drag(id, ex, ey);
+            return;
+        });
+        None -> _;
+    };
+    case g_select_drag of {
+        Some(id) -> ({
+            dom_text_edit.drag_caret(id, ex, ey);
+            return;
+        });
+        None -> _;
+    };
+    case g_scroll_drag of {
+        Some(id) -> ({
+            Option<ScrollBar> bar = case dom.find_row(id) of {
+                Some(n) -> dom_scroll.bar_of(&n);
+                None -> None;
+            };
+            case bar of {
+                Some(b) -> dom_scroll.scroll_to(id, dom_scroll.first_at(b, ey - g_scroll_grab));
+                None -> ({ g_scroll_drag = None; });
+            };
+            return;
+        });
+        None -> _;
+    };
     i32 dx = ex - g_drag_last_x;
     i32 dy = ey - g_drag_last_y;
     case g_drag_win of {
@@ -331,10 +445,28 @@ void on_motion(i32 ex, i32 ey) {
     g_drag_last_y = ey;
 }
 
+/**
+ * @return The I-beam over a text field or terminal's text, else the arrow.
+ * @param hit Node under the pointer, if any.
+ * @param x Pointer X, display pixels.
+ * @param y Pointer Y, display pixels.
+ */
+i32 cursor_shape_over(Option<NodeId> hit, i32 x, i32 y) {
+    NodeId id = case hit of { Some(value) -> value; None -> ({ return CursorShape::ARROW; }); };
+    i32 kind = case dom.kind_of(id) of { Some(value) -> value; None -> ({ return CursorShape::ARROW; }); };
+    if (kind != NodeKind::TEXT_INPUT && kind != NodeKind::TEXT_AREA && kind != NodeKind::TERMINAL) {
+        return CursorShape::ARROW;
+    }
+    if (on_scroll_bar(id, x, y).is_some()) { return CursorShape::ARROW; }
+    return CursorShape::IBEAM;
+}
+
 // Interactive loop, event-driven. The mouse and keyboard IRQ handlers drain
-// the hardware FIFOs into software queues; each pass consumes every queued
-// event and edge-detects the button per event, so a click whose press and
-// release both happened since the last pass still dispatches. The live
+// the hardware FIFOs into software queues and notify this task; each pass
+// consumes every queued event and edge-detects the button per event, so a
+// click whose press and release both happened since the last pass still
+// dispatches. Between passes the task sleeps until an input, a request, a
+// process ending or the next DOM timer. The live
 // registers stay authoritative for the cursor position and hover state, so a
 // dropped event can delay a repaint but never wedge a node in a pressed or
 // hovered state.
@@ -347,11 +479,17 @@ i32 g_paint_deferred = 0;
 export void run() {
     i32 prev_left = 0;
     i32 prev_right = 0;
+    // Anything that ended before the loop armed its bits.
+    bool ended = true;
 
     // paint_first_frame() already painted the desktop (called from main.mln
     // before interrupts were enabled, so that paint could not be preempted).
 
     while (1) {
+        // Armed before the pass looks at anything, so what arrives while it
+        // runs is kept, and the wait below returns at once.
+        scheduler.arm_notification(WAKE_BITS);
+        i32 deadline = 0;
         {
             // One pass holds the DOM; the lock is given back before sleeping.
             dom.lock();
@@ -422,6 +560,7 @@ export void run() {
                     case hit of { Some(id) -> dom.set_hovered(id, 1); None -> _; };
                     g_hot_id = hit;
                 }
+                graphics.set_cursor_shape(cursor_shape_over(hit, mx, my));
                 // After the hover change, which bumps the revision itself.
                 g_hover_x = mx;
                 g_hover_y = my;
@@ -454,10 +593,25 @@ export void run() {
                 }
             }
 
+            if (ended) {
+                ended = false;
+                g_ended_pump();
+            }
+
             // Every view of a DOM string lives inside a pass, under this lock,
             // so this is where freed text may really go.
             blob.collect();
+
+            // Nothing more to do until an input, a request, a process or the
+            // next timer says so. Come straight back for a paint held above,
+            // and for a tree the requests changed under a still pointer, whose
+            // hover the next pass works out.
+            deadline = case dom_widgets.next_timer_due() of { Some(due) -> due; None -> 0; };
+            if (dom.has_damage() || dom.revision() != g_hover_revision) {
+                deadline = scheduler.ticks() + 1;
+            }
         }
-        scheduler.sleep(1); // yield the CPU to other tasks between passes
+        i32 woke = scheduler.await_notification(WAKE_BITS, deadline);
+        if (woke & KernelSignal::PROCESS_ENDED) { ended = true; }
     }
 }

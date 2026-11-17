@@ -3,6 +3,7 @@ package shell;
 import debug from "@kernel/debug/debug.mln";
 import fs from "@os/fs/fs.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
+import { KernelSignal } from "@kernel/kernel/thread.mln";
 import serial from "@kernel/io/serial.mln";
 import str from "@std/text/str.mln";
 import { Text } from "@std/text/text.mln";
@@ -10,14 +11,17 @@ import { Option } from "@std/core/option.mln";
 import { KeyCode } from "@contracts/input/keyboard.contract.mln";
 
 /**
- * Blocks until a character is available from the serial input queue, sleeping between polls.
+ * Blocks until a character is available from the serial input queue, sleeping
+ * until the serial interrupt says one arrived.
  * @return Received ASCII character byte.
  */
 i32 read_char() {
     while (1) {
+        // Armed before the look, so a character that lands in between is kept.
+        scheduler.arm_notification(KernelSignal::SERIAL);
         case serial.read_input() of {
             Some(c) -> ({ return c; });
-            None -> ({ scheduler.sleep(1); });
+            None -> ({ scheduler.await_notification(KernelSignal::SERIAL, 0); });
         };
     }
 }

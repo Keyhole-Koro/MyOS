@@ -12,6 +12,8 @@ import ascii from "@std/text/ascii.mln";
 import str from "@std/text/str.mln";
 import { NodeId } from "@contracts/ui/widget.contract.mln";
 import { KeyEventType, KeyCode, KeyModifier } from "@contracts/input/keyboard.contract.mln";
+import { TextEdit } from "@contracts/myapp/ui.contract.mln";
+import dom_clipboard from "dom_clipboard.mln";
 
 // Editing for the text controls: a TextInput's line and a TextArea's
 // document, each kept in the node's text buffer with `cursor` a byte index.
@@ -110,6 +112,23 @@ export EditResult input_handle(borrow NodeRow n, i32 type, i32 code) {
     if (code == KeyCode::HOME) { n.cursor = 0; return EditResult::Moved; }
     if (code == KeyCode::END) { n.cursor = (u16)len; return EditResult::Moved; }
     return EditResult::Unhandled;
+}
+
+// --- rows with icons ---------------------------------------------------------------------------
+// A List or Menu row that starts with a byte from 1 to 8 shows that built-in
+// icon (Icon) before its text; the byte is not text.
+
+/** Room a row's icon takes before its text, in logical pixels. */
+export const i32 ROW_ICON_W = 22;
+
+/**
+ * @param row A List or Menu row.
+ * @return The icon it starts with, or 0 for none.
+ */
+export i32 row_icon(str row) {
+    if (row.length == 0) { return 0; }
+    i32 c = row.byte(0);
+    return c >= 1 && c <= 8 ? c : 0;
 }
 
 // --- multi-line text (TextArea) -------------------------------------------------------------
@@ -445,6 +464,235 @@ export EditResult text_area_handle(borrow NodeRow n, i32 type, i32 code, i32 mod
     return EditResult::Unhandled;
 }
 
+// --- selection and the clipboard ----------------------------------------------------------------
+// A TextInput's or TextArea's selection runs between `sel`, where it was
+// started, and `cursor`, the end that moves. Shift with a key that moves the
+// caret, or a drag, makes one; any other key or a click ends it. Typing,
+// Enter, Backspace, Delete, Cut and Paste replace what is selected.
+
+/** @return Whether text is selected. */
+export bool has_selection(borrow NodeRow n) {
+    return case n.sel of { Some(anchor) -> anchor != n.cursor && anchor <= n.len; None -> false; };
+}
+
+/** @return Where the selection starts: the nearer of its ends to the text's start. */
+export i32 selection_start(borrow NodeRow n) {
+    i32 anchor = case n.sel of { Some(value) -> value; None -> n.cursor; };
+    if (anchor > n.len) { anchor = n.len; }
+    return anchor < n.cursor ? anchor : n.cursor;
+}
+
+/** @return Where the selection ends, exclusive. */
+export i32 selection_end(borrow NodeRow n) {
+    i32 anchor = case n.sel of { Some(value) -> value; None -> n.cursor; };
+    if (anchor > n.len) { anchor = n.len; }
+    return anchor > n.cursor ? anchor : n.cursor;
+}
+
+/** Removes the selected text, if any; the caret goes where it was. */
+void delete_selection(borrow NodeRow n) {
+    i32 start = selection_start(&n);
+    i32 end = selection_end(&n);
+    n.sel = None;
+    if (end <= start) { return; }
+    Blob buf = n.text;
+    i32 len = n.len;
+    i32 i = end;
+    while (i < len) {
+        buf.put(start + i - end, buf.at(i));
+        i++;
+    }
+    buf.put(len - (end - start), (char)0);
+    n.len = (u16)(len - (end - start));
+    n.cursor = (u16)start;
+}
+
+/** @return Whether there was a selection to copy to the clipboard. */
+bool copy_selection(borrow NodeRow n) {
+    if (!has_selection(&n)) { return false; }
+    str text = n.text.as_str();
+    case text.slice(selection_start(&n), selection_end(&n)) of {
+        Some(view) -> dom_clipboard.put(view);
+        None -> _;
+    };
+    return true;
+}
+
+// What a pasted byte becomes: itself, a space for a TextInput's tab, or
+// nothing (-1) for '\r' and other control bytes. A TextInput stops at a line
+// break (-2).
+i32 pasted(i32 c, bool single) {
+    if (c == '\n') { return single ? -2 : c; }
+    if (c == '\t') { return single ? ' ' : c; }
+    if (c < 32 || c == 127) { return -1; }
+    return c;
+}
+
+/**
+ * Inserts text at the caret, as much as fits, in one move of what follows.
+ * @param n TextInput or TextArea node row.
+ * @param text What to insert; a TextInput takes it up to its first line break.
+ * @return Whether anything went in.
+ */
+bool insert_text(borrow NodeRow n, str text) {
+    bool single = n.kind == NodeKind::TEXT_INPUT;
+    i32 room = n.cap - 1 - n.len;
+    i32 count = 0;
+    i32 i = 0;
+    while (i < text.length && count < room) {
+        i32 c = pasted(text.byte(i), single);
+        if (c == -2) { break; }
+        if (c >= 0) { count++; }
+        i++;
+    }
+    if (count <= 0) { return false; }
+    Blob buf = n.text;
+    i32 len = n.len;
+    i32 at = n.cursor;
+    i32 k = len - 1;
+    while (k >= at) {
+        buf.put(k + count, buf.at(k));
+        k--;
+    }
+    i32 put = 0;
+    i = 0;
+    while (put < count) {
+        i32 c = pasted(text.byte(i), single);
+        if (c >= 0) {
+            buf.put(at + put, (char)c);
+            put++;
+        }
+        i++;
+    }
+    buf.put(len + count, (char)0);
+    n.len = (u16)(len + count);
+    n.cursor = (u16)(at + count);
+    return true;
+}
+
+/**
+ * Cuts, copies, pastes or selects all in a TextInput or TextArea, as its
+ * keys do (TextEdit). The caller repaints, and reports a change to the app.
+ * @param n TextInput or TextArea node row.
+ * @param command TextEdit value.
+ * @return Changed when the text changed, Moved when only the selection did.
+ */
+export EditResult edit_command(borrow NodeRow n, i32 command) {
+    bool ro = is_readonly(&n);
+    EditResult result = EditResult::Unhandled;
+    if (command == TextEdit::SELECT_ALL) {
+        n.sel = Some(0);
+        n.cursor = n.len;
+        result = EditResult::Moved;
+    } else if (command == TextEdit::COPY) {
+        if (copy_selection(&n)) { result = EditResult::Moved; }
+    } else if (command == TextEdit::CUT) {
+        if (copy_selection(&n)) {
+            result = EditResult::Moved;
+            if (!ro) {
+                delete_selection(&n);
+                result = EditResult::Changed;
+            }
+        }
+    } else if (command == TextEdit::PASTE) {
+        if (!ro) {
+            bool had = has_selection(&n);
+            delete_selection(&n);
+            if (insert_text(&n, dom_clipboard.text()) || had) { result = EditResult::Changed; }
+        }
+    }
+    if (n.kind == NodeKind::TEXT_AREA) { text_area_reveal_cursor(&n); }
+    return result;
+}
+
+bool moves_caret(i32 code) {
+    return code == KeyCode::LEFT || code == KeyCode::RIGHT || code == KeyCode::UP || code == KeyCode::DOWN
+        || code == KeyCode::HOME || code == KeyCode::END || code == KeyCode::PAGE_UP || code == KeyCode::PAGE_DOWN;
+}
+
+/**
+ * Applies a key to a focused TextInput or TextArea: editing, moving the caret,
+ * the selection and the clipboard (Ctrl+X, C, V, A).
+ * @param n TextInput or TextArea node row.
+ * @param type KeyEventType value.
+ * @param code Key code, or the character of a CHAR event.
+ * @param mods KeyModifier bits.
+ * @return What the key did.
+ */
+export EditResult edit_key(borrow NodeRow n, i32 type, i32 code, i32 mods) {
+    bool area = n.kind == NodeKind::TEXT_AREA;
+    bool ro = is_readonly(&n);
+    bool ctrl = (mods & KeyModifier::CTRL) != 0;
+    bool shift = (mods & KeyModifier::SHIFT) != 0;
+    if (type == KeyEventType::CHAR) {
+        // Ctrl with a letter is a command, not text.
+        if (ctrl || ro || !ascii.is_printable(code)) { return EditResult::Unhandled; }
+        delete_selection(&n);
+        input_insert(&n, code);
+        if (area) { text_area_reveal_cursor(&n); }
+        return EditResult::Changed;
+    }
+    if (type != KeyEventType::DOWN) { return EditResult::Unhandled; }
+    if (ctrl) {
+        if (code == 'a') { return edit_command(&n, TextEdit::SELECT_ALL); }
+        if (code == 'c') { return edit_command(&n, TextEdit::COPY); }
+        if (code == 'x') { return edit_command(&n, TextEdit::CUT); }
+        if (code == 'v') { return edit_command(&n, TextEdit::PASTE); }
+    }
+    if (moves_caret(code)) {
+        if (shift) {
+            if (n.sel.is_none()) { n.sel = Some(n.cursor); }
+        } else if (has_selection(&n) && (code == KeyCode::LEFT || code == KeyCode::RIGHT)) {
+            // Without Shift, Left and Right go to that end of the selection.
+            n.cursor = (u16)(code == KeyCode::LEFT ? selection_start(&n) : selection_end(&n));
+            n.sel = None;
+            if (area) { text_area_reveal_cursor(&n); }
+            return EditResult::Moved;
+        } else {
+            n.sel = None;
+        }
+        return area ? text_area_handle(&n, type, code, mods) : input_handle(&n, type, code);
+    }
+    if (!ro && has_selection(&n) && (code == KeyCode::BACKSPACE || code == KeyCode::DELETE)) {
+        delete_selection(&n);
+        if (area) { text_area_reveal_cursor(&n); }
+        return EditResult::Changed;
+    }
+    if (!ro && area && code == KeyCode::ENTER) { delete_selection(&n); }
+    n.sel = None;
+    return area ? text_area_handle(&n, type, code, mods) : input_handle(&n, type, code);
+}
+
+/**
+ * A press in a TextInput or TextArea: the caret goes to the point, and a drag
+ * from here selects (drag_caret).
+ * @param id DOM Node ID.
+ * @param px Press X in display pixels.
+ * @param py Press Y in display pixels.
+ */
+export void press_caret(NodeId id, i32 px, i32 py) {
+    place_caret(id, px, py);
+    case dom.find_row(id) of {
+        Some(n) -> ({ n.sel = Some(n.cursor); });
+        None -> _;
+    };
+}
+
+/**
+ * The pointer moved with the button down after press_caret: the selection
+ * runs from the press to the point, and a TextArea scrolls to keep it in view.
+ * @param id DOM Node ID.
+ * @param px Pointer X in display pixels.
+ * @param py Pointer Y in display pixels.
+ */
+export void drag_caret(NodeId id, i32 px, i32 py) {
+    place_caret(id, px, py);
+    case dom.find_row(id) of {
+        Some(n) -> ({ if (n.kind == NodeKind::TEXT_AREA) { text_area_reveal_cursor(&n); } });
+        None -> _;
+    };
+}
+
 // --- the caret from a click ------------------------------------------------------------------
 
 // The boundary in `line` nearest to `dx` pixels right of where it is drawn:
@@ -475,12 +723,18 @@ export void place_caret(NodeId id, i32 px, i32 py) {
     i32 s = dom.ui_scale();
     str text = n.text.as_str();
     if (n.kind == NodeKind::TEXT_INPUT) {
-        n.cursor = (u16)nearest_boundary(text, px - n.x - theme.INPUT_PADDING_X * s, s);
+        // The text is drawn `scroll` pixels to the left (input_scroll).
+        n.cursor = (u16)nearest_boundary(text, px - n.x - theme.INPUT_PADDING_X * s + n.scroll, s);
     } else if (n.kind == NodeKind::TEXT_AREA) {
         i32 pad = 8 * s;
-        i32 row = (py - n.y - pad) / ui_metrics.text_height(false, s);
-        if (row < 0) { row = 0; }
-        i32 start = row_start(&n, n.scroll + row);
+        // Rows above or below the box are the ones scrolled out there: a drag
+        // past an edge reaches them (drag_caret scrolls to them).
+        i32 lh = ui_metrics.text_height(false, s);
+        i32 dy = py - n.y - pad;
+        i32 row = dy >= 0 ? dy / lh : (dy - lh + 1) / lh;
+        i32 target = n.scroll + row;
+        if (target < 0) { target = 0; }
+        i32 start = row_start(&n, target);
         i32 end = row_end(&n, text, start);
         Option<str> view = text.slice(start, end);
         str piece = case view of { Some(found) -> found; None -> ""; };
@@ -493,6 +747,32 @@ export void place_caret(NodeId id, i32 px, i32 py) {
     }
     dom.damage_row(&n);
     dom.touch();
+}
+
+/**
+ * Keeps a TextInput's caret in view. Its `scroll` is how many display pixels
+ * the text is shifted left; it moves only when the caret would leave the
+ * field (back by a third of the field, so typing backwards does not shift at
+ * every key), and never so far that space after the end could show more text.
+ * The renderer calls this before it draws, so a click maps onto what is shown.
+ * @param n TextInput node row.
+ * @return The shift, in display pixels.
+ */
+export i32 input_scroll(borrow NodeRow n) {
+    i32 s = dom.ui_scale();
+    i32 inner = n.w - 2 * theme.INPUT_PADDING_X * s;
+    if (inner < s) { inner = s; }
+    str text = n.text.as_str();
+    str before = case text.slice(0, n.cursor) of { Some(view) -> view; None -> text; };
+    i32 caret = ui_metrics.text_width(before, false, s);
+    i32 total = ui_metrics.text_width(text, false, s);
+    i32 scroll = n.scroll;
+    if (caret - scroll > inner - s) { scroll = caret - inner + s; }
+    if (caret < scroll) { scroll = caret - inner / 3; }
+    if (scroll > total - inner + s) { scroll = total - inner + s; }
+    if (scroll < 0) { scroll = 0; }
+    n.scroll = (u16)scroll;
+    return scroll;
 }
 
 /**
@@ -535,6 +815,7 @@ export void append_text(NodeId id, str s) {
     buf.put(len, (char)0);
     n.len = (u16)len;
     n.cursor = (u16)len;
+    n.sel = None;
     text_area_reveal_cursor(&n);
     dom.damage_row(&n);
     dom.touch();
@@ -634,6 +915,7 @@ export void set_input_text(NodeId id, str s) {
     buf.put(i, (char)0);
     n.len = (u16)i;
     n.cursor = (u16)i;
+    n.sel = None;
     dom.damage_row(&n);
     dom.touch();
 }

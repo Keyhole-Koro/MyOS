@@ -1,0 +1,49 @@
+namespace app;
+
+import ulib from "../lib/ulib.mln";
+import fs from "@std/hosted/fs.mln";
+import { FsChunk } from "@std/hosted/fs.mln";
+import process from "@std/hosted/process.mln";
+import { Text } from "@std/text/text.mln";
+import str from "@std/text/str.mln";
+import { Result } from "@std/core/result.mln";
+import { FsError } from "@contracts/io/fs.contract.mln";
+
+// cat <file>: writes the file's bytes to the terminal.
+
+/**
+ * Prints the file named by the arguments.
+ * @return 0, or 1 when there is no file to print.
+ */
+export i32 main() {
+    Text<128> arguments = process.args();
+    str path = arguments.as_str();
+    if (path.is_empty()) {
+        ulib.println("usage: cat <file>");
+        return 1;
+    }
+    i32 fd = case fs.open(path) of {
+        Ok(v) -> v;
+        Err(e) -> ({
+            ulib.print("cat: ");
+            ulib.println(e.describe());
+            return 1;
+        });
+    };
+    while (1) {
+        FsChunk chunk = case fs.read(fd) of {
+            Ok(v) -> v;
+            Err(e) -> ({
+                fs.close(fd);
+                ulib.print("cat: ");
+                ulib.println(e.describe());
+                return 1;
+            });
+        };
+        if (chunk.got <= 0) { break; }
+        ulib.print(chunk.text.as_str());
+    }
+    fs.close(fd);
+    ulib.println("");
+    return 0;
+}

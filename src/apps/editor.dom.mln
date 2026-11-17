@@ -5,7 +5,7 @@ import { App, View } from "@app/app.mln";
 import elements from "@app/elements.mln";
 import ui from "@app/ui.mln";
 import { TextField } from "@app/ui.mln";
-import { app, key } from "@app/annotations.mln";
+import { app, icon, key } from "@app/annotations.mln";
 import fs from "@std/hosted/fs.mln";
 import { DirEntry, FsChunk } from "@std/hosted/fs.mln";
 import str from "@std/text/str.mln";
@@ -55,6 +55,7 @@ enum Then {
  * @property chosen The file picked there.
  */
 @app(name = "Editor", single, opens)
+@icon("editor")
 struct Editor {
     TextField body;
     TextField name;
@@ -87,6 +88,7 @@ impl App for Editor {
         return <Window title={e.title} w={640} h={480}>
             <Box w={640} h={30} background={ui.MENU_BAR} border={ui.MENU_BAR} anchor={ui.GROW_W} />
             <Menu title="File" items="New\t\t\t\t\tCtrl+N\nOpen...\t\t\t\t\tCtrl+O\nSave\t\t\t\t\tCtrl+S\nSave As...\nExit" x={4} y={2} w={52} h={26} onSelect={e.file_menu} testId="editor-file-menu" />
+            <Menu title="Edit" items="Cut\t\t\t\t\tCtrl+X\nCopy\t\t\t\t\tCtrl+C\nPaste\t\t\t\t\tCtrl+V\nSelect All\t\t\t\t\tCtrl+A" x={58} y={2} w={52} h={26} onSelect={e.edit_menu} testId="editor-edit-menu" />
             <TextArea field={e.body} name="" y={30} w={640} h={394} capacity={4096} wrap={true} anchor={ui.GROW_W | ui.GROW_H} onEdit={e.edited} onCaret={e.moved} testId="editor-text" />
             <Label text={"Ln %d, Col %d", e.line, e.column} x={12} y={428} color={ui.TEXT_SECONDARY} anchor={ui.PIN_BOTTOM} testId="editor-position" />
             <Label text={e.note} x={160} y={428} color={ui.TEXT_SECONDARY} anchor={ui.PIN_BOTTOM} testId="editor-status" />
@@ -252,6 +254,17 @@ void (borrow Editor e) file_menu(i32 index) {
     if (index == 2) { e.save(); }
     if (index == 3) { e.save_as(); }
     if (index == 4) { e.exit_command(); }
+}
+
+// --- the Edit menu ------------------------------------------------------------------------------
+
+/** Cut, Copy, Paste, Select All: what the text's own keys do. */
+void (borrow Editor e) edit_menu(i32 index) {
+    if (index == 0) { e.body.cut(); }
+    if (index == 1) { e.body.copy(); }
+    if (index == 2) { e.body.paste(); }
+    if (index == 3) { e.body.select_all(); }
+    e.body.focus();
 }
 
 @key("Ctrl+N")

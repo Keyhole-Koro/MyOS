@@ -1,5 +1,6 @@
 package app;
 
+import icons from "@os/ui/icons.mln";
 import debug from "@kernel/debug/debug.mln";
 import str from "@std/text/str.mln";
 import ascii from "@std/text/ascii.mln";
@@ -76,6 +77,7 @@ const i32 PLACE_MAX = 16;     // windows looked at
  * @property single True when launch requests should reuse an existing instance.
  * @property name Launcher label; falls back to type when the annotation omits a name.
  * @property opens True when the @app annotation says it takes opened paths.
+ * @property icon Its icon (Icon), from @app(icon = ...); Icon::APP when it names none.
  */
 struct AppRecord {
     Text<32> path;
@@ -83,6 +85,7 @@ struct AppRecord {
     bool single;
     Text<32> name;
     bool opens;
+    i32 icon;
 };
 AppRecord registry[16];
 i32 registry_count = 0;
@@ -116,12 +119,12 @@ void push_app_event(Pid owner, NodeId id, i32 kind, i32 arg, i32 token, str text
 
 // Names, types and paths read out of images on disk are copied into the
 // record: the image buffer is freed once its header has been read.
-void register_app(str path, str type, bool single, str name, bool opens) {
+void register_app(str path, str type, bool single, str name, bool opens, str icon) {
     if (registry_count >= APPS_MAX) {
         debug.println("app: registry full");
         return;
     }
-    AppRecord record = AppRecord { single: single, opens: opens };
+    AppRecord record = AppRecord { single: single, opens: opens, icon: icons.named(icon) };
     record.path.append(path);
     record.type.append(type);
     if (name.is_empty()) { record.name.append(type); }
@@ -136,8 +139,8 @@ str label_of(i32 index) {
 }
 
 // The @app row of an executable in /apps: register the app it declares.
-void install_app(str path, str type, bool single, str name, bool opens) {
-    register_app(path, type, single, name, opens);
+void install_app(str path, str type, bool single, str name, bool opens, str icon) {
+    register_app(path, type, single, name, opens, icon);
     debug.print("app: installed ");
     debug.print(type);
     debug.print(" (");
@@ -195,6 +198,7 @@ Result<Instance, AppError> mount(i32 a) {
     row.app = a;
     row.win = None;
     dom_automation.note_app_starting(1);
+    dom_render.note_starting((i32)pid, record.name.as_str(), record.icon);
     return Ok(instance);
 }
 
@@ -296,8 +300,13 @@ export void window_ready(Pid owner, NodeId win) {
     borrow InstanceRow row = instance.row();
     if (!has_window(&row)) {
         dom_automation.note_app_starting(-1);
+        dom_render.forget_starting((i32)owner);
         place_window(win);
     }
+    case dom.find_row(win) of {
+        Some(n) -> ({ n.icon = (u16)registry[row.app].icon; });
+        None -> _;
+    };
     dom.set_owner(win, owner);
     dom.set_on_close(win, window_closed);
     case dom.append_child(dom.desktop_id(), win) of {
@@ -441,25 +450,15 @@ export void process_gone(Pid pid) {
     case instances.instance_by_pid(pid) of {
         Some(instance) -> ({
             borrow InstanceRow row = instance.row();
-            if (!has_window(&row)) { dom_automation.note_app_starting(-1); }
+            if (!has_window(&row)) {
+                dom_automation.note_app_starting(-1);
+                dom_render.forget_starting((i32)pid);
+            }
             instance.delete();
             dom_widgets.activate_topmost();
         });
         None -> _;
     };
-}
-
-// A timer on the desktop: this is the server task's turn to end the processes
-// that have ended -- ones that sent EXIT, and ones that died without (a crash).
-/**
- * Runs the OS's sweep of ended processes on the server task.
- * Registered as the shell's periodic timer callback.
- * @param owner Timer event owner (unused).
- * @param id Timer node ID (unused).
- * @param arg Timer callback argument (unused).
- */
-void reap_exited(Option<Pid> owner, NodeId id, i32 arg) {
-    console.sweep();
 }
 
 // Start the app at `index`; a single-instance app that is already running is
@@ -568,6 +567,7 @@ export str menu_items() {
     i32 i = 0;
     while (i < registry_count) {
         if (i > 0) { menu_buf.append("\n"); }
+        menu_buf.push((u8)registry[i].icon);   // the row's icon (dom_text_edit.row_icon)
         menu_buf.append(label_of(i));
         i++;
     }
@@ -785,8 +785,4 @@ export void install() {
     dom_render.set_launcher(launch_menu);
     shell_install.set_desktop_menu(menu_items(), on_menu);
     dom_widgets.set_key_filter(dispatch_key);
-    case dom_widgets.create_timer(50, reap_exited) of {
-        Ok(_) -> _;
-        Err(_) -> ({ debug.panic("app: reaper timer creation failed"); });
-    };
 }
