@@ -1,0 +1,83 @@
+namespace test_proc_args;
+
+import assert from "@std/testing/assert.mln";
+import { assert_eq } from "@std/testing/assert.mln";
+import kernel_config from "@kernel/kernel/kernel_config.mln";
+import process from "@kernel/kernel/process.mln";
+import proc_args from "@os/proc/args.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
+import { Option } from "@std/core/option.mln";
+import { Text } from "@std/text/text.mln";
+
+// proc_args keeps a process's arguments in its slot of the process table,
+// with the pid they were given for. A slot's next process gets a new pid
+// under the same slot, so these pin that it never sees the arguments of the
+// process before it.
+//
+// proc_args, gateway, events and stats keep a table of 16 entries indexed by
+// process.slot_of. MyLang array sizes must be literals, so they cannot follow
+// kernel_config.MAX_PROCS; the last test fails if the kernel ever hands out a
+// slot those tables do not have.
+
+i32 TABLE_ENTRIES = 16; // the length of MyOS's per-slot tables
+
+void assert_args(Pid pid, str expected, str message) {
+    Text<128> given = proc_args.given_to(pid);
+    assert.assert_str_eq(given.as_str(), expected, message);
+}
+
+/*@Test "a slot's next process does not see the last one's arguments" { step: 20000000; }*/
+void a_slots_next_process_does_not_see_the_last_ones_arguments() {
+    Pid first = Pid(1);
+    Pid next = Pid(33); // same slot, next generation
+    assert_eq<i32>(process.slot_of(next).unwrap_or(-1), process.slot_of(first).unwrap_or(-2),
+        "the two pids share a slot");
+
+    proc_args.set(first, "alpha beta");
+    assert_args(first, "alpha beta", "a process reads back its arguments");
+    assert_eq<i32>(proc_args.given_to(next).len(), 0, "the slot's next process has none");
+
+    proc_args.set(next, "gamma");
+    assert_args(next, "gamma", "until it is given its own");
+    assert_eq<i32>(proc_args.given_to(first).len(), 0, "and then the old pid has none");
+}
+
+/*@Test "arguments are kept up to 127 bytes" { step: 20000000; }*/
+void arguments_are_kept_up_to_127_bytes() {
+    Text<128> longest = Text<128> {};
+    while (longest.len() < longest.capacity()) {
+        assert.assert_true(longest.push((u8)(97 + longest.len() % 26)), "the arguments are built");
+    }
+    assert_eq<i32>(longest.len(), 127, "the longest arguments PROC_SPAWN passes");
+    proc_args.set(Pid(2), longest.as_str());
+    Text<128> given = proc_args.given_to(Pid(2));
+    assert_eq<i32>(given.len(), 127, "are kept whole");
+    assert.assert_str_eq(given.as_str(), longest.as_str(), "byte for byte");
+
+    proc_args.set(Pid(2), "");
+    assert_eq<i32>(proc_args.given_to(Pid(2)).len(), 0, "empty arguments replace them");
+}
+
+/*@Test "a pid with no slot is ignored" { step: 20000000; }*/
+void a_pid_with_no_slot_is_ignored() {
+    proc_args.set(Pid(1), "keep");
+    proc_args.set(Pid(0), "zero");
+    proc_args.set(Pid(-1), "negative");
+    proc_args.set(Pid(kernel_config.MAX_PROCS + 1), "past the table");
+    assert_eq<i32>(proc_args.given_to(Pid(0)).len(), 0, "pid 0 has no arguments");
+    assert_eq<i32>(proc_args.given_to(Pid(-1)).len(), 0, "nor has a negative pid");
+    assert_eq<i32>(proc_args.given_to(Pid(kernel_config.MAX_PROCS + 1)).len(), 0, "nor a pid past the slots");
+    assert_args(Pid(1), "keep", "and no slot was written");
+}
+
+/*@Test "every process slot has an entry in MyOS's per-slot tables" { step: 20000000; }*/
+void every_process_slot_has_an_entry_in_myoss_per_slot_tables() {
+    assert.assert_true(kernel_config.MAX_PROCS <= TABLE_ENTRIES,
+        "MAX_PROCS fits gateway_slots, event_bindings, g_args and g_names");
+    i32 number = 1;
+    while (number < 256) {
+        i32 slot = process.slot_of(Pid(number)).unwrap_or(0);
+        assert.assert_true(slot >= 0 && slot < TABLE_ENTRIES, "slot_of stays inside the tables");
+        number++;
+    }
+}
