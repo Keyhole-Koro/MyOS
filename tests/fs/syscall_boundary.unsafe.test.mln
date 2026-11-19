@@ -1,0 +1,207 @@
+namespace test_fs_syscall_boundary;
+
+import assert from "@std/testing/assert.mln";
+import { assert_eq } from "@std/testing/assert.mln";
+import heap from "@kernel/mm/heap.mln";
+import debug from "@kernel/debug/debug.mln";
+import fs from "@os/fs/fs.mln";
+import fs_syscall from "@os/fs/syscall.mln";
+import { FsError, SeekWhence } from "@contracts/io/fs.contract.mln";
+import { FsDirNextArgs, FsReadArgs, FsSeekArgs, FsWriteArgs } from "@contracts/myos/fs-args.contract.mln";
+import { OsService } from "@contracts/myos/services.contract.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
+import { Result } from "@std/core/result.mln";
+import { Option } from "@std/core/option.mln";
+import { UserAddress } from "@std/core/address.mln";
+import { Text } from "@std/text/text.mln";
+import myos_test_alloc from "../alloc_support.mln";
+
+// The filesystem OS_CALLs as a process sees them. The caller picks every
+// size in the record, so these pin how fs_syscall bounds them: a directory
+// name never spills past min(name_cap, 16) bytes, reads and writes larger
+// than the 512-byte staging buffer arrive whole, and a descriptor another
+// process holds answers BadFd. Paging is off here, so kernel buffers stand in
+// for user memory.
+
+i32 FILL = 120; // 'x': marks a byte nobody should have written
+str LONG_NAME = "abcdefghijklmno"; // 15 bytes: the longest name an entry holds
+i32 IO_BYTES = 1300; // more than two 512-byte chunks, ending inside a third
+
+Pid OWNER = Pid(7);
+Pid STRANGER = Pid(8);
+
+i32 byte_at(char *p, i32 k) { return (i32)p[k] & 0xFF; }
+
+void fill(char *p, i32 n) {
+    i32 k = 0;
+    while (k < n) {
+        p[k] = (char)FILL;
+        k++;
+    }
+}
+
+char *buffer(i32 size) {
+    i32 address = myos_test_alloc.alloc_or_zero(size);
+    if (address == 0) { debug.panic("no memory for a buffer"); }
+    return (char *)address;
+}
+
+i32 pattern(i32 k) { return (k * 7 + 3) & 0xFF; }
+
+i32 count_of(Result<i32, FsError> answer) {
+    return case answer of { Ok(value) -> value; Err(_) -> -1; };
+}
+
+bool is_bad_fd(Result<i32, FsError> answer) {
+    return case answer of { Err(FsError::BadFd(_)) -> true; _ -> false; };
+}
+
+bool found(Result<Option<i32>, FsError> answer) {
+    return case answer of {
+        Ok(entry) -> case entry of { Some(_) -> true; None -> false; };
+        Err(_) -> false;
+    };
+}
+
+// FS_DIR_NEXT_AT for the first entry of `path`, with the name written to name_out.
+Result<Option<i32>, FsError> dir_next(str path, char *name_out, i32 cap) {
+    Result<Option<i32>, FsError> answer = Ok(None);
+    FsDirNextArgs args = FsDirNextArgs {
+        path: path.data, path_length: path.length, start: 0,
+        name_out: name_out, name_cap: cap, result_out: &answer
+    };
+    fs_syscall.handle(OWNER, OsService::FS_DIR_NEXT_AT, UserAddress((i32)(&args)));
+    return answer;
+}
+
+Result<i32, FsError> read_as(Pid caller, i32 fd, char *out, i32 size) {
+    Result<i32, FsError> answer = Ok(-1);
+    FsReadArgs args = FsReadArgs { fd: fd, buffer: out, size: size, result_out: &answer };
+    fs_syscall.handle(caller, OsService::FS_READ, UserAddress((i32)(&args)));
+    return answer;
+}
+
+Result<i32, FsError> write_as(Pid caller, i32 fd, char *data, i32 size) {
+    Result<i32, FsError> answer = Ok(-1);
+    FsWriteArgs args = FsWriteArgs { fd: fd, buffer: data, size: size, result_out: &answer };
+    fs_syscall.handle(caller, OsService::FS_WRITE, UserAddress((i32)(&args)));
+    return answer;
+}
+
+Result<i32, FsError> rewind_as(Pid caller, i32 fd) {
+    Result<i32, FsError> answer = Ok(-1);
+    FsSeekArgs args = FsSeekArgs { fd: fd, offset: 0, whence: SeekWhence::Set, result_out: &answer };
+    fs_syscall.handle(caller, OsService::FS_SEEK, UserAddress((i32)(&args)));
+    return answer;
+}
+
+// A file of the OWNER process, as FS_CREATE would have left it.
+i32 owned_file(str path) {
+    i32 fd = case fs.create(path) of {
+        Ok(value) -> value;
+        Err(_) -> ({ debug.panic("no file to test with"); });
+    };
+    fs.give_to(fd, OWNER);
+    return fd;
+}
+
+/*@Test "a directory name stays inside name_cap and 16 bytes" {
+    disk: true;
+    step: 80000000;
+}*/
+void a_directory_name_stays_inside_name_cap_and_16_bytes() {
+    heap.init();
+    fs.init();
+    assert.assert_true(fs.mkdir("d").is_ok(), "a directory to list");
+    Text<24> path = Text<24> {};
+    assert.assert_true(path.append("d/"), "the file's path");
+    assert.assert_true(path.append(LONG_NAME), "under it");
+    fs.close(owned_file(path.as_str()));
+
+    char *name = buffer(64);
+
+    fill(name, 64);
+    assert.assert_true(found(dir_next("d", name, 0)), "the entry is found with no room for its name");
+    assert_eq<i32>(byte_at(name, 0), FILL, "and a zero name_cap writes nothing");
+
+    fill(name, 64);
+    assert.assert_true(found(dir_next("d", name, -4)), "the entry is found with a negative name_cap");
+    assert_eq<i32>(byte_at(name, 0), FILL, "and nothing is written");
+
+    fill(name, 64);
+    assert.assert_true(found(dir_next("d", name, 4)), "the entry is found with a short name_cap");
+    assert_eq<i32>(byte_at(name, 0), 'a', "the name's first bytes are written");
+    assert_eq<i32>(byte_at(name, 2), 'c', "up to name_cap - 1 of them");
+    assert_eq<i32>(byte_at(name, 3), 0, "and then a NUL");
+    assert_eq<i32>(byte_at(name, 4), FILL, "nothing past name_cap is written");
+
+    fill(name, 64);
+    assert.assert_true(found(dir_next("d", name, 64)), "the entry is found with a large name_cap");
+    assert_eq<i32>(byte_at(name, 14), 'o', "the whole name is written");
+    assert_eq<i32>(byte_at(name, 15), 0, "and ends in a NUL");
+    assert_eq<i32>(byte_at(name, 16), FILL, "nothing past 16 bytes is written");
+    assert_eq<i32>(byte_at(name, 63), FILL, "even where name_cap - 1 points");
+}
+
+/*@Test "reads and writes cross the 512-byte staging buffer whole" {
+    disk: true;
+    step: 200000000;
+}*/
+void reads_and_writes_cross_the_staging_buffer_whole() {
+    heap.init();
+    fs.init();
+    i32 fd = owned_file("big");
+
+    char *data = buffer(IO_BYTES);
+    i32 k = 0;
+    while (k < IO_BYTES) {
+        data[k] = (char)pattern(k);
+        k++;
+    }
+    assert_eq<i32>(count_of(write_as(OWNER, fd, data, IO_BYTES)), IO_BYTES, "FS_WRITE reports every byte");
+    assert_eq<i32>(count_of(rewind_as(OWNER, fd)), 0, "FS_SEEK goes back to the start");
+
+    char *back = buffer(IO_BYTES + 4);
+    fill(back, IO_BYTES + 4);
+    assert_eq<i32>(count_of(read_as(OWNER, fd, back, IO_BYTES)), IO_BYTES, "FS_READ reports every byte");
+    i32 wrong = -1;
+    k = 0;
+    while (k < IO_BYTES) {
+        if (wrong < 0 && byte_at(back, k) != pattern(k)) { wrong = k; }
+        k++;
+    }
+    assert_eq<i32>(wrong, -1, "every byte comes back, across both chunk edges");
+    assert_eq<i32>(byte_at(back, IO_BYTES), FILL, "nothing past size is written");
+
+    fill(back, IO_BYTES + 4);
+    assert_eq<i32>(count_of(rewind_as(OWNER, fd)), 0, "FS_SEEK goes back to the start again");
+    assert_eq<i32>(count_of(read_as(OWNER, fd, back, IO_BYTES + 4)), IO_BYTES, "a larger read stops at the end of the file");
+    assert_eq<i32>(byte_at(back, IO_BYTES - 1), pattern(IO_BYTES - 1), "with the last byte in place");
+    assert_eq<i32>(byte_at(back, IO_BYTES), FILL, "and nothing after it");
+    fs.close(fd);
+}
+
+/*@Test "another process's descriptor answers BadFd" {
+    disk: true;
+    step: 80000000;
+}*/
+void another_processs_descriptor_answers_bad_fd() {
+    heap.init();
+    fs.init();
+    i32 fd = owned_file("mine");
+    char *data = buffer(8);
+    fill(data, 8);
+    assert_eq<i32>(count_of(write_as(OWNER, fd, data, 8)), 8, "the owner writes its file");
+    assert_eq<i32>(count_of(rewind_as(OWNER, fd)), 0, "and seeks in it");
+
+    char *out = buffer(8);
+    fill(out, 8);
+    out[0] = (char)0;
+    assert.assert_true(is_bad_fd(read_as(STRANGER, fd, out, 8)), "a stranger's FS_READ answers BadFd");
+    assert_eq<i32>(byte_at(out, 0), 0, "and reads nothing into its buffer");
+    assert.assert_true(is_bad_fd(rewind_as(STRANGER, fd)), "a stranger's FS_SEEK answers BadFd");
+    assert.assert_true(is_bad_fd(write_as(STRANGER, fd, data, 8)), "a stranger's FS_WRITE answers BadFd");
+
+    assert_eq<i32>(count_of(read_as(OWNER, fd, out, 8)), 8, "the owner's offset did not move");
+    fs.close(fd);
+}
