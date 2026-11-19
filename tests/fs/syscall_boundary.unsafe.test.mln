@@ -46,7 +46,7 @@ char *buffer(i32 size) {
     return (char *)address;
 }
 
-i32 pattern(i32 k) { return (k * 7 + 3) & 0xFF; }
+i32 pattern(i32 k) { return (k * 7 + 3) % 251; }
 
 i32 count_of(Result<i32, FsError> answer) {
     return case answer of { Ok(value) -> value; Err(_) -> -1; };
