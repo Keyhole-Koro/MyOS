@@ -850,15 +850,15 @@ export Result<i32, FsError> read(i32 fd, i32 buf, i32 size) {
                 i32 next = buf_word(0);
                 // Whole words while both sides are aligned: a byte loop over
                 // a 60 KB executable is most of what a process's start-up
-                // costs. Each word copy advances both positions by four, so
-                // their alignment stays valid for the loop.
-                bool word_copy_aligned = ((buf + read_total) & 3) == 0 &&
-                                         ((4 + in_block) & 3) == 0;
-                while (word_copy_aligned && in_block + 4 <= fs_config.PAYLOAD &&
-                       read_total + 4 <= size) {
-                    mem.write_word(buf + read_total, mem.read_word(g_buf + 4 + in_block));
-                    read_total = read_total + 4;
-                    in_block = in_block + 4;
+                // costs. The rest of the block, or of the read, goes a byte
+                // at a time below.
+                if (((buf + read_total) & 3) == 0 && (in_block & 3) == 0) {
+                    i32 room = fs_config.PAYLOAD - in_block;
+                    i32 wanted = size - read_total;
+                    i32 words = (room < wanted ? room : wanted) / 4;
+                    mem.copy_words(buf + read_total, g_buf + 4 + in_block, words);
+                    read_total = read_total + words * 4;
+                    in_block = in_block + words * 4;
                 }
                 while (in_block < fs_config.PAYLOAD) {
                     if (read_total >= size) {
