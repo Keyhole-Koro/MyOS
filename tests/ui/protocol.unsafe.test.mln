@@ -1,0 +1,170 @@
+namespace test_ui_protocol;
+
+import assert from "@std/testing/assert.mln";
+import { assert_eq } from "@std/testing/assert.mln";
+import heap from "@kernel/mm/heap.mln";
+import allocator from "@std/memory/allocator.mln";
+import dom from "@os/ui/dom/dom.mln";
+import { NodeStyle } from "@os/ui/dom/dom.mln";
+import dom_elements from "@os/ui/dom/dom_elements.mln";
+import desktop from "@os/ui/desktop.mln";
+import ui_protocol from "@os/ui/protocol.mln";
+import { Result } from "@std/core/result.mln";
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
+import { Request, RequestDomain, RequestStatus } from "@contracts/myapp/message.contract.mln";
+import { UiOp } from "@contracts/myapp/ui.contract.mln";
+
+// ui_protocol.handle runs what an app sends, so these pin how it checks the
+// wire: TEXT_COPY stays inside the app's capacity and ends in a NUL, a
+// request that must answer through result_out is refused without one,
+// ADD_STYLE sets only the bits an app may set, and an unknown operation is
+// refused. Paging is off here, so kernel buffers stand in for the staged
+// ones the gateway passes.
+
+i32 FILL = 120; // 'x': marks a byte nobody should have written
+i32 NO_ANSWER = -99999;
+
+bool g_ready = false;
+
+void setup() {
+    if (g_ready) { return; }
+    heap.init();
+    allocator.configure(heap.alloc, heap.free);
+    desktop.init();
+    g_ready = true;
+}
+
+i32 byte_at(char *p, i32 k) { return (i32)p[k] & 0xFF; }
+
+void fill(char *p, i32 n) {
+    i32 k = 0;
+    while (k < n) {
+        p[k] = (char)FILL;
+        k++;
+    }
+}
+
+NodeId text_node(str text) {
+    return case dom_elements.create_text(text, 0, 0) of {
+        Ok(value) -> value;
+        Err(_) -> ({ assert.assert_true(false, "the text node is created"); (NodeId)0; });
+    };
+}
+
+RequestStatus send(i32 op, i32 a0, i32 a1, i32 a2, i32 result_out) {
+    Request request = Request {
+        domain: RequestDomain::UI, op: op, owner: 1,
+        a0: a0, a1: a1, a2: a2, a3: 0, a4: 0, a5: 0, s0: (char*)0, s1: (char*)0,
+        result_out: result_out, result_size: 0,
+        s0_len: 0, s1_len: 0,
+    };
+    return ui_protocol.handle(&request);
+}
+
+// TEXT_COPY of node `id` into out, with the status in *status.
+Result<i32, UiError> text_copy(NodeId id, char *out, i32 cap, RequestStatus *status) {
+    Result<i32, UiError> answer = Ok(NO_ANSWER);
+    *status = send(UiOp::TEXT_COPY, (i32)id, (i32)out, cap, (i32)(&answer));
+    return answer;
+}
+
+i32 copied(Result<i32, UiError> answer) {
+    return case answer of { Ok(n) -> n; Err(_) -> NO_ANSWER; };
+}
+
+bool is_invalid_capacity(Result<i32, UiError> answer) {
+    return case answer of { Err(UiError::InvalidCapacity(_)) -> true; _ -> false; };
+}
+
+bool is_node_not_found(Result<i32, UiError> answer) {
+    return case answer of { Err(UiError::NodeNotFound(_)) -> true; _ -> false; };
+}
+
+/*@Test "TEXT_COPY stays inside its capacity and ends in a NUL" { step: 200000000; }*/
+void text_copy_stays_inside_its_capacity_and_ends_in_a_nul() {
+    setup();
+    NodeId id = text_node("hello world");
+    char out[16];
+    RequestStatus status = RequestStatus::INVALID_DOMAIN;
+
+    fill(&out[0], 16);
+    assert_eq<i32>(copied(text_copy(id, &out[0], 6, &status)), 5, "a long text is cut to cap - 1 bytes");
+    assert.assert_true(status == RequestStatus::OK, "and the request is answered");
+    assert_eq<i32>(byte_at(&out[0], 0), 'h', "the first bytes are copied");
+    assert_eq<i32>(byte_at(&out[0], 4), 'o', "up to cap - 1 of them");
+    assert_eq<i32>(byte_at(&out[0], 5), 0, "then a NUL");
+    assert_eq<i32>(byte_at(&out[0], 6), FILL, "nothing past cap is written");
+
+    fill(&out[0], 16);
+    assert_eq<i32>(copied(text_copy(id, &out[0], 16, &status)), 11, "a short text is copied whole");
+    assert_eq<i32>(byte_at(&out[0], 10), 'd', "with its last byte");
+    assert_eq<i32>(byte_at(&out[0], 11), 0, "and a NUL after it");
+    assert_eq<i32>(byte_at(&out[0], 12), FILL, "and nothing after that");
+
+    fill(&out[0], 16);
+    assert_eq<i32>(copied(text_copy(id, &out[0], 1, &status)), 0, "a capacity of one copies no text");
+    assert_eq<i32>(byte_at(&out[0], 0), 0, "only the NUL");
+    assert_eq<i32>(byte_at(&out[0], 1), FILL, "and nothing else");
+}
+
+/*@Test "TEXT_COPY refuses a capacity below one and a missing node" { step: 200000000; }*/
+void text_copy_refuses_a_capacity_below_one_and_a_missing_node() {
+    setup();
+    NodeId id = text_node("hello");
+    char out[8];
+    RequestStatus status = RequestStatus::INVALID_DOMAIN;
+
+    fill(&out[0], 8);
+    assert.assert_true(is_invalid_capacity(text_copy(id, &out[0], 0, &status)), "a zero cap is InvalidCapacity");
+    assert.assert_true(status == RequestStatus::OK, "answered through result_out");
+    assert_eq<i32>(byte_at(&out[0], 0), FILL, "and nothing is written");
+
+    assert.assert_true(is_invalid_capacity(text_copy(id, &out[0], -8, &status)), "a negative cap is InvalidCapacity");
+    assert_eq<i32>(byte_at(&out[0], 0), FILL, "and nothing is written");
+
+    assert.assert_true(is_node_not_found(text_copy((NodeId)0x7FFF, &out[0], 8, &status)), "an unknown node is NodeNotFound");
+    assert_eq<i32>(byte_at(&out[0], 0), FILL, "and nothing is written");
+}
+
+/*@Test "a request that answers through result_out needs one" { step: 200000000; }*/
+void a_request_that_answers_through_result_out_needs_one() {
+    setup();
+    NodeId id = text_node("hello");
+    char out[8];
+    fill(&out[0], 8);
+    assert.assert_true(send(UiOp::TEXT_COPY, (i32)id, (i32)(&out[0]), 8, 0) == RequestStatus::MISSING_RESULT,
+        "TEXT_COPY without result_out is MISSING_RESULT");
+    assert_eq<i32>(byte_at(&out[0], 0), FILL, "and copies nothing");
+    assert.assert_true(send(UiOp::CREATE_BOX, 0, 0, 10, 0) == RequestStatus::MISSING_RESULT,
+        "the first CREATE_ operation without result_out is MISSING_RESULT");
+    assert.assert_true(send(UiOp::CREATE_TERMINAL, 0, 0, 10, 0) == RequestStatus::MISSING_RESULT,
+        "a later one too");
+    assert.assert_true(send(UiOp::APPEND_CHILD, (i32)id, (i32)id, 0, 0) == RequestStatus::MISSING_RESULT,
+        "and APPEND_CHILD, the last");
+}
+
+/*@Test "ADD_STYLE sets only the bits an app may set" { step: 200000000; }*/
+void add_style_sets_only_the_bits_an_app_may_set() {
+    setup();
+    NodeId id = text_node("styled");
+    i32 allowed = NodeStyle::GROW_W | NodeStyle::GROW_H | NodeStyle::PIN_BOTTOM
+        | NodeStyle::WRAP | NodeStyle::REPORT_CARET;
+    i32 before = (i32)dom.row_of(id).style;
+    assert_eq<i32>(before & allowed, 0, "the node starts without them");
+
+    assert.assert_true(send(UiOp::ADD_STYLE, (i32)id, 0xFFFF, 0, 0) == RequestStatus::OK, "ADD_STYLE is answered");
+    i32 after = (i32)dom.row_of(id).style;
+    assert_eq<i32>(after & allowed, allowed, "every allowed bit is set");
+    i32 others = 0xFFFF ^ allowed;
+    assert_eq<i32>(after & others, before & others, "and no other bit changes");
+}
+
+/*@Test "an unknown operation is refused" { step: 200000000; }*/
+void an_unknown_operation_is_refused() {
+    setup();
+    assert.assert_true(send(UiOp::NONE, 0, 0, 0, 0) == RequestStatus::INVALID_OPERATION, "NONE is no operation");
+    assert.assert_true(send(UiOp::APPEND_CHILD + 1, 0, 0, 0, 0) == RequestStatus::INVALID_OPERATION,
+        "nor is the one after the last");
+    assert.assert_true(send(9999, 0, 0, 0, 0) == RequestStatus::INVALID_OPERATION, "nor a large number");
+    assert.assert_true(send(-1, 0, 0, 0, 0) == RequestStatus::INVALID_OPERATION, "nor a negative one");
+}
