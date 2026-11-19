@@ -135,7 +135,7 @@ void a_request_that_answers_through_result_out_needs_one() {
     assert.assert_true(send(UiOp::TEXT_COPY, (i32)id, (i32)(&out[0]), 8, 0) == RequestStatus::MISSING_RESULT,
         "TEXT_COPY without result_out is MISSING_RESULT");
     assert_eq<i32>(byte_at(&out[0], 0), FILL, "and copies nothing");
-    assert.assert_true(send(UiOp::CREATE_BOX, 0, 0, 10, 0) == RequestStatus::MISSING_RESULT,
+    assert.assert_true(send(UiOp::CREATE_WINDOW, 0, 0, 10, 0) == RequestStatus::MISSING_RESULT,
         "the first CREATE_ operation without result_out is MISSING_RESULT");
     assert.assert_true(send(UiOp::CREATE_TERMINAL, 0, 0, 10, 0) == RequestStatus::MISSING_RESULT,
         "a later one too");
