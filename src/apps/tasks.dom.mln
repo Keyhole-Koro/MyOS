@@ -14,10 +14,10 @@ import { Option } from "@std/core/option.mln";
 // Task Manager: what is running and what it costs, read once a second. It only
 // shows: a process controls nothing but its own children, so it ends nothing.
 //
-// CPU time is counted in timer ticks, each charged to whatever it interrupted.
-// A share is the ticks something took between two readings over all the ticks
-// between them. The graph keeps a minute of shares: the whole CPU filled, and
-// the selected row as a line over it.
+// CPU time is counted in timer clock units (256 a tick), charged to whatever
+// ran each time the scheduler switches threads. A share is the time something
+// took between two readings over all the time between them. The graph keeps a
+// minute of shares: the whole CPU filled, and the selected row as a line over it.
 //
 // The list is a table because a tab moves to the next column: the nth tab on a
 // line goes to n tab stops from its start, so the header and every row put the
