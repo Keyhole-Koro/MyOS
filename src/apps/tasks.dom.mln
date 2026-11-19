@@ -116,7 +116,7 @@ void (borrow Tasks t) tick() {
         while (i < now.count) {
             ProcInfo p = now.procs[i];
             case t.series_for(p.pid) of {
-                Some(series) -> ({ t.record(series, share(p.cpu_ticks - t.ticks_before(p.pid), span)); });
+                Some(series) -> ({ t.record(series, share(p.cpu_time - t.time_before(p.pid), span)); });
                 None -> _;
             };
             i++;
@@ -141,13 +141,19 @@ void (borrow Tasks t) select(i32 row) {
 
 /**
  * A share of the time between two readings.
- * @param ticks Ticks something took.
- * @param span All the ticks between the readings.
+ * @param part The time something took, in timer clock units.
+ * @param span All the time between the readings, in the same units.
  * @return Percent, 0 to 100.
  */
-i32 share(i32 ticks, i32 span) {
-    if (span <= 0 || ticks <= 0) { return 0; }
-    i32 percent = (ticks * 100 + span / 2) / span;
+i32 share(i32 part, i32 span) {
+    if (span <= 0 || part <= 0) { return 0; }
+    // A second is 256000 units; halve both until part * 100 fits.
+    while (part > 20000000) {
+        part = part / 2;
+        span = span / 2;
+    }
+    if (span <= 0) { return 100; }
+    i32 percent = (part * 100 + span / 2) / span;
     return percent > 100 ? 100 : percent;
 }
 
@@ -175,15 +181,15 @@ Option<i32> (borrow Tasks t) series_for(i32 pid) {
 }
 
 /**
- * The ticks a process had at the last reading; zero for one started since.
+ * The time a process had run at the last reading; zero for one started since.
  * @param pid The process.
- * @return Its ticks then.
+ * @return Its time then, in timer clock units.
  */
-i32 (borrow Tasks t) ticks_before(i32 pid) {
+i32 (borrow Tasks t) time_before(i32 pid) {
     i32 i = 0;
     while (i < t.last.count) {
         ProcInfo p = t.last.procs[i];
-        if (p.pid == pid) { return p.cpu_ticks; }
+        if (p.pid == pid) { return p.cpu_time; }
         i++;
     }
     return 0;

@@ -71,10 +71,12 @@ export void name_process(Pid pid, str path) {
 export void fill(borrow ProcStats out) {
     bool was_enabled = irq.save_disable();
     defer irq.restore(was_enabled);
+    // The time up to now first, so the counts and the total meet.
+    scheduler.charge_elapsed();
     out.cpu = CpuTimes {
-        total: scheduler.ticks(),
-        idle: scheduler.idle_ticks(),
-        kernel: scheduler.kernel_ticks(),
+        total: scheduler.cpu_total(),
+        idle: scheduler.idle_time(),
+        kernel: scheduler.kernel_time(),
         kernel_threads: live_kernel_threads(),
     };
     out.total_pages = frames.total();
@@ -109,7 +111,7 @@ ProcInfo process_info(Pid pid, i32 slot) {
         parent: parent,
         activity: process_activity(pid),
         threads: process.live_thread_count(pid).unwrap_or(0),
-        cpu_ticks: process.cpu_ticks(pid).unwrap_or(0),
+        cpu_time: process.cpu_time(pid).unwrap_or(0),
         pages: mmu.count_user_pages(process.get_pdbr(pid).unwrap_or(0)),
         name: Text<16> {},
     };
