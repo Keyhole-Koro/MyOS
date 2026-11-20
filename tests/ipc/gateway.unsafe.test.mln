@@ -1,0 +1,59 @@
+namespace test_gateway;
+
+import assert from "@std/testing/assert.mln";
+import { assert_eq } from "@std/testing/assert.mln";
+import allocator from "@std/memory/allocator.mln";
+import heap from "@kernel/mm/heap.mln";
+import process from "@kernel/kernel/process.mln";
+import scheduler from "@kernel/kernel/scheduler.mln";
+import request_channel from "@os/ipc/channel.mln";
+import request_gateway from "@os/ipc/gateway.mln";
+import desktop from "@os/ui/desktop.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
+import { Request, RequestDomain, RequestStatus } from "@contracts/myapp/message.contract.mln";
+import { UiOp } from "@contracts/myapp/ui.contract.mln";
+import { UserAddress } from "@std/core/address.mln";
+import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
+
+// What crosses the request gateway. The service task answers on the OS's own
+// copies, so an address the app wrote into its Request must never reach it.
+
+i32 GUARD = 0x5A5A5A5A;
+
+void boot() {
+    heap.init();
+    allocator.configure(heap.alloc, heap.free);
+    desktop.init();
+    request_channel.init();
+    process.init();
+    scheduler.init();
+}
+
+/*@Test "a result without a size is not written where the app pointed" { step: 20000000; }*/
+void a_result_without_a_size_is_not_written_where_the_app_pointed() {
+    boot();
+    Pid app = process.reserve_process(None).ok().unwrap_or(Pid(0));
+    i32 guard[16];
+    i32 k = 0;
+    while (k < 16) { guard[k] = GUARD; k++; }
+
+    // CREATE_TIMER answers with a Result<NodeId, UiError>, but this Request
+    // gives no size to copy it back with.
+    Request ask = Request {
+        domain: RequestDomain::UI, op: UiOp::CREATE_TIMER, owner: 0,
+        a0: 1000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0, s0: (char*)0, s1: (char*)0,
+        result_out: (i32)(&guard[0]), result_size: 0,
+        s0_len: 0, s1_len: 0,
+    };
+    assert.assert_true(request_gateway.request(app, UserAddress((i32)(&ask))), "the request is queued");
+    assert.assert_true(request_channel.serve(), "the service answers it");
+    i32 status = -1;
+    assert.assert_true(request_gateway.reply(app, UserAddress((i32)(&status))), "the answer comes back");
+    assert_eq<i32>(status, (i32)RequestStatus::MISSING_RESULT, "it is refused for want of a result");
+    k = 0;
+    while (k < 16) {
+        assert_eq<i32>(guard[k], GUARD, "and nothing was written where result_out pointed");
+        k++;
+    }
+}

@@ -139,14 +139,17 @@ void stage_request_outputs(i32 slot_index, Request *request) {
     if (request->result_out != 0 && request->result_size > 0) {
         gateway_slots[slot_index].result_user = UserAddress(request->result_out);
         gateway_slots[slot_index].result_size = request->result_size;
-        if (gateway_slots[slot_index].result_size < 0) {
-            gateway_slots[slot_index].result_size = 0;
-        }
         if (gateway_slots[slot_index].result_size > RESULT_CAP) {
             gateway_slots[slot_index].result_size = RESULT_CAP;
         }
         request->result_out = gateway_slots[slot_index].result;
         request->result_size = gateway_slots[slot_index].result_size;
+    } else {
+        // With no size there is nothing to copy back, and the app's own
+        // address must not reach the server, which would write through it.
+        // An operation that answers with a result then says MISSING_RESULT.
+        request->result_out = 0;
+        request->result_size = 0;
     }
 }
 
