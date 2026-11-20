@@ -166,18 +166,24 @@ bool stage_request_outputs(Pid caller, i32 slot_index, Request *request) {
 
     // The server writes its whole typed answer through result_out, whatever
     // result_size says, and it runs on its own task, in the kernel's address
-    // space. So a caller's result_out never reaches it: any one is staged,
-    // and result_size only says how much of the answer to copy back.
-    if (request->result_out != 0) {
+    // space, so a caller's result_out never reaches it. With a size, the
+    // caller's address is checked and the gateway's staging buffer goes in its
+    // place; the reply copies up to that size back.
+    if (request->result_out != 0 && request->result_size > 0) {
         i32 size = request->result_size;
-        if (size < 0) { size = 0; }
         if (size > RESULT_CAP) { size = RESULT_CAP; }
         UserAddress result = UserAddress(request->result_out);
         if (!user_memory.writable(caller, result, size)) { return false; }
-        if (size > 0) { gateway_slots[slot_index].result_user = result; }
+        gateway_slots[slot_index].result_user = result;
         gateway_slots[slot_index].result_size = size;
         request->result_out = gateway_slots[slot_index].result;
         request->result_size = size;
+    } else {
+        // With no size there is nothing to copy back, and the app's own
+        // address must not reach the server, which would write through it.
+        // An operation that answers with a result then says MISSING_RESULT.
+        request->result_out = 0;
+        request->result_size = 0;
     }
     return true;
 }
@@ -233,7 +239,7 @@ bool ready(Pid pid) {
  * `request_channel`.
  *
  * @param pid Process ID of the caller.
- * @param user_request Virtual address of user Request structure (13 words).
+ * @param user_request Virtual address of user Request structure (15 words).
  * @return true when queued; false when the shared request channel is full.
  *         A full channel is transient and may be retried. The PID comes from
  *         the current-process syscall context and must be valid. False also

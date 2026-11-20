@@ -334,9 +334,10 @@ void the_request_gateway_copies_only_the_callers_memory() {
 
 /**
  * A request whose answer the caller does not want copied back -- a
- * result_out with no result_size -- still has the server answer through
- * result_out, and the server runs on its own task, in the kernel's address
- * space. The gateway stages that result_out like any other.
+ * result_out with no result_size -- must not hand the caller's address to the
+ * server, which answers through result_out from its own task, in the kernel's
+ * address space. The gateway drops that result_out, so an operation that
+ * answers with a result says MISSING_RESULT and writes nowhere.
  */
 /*@Test "a result_out with no size never reaches the server" { step: 120000000; }*/
 void a_result_out_with_no_size_never_reaches_the_server() {
@@ -355,13 +356,13 @@ void a_result_out_with_no_size_never_reaches_the_server() {
     put_request(caller, UiOp::TEXT_COPY, 0, BUFFER, 16, 0, 0, secret, -8);
     assert_eq<i32>(os_call(OsService::REQUEST, ARGS), OK, "nor does a negative size");
     assert.assert_true(request_channel.serve(), "served");
-    assert.assert_true(test_user.kernel_untouched(secret, 64, SECRET), "the answer stays in the gateway");
+    assert.assert_true(test_user.kernel_untouched(secret, 64, SECRET), "nothing is written there");
     assert_eq<i32>(os_call(OsService::REPLY, WORD), OK, "and its reply comes");
 
     user_key(caller, secret);
-    assert_eq<i32>(os_call(OsService::REQUEST, ARGS), OK, "the shell's requests are staged the same way");
+    assert_eq<i32>(os_call(OsService::REQUEST, ARGS), OK, "the shell's requests are treated the same way");
     assert.assert_true(request_channel.serve(), "served");
-    assert.assert_true(test_user.kernel_untouched(secret, 64, SECRET), "its answer stays in the gateway too");
+    assert.assert_true(test_user.kernel_untouched(secret, 64, SECRET), "nothing is written there either");
 }
 
 /** An APP CLAIM_KEY request whose result_out names `result_out` and wants nothing back. */
