@@ -2,19 +2,52 @@ namespace test_user_memory;
 
 import assert from "@std/testing/assert.mln";
 import { assert_eq } from "@std/testing/assert.mln";
+import heap from "@kernel/mm/heap.mln";
+import mmu from "@kernel/mm/mmu.mln";
+import debug from "@kernel/debug/debug.mln";
+import process from "@kernel/kernel/process.mln";
+import scheduler from "@kernel/kernel/scheduler.mln";
+import user_access from "@kernel/kernel/user_access.mln";
 import user_memory from "@os/syscall/user_memory.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
 import { UserAddress } from "@std/core/address.mln";
+import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
 import { Text } from "@std/text/text.mln";
+import test_user from "../user_process_support.mln";
 
-// The helpers every OS_CALL copies through. A sender chooses the lengths, so
-// these pin the bounds the kernel side relies on: a view never writes past its
-// capacity and always ends in a NUL, a Text never takes more than it holds, and
-// a copy moves exactly the bytes it was asked to. Paging is off here, so plain
-// kernel buffers stand in for user memory.
+// The helpers every OS_CALL copies through. A sender chooses the addresses
+// and the lengths, so these pin what the kernel side relies on: a view never
+// writes past its capacity and always ends in a NUL, a Text never takes more
+// than it holds, a copy moves exactly the bytes it was asked to -- and only
+// the caller's own: a range that is not all its memory moves nothing. The
+// memory is a real process's, written through its page tables; paging is
+// off, so a helper that took an address as it is would reach kernel memory.
 
 i32 FILL = 120; // 'x': marks a byte nobody should have written
+i32 SECRET = 0x5A;
+i32 AT = 0x7FFFC000;  // the process's first stack page
 
-UserAddress user_of(char *p) { return UserAddress((i32)p); }
+Pid g_pid = Pid(0);
+
+Pid caller() {
+    if ((i32)g_pid != 0) { return g_pid; }
+    heap.init();
+    process.init();
+    i32 kernel_pd = case mmu.create_page_directory() of {
+        Some(value) -> value;
+        None -> ({ debug.panic("no page directory"); 0; });
+    };
+    case mmu.setup_identity_kernel_mapping(kernel_pd) of {
+        Ok(_) -> _;
+        Err(_) -> ({ debug.panic("no identity mapping"); });
+    };
+    scheduler.init();
+    g_pid = test_user.spawn(None);
+    return g_pid;
+}
+
+UserAddress at(i32 offset) { return UserAddress(AT + offset); }
 
 i32 byte_at(char *p, i32 k) { return (i32)p[k] & 0xFF; }
 
@@ -26,127 +59,187 @@ void fill(char *p, i32 n) {
     }
 }
 
-void put(char *p, str value) {
-    i32 k = 0;
-    while (k < value.length) {
-        p[k] = value.data[k];
-        k++;
-    }
-}
-
 /*@Test "a view is cut to its capacity and always ends in a NUL" { step: 20000000; }*/
 void a_view_is_cut_to_its_capacity_and_always_ends_in_a_nul() {
-    str source = "abcdefgh";
+    Pid pid = caller();
+    test_user.put_str(pid, AT, "abcdefgh");
     char dst[8];
 
     fill(&dst[0], 8);
-    user_memory.copy_in_view(user_of(source.data), 8, &dst[0], 4);
+    assert.assert_true(user_memory.copy_in_view(pid, at(0), 8, &dst[0], 4), "a view is copied");
     assert_eq<i32>(byte_at(&dst[0], 0), 'a', "the first byte is copied");
     assert_eq<i32>(byte_at(&dst[0], 2), 'c', "up to cap - 1 bytes are copied");
     assert_eq<i32>(byte_at(&dst[0], 3), 0, "and the last byte of the capacity is the NUL");
     assert_eq<i32>(byte_at(&dst[0], 4), FILL, "nothing past the capacity is written");
 
     fill(&dst[0], 8);
-    user_memory.copy_in_view(user_of(source.data), 3, &dst[0], 8);
+    assert.assert_true(user_memory.copy_in_view(pid, at(0), 3, &dst[0], 8), "a short view is copied");
     assert_eq<i32>(byte_at(&dst[0], 2), 'c', "a short view is copied whole");
     assert_eq<i32>(byte_at(&dst[0], 3), 0, "and ends in a NUL");
     assert_eq<i32>(byte_at(&dst[0], 4), FILL, "right after its length");
 
     fill(&dst[0], 8);
-    user_memory.copy_in_view(user_of(source.data), 8, &dst[0], 1);
+    assert.assert_true(user_memory.copy_in_view(pid, at(0), 8, &dst[0], 1), "a view into one byte");
     assert_eq<i32>(byte_at(&dst[0], 0), 0, "a capacity of one holds only the NUL");
     assert_eq<i32>(byte_at(&dst[0], 1), FILL, "and nothing else is written");
 }
 
 /*@Test "a null or empty view is an empty string" { step: 20000000; }*/
 void a_null_or_empty_view_is_an_empty_string() {
-    str source = "abcdefgh";
+    Pid pid = caller();
+    test_user.put_str(pid, AT, "abcdefgh");
     char dst[8];
 
     fill(&dst[0], 8);
-    user_memory.copy_in_view(UserAddress(0), 5, &dst[0], 8);
+    assert.assert_true(user_memory.copy_in_view(pid, UserAddress(0), 5, &dst[0], 8), "a null view is no string");
     assert_eq<i32>(byte_at(&dst[0], 0), 0, "a null address gives an empty string");
     assert_eq<i32>(byte_at(&dst[0], 1), FILL, "and reads nothing");
 
     fill(&dst[0], 8);
-    user_memory.copy_in_view(user_of(source.data), 0, &dst[0], 8);
+    assert.assert_true(user_memory.copy_in_view(pid, at(0), 0, &dst[0], 8), "an empty view");
     assert_eq<i32>(byte_at(&dst[0], 0), 0, "a zero length gives an empty string");
     assert_eq<i32>(byte_at(&dst[0], 1), FILL, "and copies nothing");
 
     fill(&dst[0], 8);
-    user_memory.copy_in_view(user_of(source.data), -5, &dst[0], 8);
+    assert.assert_true(user_memory.copy_in_view(pid, at(0), -5, &dst[0], 8), "a negative view");
     assert_eq<i32>(byte_at(&dst[0], 0), 0, "a negative length gives an empty string");
     assert_eq<i32>(byte_at(&dst[0], 1), FILL, "and copies nothing");
 }
 
 /*@Test "a text takes what fits and replaces what it held" { step: 20000000; }*/
 void a_text_takes_what_fits_and_replaces_what_it_held() {
-    str source = "abcdef";
+    Pid pid = caller();
+    test_user.put_str(pid, AT, "abcdef");
 
     Text<4> small = Text<4> {};
     assert.assert_true(small.append("zz"), "the text starts with old contents");
-    user_memory.copy_in_text<4>(user_of(source.data), 6, &small);
+    assert.assert_true(user_memory.copy_in_text<4>(pid, at(0), 6, &small), "a long string is copied");
     assert_eq<i32>(small.len(), 3, "a long string is cut at the text's capacity");
     assert.assert_str_eq(small.as_str(), "abc", "the first bytes are kept");
 
     Text<16> roomy = Text<16> {};
     assert.assert_true(roomy.append("old text"), "the text starts with old contents");
-    user_memory.copy_in_text<16>(user_of(source.data), 2, &roomy);
+    assert.assert_true(user_memory.copy_in_text<16>(pid, at(0), 2, &roomy), "a short string is copied");
     assert.assert_str_eq(roomy.as_str(), "ab", "the copy replaces the old contents");
 
-    user_memory.copy_in_text<16>(user_of(source.data), -1, &roomy);
+    assert.assert_true(user_memory.copy_in_text<16>(pid, at(0), -1, &roomy), "a negative length is no string");
     assert_eq<i32>(roomy.len(), 0, "a negative length gives an empty text");
 
-    user_memory.copy_in_text<16>(user_of(source.data), 0, &roomy);
+    assert.assert_true(user_memory.copy_in_text<16>(pid, at(0), 0, &roomy), "an empty string");
     assert_eq<i32>(roomy.len(), 0, "a zero length gives an empty text");
 }
 
 /*@Test "a text stops at a NUL" { step: 20000000; }*/
 void a_text_stops_at_a_nul() {
-    char source[6];
-    put(&source[0], "abcdef");
-    source[2] = (char)0;
+    Pid pid = caller();
+    test_user.put_str(pid, AT, "abcdef");
+    test_user.put_byte(pid, AT + 2, 0);
 
     Text<16> text = Text<16> {};
-    user_memory.copy_in_text<16>(user_of(&source[0]), 6, &text);
+    assert.assert_true(user_memory.copy_in_text<16>(pid, at(0), 6, &text), "the string is copied");
     assert_eq<i32>(text.len(), 2, "the copy ends at the NUL");
     assert.assert_str_eq(text.as_str(), "ab", "and keeps the bytes before it");
 }
 
 /*@Test "copy_in and copy_out move exactly n bytes" { step: 20000000; }*/
 void copy_in_and_copy_out_move_exactly_n_bytes() {
-    str source = "0123456789";
+    Pid pid = caller();
+    test_user.put_str(pid, AT, "0123456789");
     char kernel[12];
 
     fill(&kernel[0], 12);
-    user_memory.copy_in(user_of(source.data), &kernel[0], 5);
+    assert.assert_true(user_memory.copy_in(pid, at(0), &kernel[0], 5), "copy_in copies");
     assert_eq<i32>(byte_at(&kernel[0], 0), '0', "copy_in copies the first byte");
     assert_eq<i32>(byte_at(&kernel[0], 4), '4', "and the n-th");
     assert_eq<i32>(byte_at(&kernel[0], 5), FILL, "and nothing after it");
 
     fill(&kernel[0], 12);
-    user_memory.copy_in(user_of(source.data), &kernel[0], 0);
+    assert.assert_true(user_memory.copy_in(pid, at(0), &kernel[0], 0), "a zero-byte copy_in");
     assert_eq<i32>(byte_at(&kernel[0], 0), FILL, "a zero-byte copy_in copies nothing");
 
     char out[4];
-    put(&out[0], "abc");
+    out[0] = 'a';
+    out[1] = 'b';
+    out[2] = 'c';
     out[3] = (char)0xFF;
-    char user[8];
-    fill(&user[0], 8);
-    user_memory.copy_out(user_of(&user[2]), &out[0], 4);
-    assert_eq<i32>(byte_at(&user[0], 1), FILL, "copy_out leaves the byte before alone");
-    assert_eq<i32>(byte_at(&user[0], 2), 'a', "copy_out copies the first byte");
-    assert_eq<i32>(byte_at(&user[0], 4), 'c', "and the ones after it");
-    assert_eq<i32>(byte_at(&user[0], 5), 0xFF, "a high byte arrives unchanged");
-    assert_eq<i32>(byte_at(&user[0], 6), FILL, "and nothing after the n-th byte is written");
+    test_user.fill(pid, AT + 64, 8, FILL);
+    assert.assert_true(user_memory.copy_out(pid, at(66), &out[0], 4), "copy_out copies");
+    assert_eq<i32>(test_user.byte_at(pid, AT + 65), FILL, "copy_out leaves the byte before alone");
+    assert_eq<i32>(test_user.byte_at(pid, AT + 66), 'a', "copy_out copies the first byte");
+    assert_eq<i32>(test_user.byte_at(pid, AT + 68), 'c', "and the ones after it");
+    assert_eq<i32>(test_user.byte_at(pid, AT + 69), 0xFF, "a high byte arrives unchanged");
+    assert_eq<i32>(test_user.byte_at(pid, AT + 70), FILL, "and nothing after the n-th byte is written");
 
     char back[4];
     fill(&back[0], 4);
-    user_memory.copy_in(user_of(&user[2]), &back[0], 4);
+    assert.assert_true(user_memory.copy_in(pid, at(66), &back[0], 4), "copy_in reads back");
     assert_eq<i32>(byte_at(&back[0], 0), 'a', "copy_in reads back what copy_out wrote");
     assert_eq<i32>(byte_at(&back[0], 3), 0xFF, "high byte included");
 
-    fill(&user[0], 8);
-    user_memory.copy_out(user_of(&user[0]), &out[0], 0);
-    assert_eq<i32>(byte_at(&user[0], 0), FILL, "a zero-byte copy_out writes nothing");
+    test_user.fill(pid, AT + 64, 8, FILL);
+    assert.assert_true(user_memory.copy_out(pid, at(64), &out[0], 0), "a zero-byte copy_out");
+    assert_eq<i32>(test_user.byte_at(pid, AT + 64), FILL, "a zero-byte copy_out writes nothing");
+
+    // Across the boundary between two pages.
+    assert.assert_true(user_memory.copy_out(pid, at(4094), &out[0], 4), "copy_out across a page boundary");
+    fill(&back[0], 4);
+    assert.assert_true(user_memory.copy_in(pid, at(4094), &back[0], 4), "copy_in across a page boundary");
+    assert_eq<i32>(byte_at(&back[0], 2), 'c', "each byte lands in its page");
+}
+
+/*@Test "memory that is not the caller's moves nothing" { step: 20000000; }*/
+void memory_that_is_not_the_callers_moves_nothing() {
+    Pid pid = caller();
+    i32 secret = test_user.kernel_bytes(16, SECRET);
+    char dst[8];
+    Text<16> text = Text<16> {};
+    user_access.begin();
+
+    fill(&dst[0], 8);
+    assert.assert_true(!user_memory.copy_in(pid, UserAddress(secret), &dst[0], 4), "copy_in from kernel memory is refused");
+    assert_eq<i32>(byte_at(&dst[0], 0), FILL, "and copies nothing");
+    assert.assert_true(!user_memory.copy_out(pid, UserAddress(secret), &dst[0], 4), "copy_out into kernel memory is refused");
+    assert.assert_true(test_user.kernel_untouched(secret, 16, SECRET), "and writes nothing");
+    assert.assert_true(!user_memory.copy_in_view(pid, UserAddress(secret), 4, &dst[0], 8), "a view in kernel memory is refused");
+    assert_eq<i32>(byte_at(&dst[0], 0), 0, "and leaves an empty string");
+    assert.assert_true(text.append("old"), "the text starts with old contents");
+    assert.assert_true(!user_memory.copy_in_text<16>(pid, UserAddress(secret), 4, &text), "a text in kernel memory is refused");
+    assert_eq<i32>(text.len(), 0, "and leaves it empty");
+    assert.assert_true(!user_memory.readable(pid, UserAddress(secret), 4), "kernel memory is not readable");
+    assert.assert_true(!user_memory.writable(pid, UserAddress(test_user.TEXT), 4), "and its own text is not writable");
+    assert.assert_true(user_memory.readable(pid, UserAddress(test_user.TEXT), 4), "but readable");
+    assert.assert_true(user_memory.readable(pid, UserAddress(secret), 0), "an empty range names no memory");
+    assert.assert_true(user_memory.writable(pid, UserAddress(secret), -4), "nor does a negative one");
+
+    // A range that is partly the caller's is refused whole.
+    test_user.fill(pid, AT, 8, FILL);
+    char out[8];
+    fill(&out[0], 8);
+    assert.assert_true(!user_memory.copy_out(pid, at(-4), &out[0], 8), "a range from below the stack into it is refused");
+    assert_eq<i32>(test_user.byte_at(pid, AT), FILL, "and writes none of its bytes");
+    assert.assert_true(!user_memory.copy_in(pid, UserAddress(0x7FFFFFFC), &dst[0], 8), "a range past the user half is refused");
+    assert.assert_true(!user_memory.copy_in(pid, at(16), &dst[0], 0x7FFFFFF8), "a length that wraps is refused");
+    assert.assert_true(!user_memory.copy_in(Pid(0), at(0), &dst[0], 4), "and a pid with no process has no memory");
+}
+
+/*@Test "a C string stops at its NUL, up to the end of the user half" { step: 20000000; }*/
+void a_c_string_stops_at_its_nul_up_to_the_end_of_the_user_half() {
+    Pid pid = caller();
+    Text<8> path = Text<8> {};
+    test_user.put_str(pid, AT, "abc");
+    test_user.put_byte(pid, AT + 3, 0);
+    assert.assert_true(user_memory.copy_in_c_string<8>(pid, at(0), &path), "a C string is copied");
+    assert.assert_str_eq(path.as_str(), "abc", "up to its NUL");
+
+    test_user.put_str(pid, AT, "abcdefghij");
+    assert.assert_true(user_memory.copy_in_c_string<8>(pid, at(0), &path), "a long C string is copied");
+    assert.assert_str_eq(path.as_str(), "abcdefg", "up to the text's capacity");
+
+    test_user.put_str(pid, 0x7FFFFFFC, "xyz");
+    test_user.put_byte(pid, 0x7FFFFFFF, 0);
+    assert.assert_true(user_memory.copy_in_c_string<8>(pid, UserAddress(0x7FFFFFFC), &path), "a string that ends at the top");
+    assert.assert_str_eq(path.as_str(), "xyz", "is read without a byte past it");
+    test_user.put_byte(pid, 0x7FFFFFFF, 'w');
+    assert.assert_true(!user_memory.copy_in_c_string<8>(pid, UserAddress(0x7FFFFFFC), &path), "one that runs past the top is refused");
+    assert_eq<i32>(path.len(), 0, "and leaves the text empty");
 }

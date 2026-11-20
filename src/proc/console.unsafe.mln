@@ -43,9 +43,10 @@ import { NodeId } from "@contracts/ui/widget.contract.mln";
 // handler (syscall.set_spawn_handler). Each running process is bound to a
 // row of consoles.model.mln, which names the Terminal (or TextArea) its stdout
 // goes to and holds a small stdin queue. Output written from a syscall lands
-// in the DOM directly (it is read from the user buffer through the process's
-// own page tables, which are active during the syscall); the compositor
-// repaints it on its next pass.
+// in the DOM directly (it is copied out of the user buffer a chunk at a time,
+// through user_memory); the compositor repaints it on its next pass. The
+// kernel has checked each buffer before it calls a hook here, and
+// user_memory checks every range again.
 //
 // A child starts on its parent's terminal. A line typed there goes to the
 // process attached to it last: the program a shell started, until it ends,
@@ -270,14 +271,19 @@ void interrupt(NodeId terminal) {
 
 // --- syscall handlers (run in the calling process's context) ---
 
+// The bytes of a write, or a read, on their way between a process and the console.
+i32 CHUNK_BYTES = 128;
+char g_chunk[128];
+
 /**
  * Syscall handler for SYS_WRITE: writes output bytes to the process's bound console TextArea or serial log.
  * @param pid Calling process ID.
  * @param buf Virtual memory address of output buffer.
  * @param count Number of bytes to write.
- * @return Number of bytes written.
+ * @return Number of bytes written: none when the buffer is not all the caller's to read.
  */
 i32 on_write(Pid pid, UserAddress buf, i32 count) {
+    if (!user_memory.readable(pid, buf, count)) { return 0; }
     Option<i32> output = output_of(pid);
     i32 out = 0;
     bool has_output = false;
@@ -285,20 +291,30 @@ i32 on_write(Pid pid, UserAddress buf, i32 count) {
         Some(node) -> ({ out = node; has_output = true; });
         None -> _;
     };
-    if (!has_output) {
-        // No console: fall back to the serial log so nothing is lost.
-        i32 k = 0;
-        while (k < count) {
-            i32 c = user_memory.read_byte(buf.plus(k));
-            serial.putc(c);
-            k++;
-        }
-        return count;
+    bool terminal = false;
+    if (has_output) {
+        terminal = case dom.kind_of(NodeId(out)) of { Some(kind) -> kind == NodeKind::TERMINAL; None -> false; };
     }
-    bool terminal = case dom.kind_of(NodeId(out)) of { Some(kind) -> kind == NodeKind::TERMINAL; None -> false; };
-    if (terminal) { dom_terminal.write(NodeId(out), user_memory.view(buf, count)); }
-    else { dom_text_edit.append_bytes(NodeId(out), user_memory.view(buf, count)); }
-    scheduler.notify_armed(KernelSignal::SERVICE);   // the server task paints it
+    // Writing a chunk at a time is writing it all at once: the Terminal and
+    // the TextArea take the bytes one after another either way.
+    i32 done = 0;
+    while (done < count) {
+        i32 n = count - done;
+        if (n > CHUNK_BYTES) { n = CHUNK_BYTES; }
+        if (!user_memory.copy_in(pid, buf.plus(done), &g_chunk[0], n)) { return done; }
+        str bytes = str { data: &g_chunk[0], length: n };
+        if (!has_output) {
+            // No console: fall back to the serial log so nothing is lost.
+            i32 k = 0;
+            while (k < n) {
+                serial.putc(bytes.byte(k));
+                k++;
+            }
+        } else if (terminal) { dom_terminal.write(NodeId(out), bytes); }
+        else { dom_text_edit.append_bytes(NodeId(out), bytes); }
+        done = done + n;
+    }
+    if (has_output) { scheduler.notify_armed(KernelSignal::SERVICE); }   // the server task paints it
     return count;
 }
 
@@ -307,9 +323,11 @@ i32 on_write(Pid pid, UserAddress buf, i32 count) {
  * @param pid Calling process ID.
  * @param buf Destination buffer memory address.
  * @param count Maximum number of bytes to read.
- * @return Number of bytes read.
+ * @return Number of bytes read: none, with the input left queued, when the
+ *         buffer is not all the caller's to write.
  */
 i32 on_read(Pid pid, UserAddress buf, i32 count) {
+    if (!user_memory.writable(pid, buf, count)) { return 0; }
     Console bound = case consoles.console_by_pid(pid) of {
         Some(v) -> v;
         None -> ({
@@ -321,10 +339,14 @@ i32 on_read(Pid pid, UserAddress buf, i32 count) {
     i32 got = 0;
     while (got < count) {
         if (row.in_head == row.in_tail) { break; }
-        i32 c = row.stdin[row.in_head];
-        row.in_head = (row.in_head + 1) % STDIN_CAP;
-        user_memory.write_byte(buf.plus(got), c);
-        got++;
+        i32 n = 0;
+        while (n < CHUNK_BYTES && got + n < count && row.in_head != row.in_tail) {
+            g_chunk[n] = (char)row.stdin[row.in_head];
+            row.in_head = (row.in_head + 1) % STDIN_CAP;
+            n++;
+        }
+        user_memory.copy_out(pid, buf.plus(got), &g_chunk[0], n);
+        got = got + n;
     }
     // Nothing yet: the next line wakes a reader that waits for STDIN, even one
     // that queued after this answer and before the wait.
@@ -418,7 +440,8 @@ export Result<Pid, SpawnError> spawn_file(Option<Pid> parent, str path) {
 /**
  * SYS_SPAWN hook: launches the program and binds a successful child to the parent's console.
  * @param user_path Address of a null-terminated path string in user space.
- * @return The new process ID.
+ * @return The new process ID; Err(NotFound), with nothing started, when the
+ *         path is not the caller's to read (the kernel answers BadAddress).
  */
 Result<Pid, SpawnError> on_spawn(UserAddress user_path) {
     Pid parent = case thread.current_pid() of {
@@ -426,14 +449,7 @@ Result<Pid, SpawnError> on_spawn(UserAddress user_path) {
         None -> ({ debug.panic("SYS_SPAWN hook called without a current process"); });
     };
     Text<32> path = Text<32> {};
-    path.clear();
-    i32 k = 0;
-    while (k < path.capacity()) {
-        i32 c = user_memory.read_byte(user_path.plus(k));
-        if (c == 0) { break; }
-        path.push((u8)c);
-        k++;
-    }
+    if (!user_memory.copy_in_c_string<32>(parent, user_path, &path)) { return Err(SpawnError::NotFound); }
     Result<Pid, SpawnError> result = spawn_file(Some(parent), path.as_str());
     case result of {
         Ok(pid) -> ({

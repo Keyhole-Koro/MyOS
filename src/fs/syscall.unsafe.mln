@@ -5,6 +5,9 @@
  * filesystem operations to the underlying MyOS filesystem subsystem. Simple
  * operations are dispatched directly in handle(); helpers exist only where
  * buffers must be copied or chunked across address spaces.
+ * Every range a call names -- its record, path, buffer and result_out -- is
+ * checked before the operation runs, so a call the kernel answers with
+ * BadAddress opens, reads, writes or removes nothing.
  * Result and FsError values are transferred intact without conversion to integer codes.
  */
 namespace fs_syscall;
@@ -48,26 +51,44 @@ void log_error_trace(bool failed) {
 }
 
 /**
- * Copies the caller's argument record when service is the one its contract
- * binds to A.
+ * Whether service is the one A's contract binds it to, so a record is only
+ * ever read under its own service number.
  * @param service Requested OsService wire value.
+ * @return Whether service selects A.
+ */
+bool accept<A: OsCall>(i32 service) {
+    return service == A::service();
+}
+
+/**
+ * Copies the caller's argument record.
+ * @param caller Calling process.
  * @param user_args User address of the caller's record.
  * @param out Kernel copy of the record.
- * @return Whether service selects A; out is filled only then.
+ * @return false when the record is not the caller's to read; out is then not filled.
  */
-bool accept<A: OsCall>(i32 service, UserAddress user_args, A *out) {
-    if (service != A::service()) { return false; }
-    user_memory.copy_in(user_args, (char*)out, sizeof(A));
-    return true;
+bool fetch<A>(Pid caller, UserAddress user_args, A *out) {
+    return user_memory.copy_in(caller, user_args, (char*)out, sizeof(A));
+}
+
+/**
+ * Checks a record's reply slot before the operation that fills it runs.
+ * @param caller Calling process.
+ * @param user_out The record's result_out user address.
+ * @return false when the slot is not the caller's to write.
+ */
+bool answerable<T>(Pid caller, T *user_out) {
+    return user_memory.writable(caller, UserAddress((i32)user_out), sizeof(T));
 }
 
 /**
  * Writes a service result to the reply slot named by an argument record.
+ * @param caller Calling process.
  * @param user_out The record's result_out user address.
  * @param value Kernel copy of the result.
  */
-void reply<T>(T *user_out, T *value) {
-    user_memory.copy_out(UserAddress((i32)user_out), (char*)value, sizeof(T));
+void reply<T>(Pid caller, T *user_out, T *value) {
+    user_memory.copy_out(caller, UserAddress((i32)user_out), (char*)value, sizeof(T));
 }
 
 /**
@@ -80,7 +101,7 @@ void reply<T>(T *user_out, T *value) {
 bool refused(Pid caller, i32 fd, Result<i32, FsError> *user_out) {
     if (fs.usable_by(fd, caller)) { return false; }
     Result<i32, FsError> out = Err(FsError::BadFd(fd));
-    reply<Result<i32, FsError>>(user_out, &out);
+    reply<Result<i32, FsError>>(caller, user_out, &out);
     return true;
 }
 
@@ -100,11 +121,13 @@ void keep(Result<i32, FsError> opened, Pid caller) {
  * Reads bytes into a user buffer through a bounded kernel staging buffer.
  *
  * Reads data in chunks of up to 512 bytes via an intermediate kernel buffer.
+ * handle() has checked the whole buffer and result_out.
  *
+ * @param caller Calling process.
  * @param args Kernel copy of the caller's FsReadArgs.
  * Completes the read and writes its typed result to user memory.
  */
-void read_user(FsReadArgs *args) {
+void read_user(Pid caller, FsReadArgs *args) {
     i32 fd = args->fd;
     UserAddress user_buf = UserAddress((i32)args->buffer);
     i32 size = args->size;
@@ -120,28 +143,30 @@ void read_user(FsReadArgs *args) {
                 log_error_trace(true);
                 Result<i32, FsError> out = Err(e);
                 if (total != 0) { out = Ok(total); }
-                reply<Result<i32, FsError>>(args->result_out, &out);
+                reply<Result<i32, FsError>>(caller, args->result_out, &out);
                 return;
             });
         };
         if (got == 0) { break; }
-        user_memory.copy_out(user_buf.plus(total), &g_io[0], got);
+        user_memory.copy_out(caller, user_buf.plus(total), &g_io[0], got);
         total = total + got;
         if (got < want) { break; }
     }
     Result<i32, FsError> out = Ok(total);
-    reply<Result<i32, FsError>>(args->result_out, &out);
+    reply<Result<i32, FsError>>(caller, args->result_out, &out);
 }
 
 /**
  * Writes bytes from a user buffer through a bounded kernel staging buffer.
  *
  * Copies data from user space in chunks of up to 512 bytes before writing.
+ * handle() has checked the whole buffer and result_out.
  *
+ * @param caller Calling process.
  * @param args Kernel copy of the caller's FsWriteArgs.
  * Completes the write and writes its typed result to user memory.
  */
-void write_user(FsWriteArgs *args) {
+void write_user(Pid caller, FsWriteArgs *args) {
     i32 fd = args->fd;
     UserAddress user_buf = UserAddress((i32)args->buffer);
     i32 size = args->size;
@@ -149,8 +174,7 @@ void write_user(FsWriteArgs *args) {
     while (total < size) {
         i32 n = size - total;
         if (n > 512) { n = 512; }
-        i32 k = 0;
-        while (k < n) { g_io[k] = (char)user_memory.read_byte(user_buf.plus(total + k)); k++; }
+        if (!user_memory.copy_in(caller, user_buf.plus(total), &g_io[0], n)) { return; }
         Result<i32, FsError> r = fs.write(fd, (i32)(&g_io[0]), n);
         i32 put = 0;
         case r of {
@@ -158,7 +182,7 @@ void write_user(FsWriteArgs *args) {
             Err(e) -> ({
                 Result<i32, FsError> out = Err(e);
                 if (total != 0) { out = Ok(total); }
-                reply<Result<i32, FsError>>(args->result_out, &out);
+                reply<Result<i32, FsError>>(caller, args->result_out, &out);
                 return;
             });
         };
@@ -166,22 +190,27 @@ void write_user(FsWriteArgs *args) {
         if (put < n) { break; }
     }
     Result<i32, FsError> out = Ok(total);
-    reply<Result<i32, FsError>>(args->result_out, &out);
+    reply<Result<i32, FsError>>(caller, args->result_out, &out);
 }
 
 /**
  * Enumerates a directory and copies the optional name into user memory.
+ * The path and the name's destination are checked before the directory is read.
  *
+ * @param caller Calling process.
  * @param args Kernel copy of the caller's FsDirNextArgs.
  * Completes the enumeration and writes its typed result to user memory.
  */
-void dir_next_user(FsDirNextArgs *args) {
-    copy_in_path(args->path, args->path_length);
+void dir_next_user(Pid caller, FsDirNextArgs *args) {
+    char nul[1];
+    nul[0] = (char)0;
+    if (!copy_in_path(caller, args->path, args->path_length)) { return; }
     i32 start = args->start;
     UserAddress user_out = UserAddress((i32)args->name_out);
     i32 cap = args->name_cap;
     if (cap < 0) { cap = 0; }
     if (cap > 16) { cap = 16; }
+    if (!user_memory.writable(caller, user_out, cap)) { return; }
     Result<Option<i32>, FsError> res = fs.dir_next_at(g_path.as_str(), start, &g_name);
     case res of {
         Ok(v) -> ({
@@ -190,8 +219,8 @@ void dir_next_user(FsDirNextArgs *args) {
                     if (cap > 0) {
                         i32 n = g_name.len() + 1;
                         if (n > cap) { n = cap; }
-                        user_memory.copy_out(user_out, g_name.as_ptr(), n);
-                        user_memory.write_byte(user_out.plus(cap - 1), 0);
+                        user_memory.copy_out(caller, user_out, g_name.as_ptr(), n);
+                        user_memory.copy_out(caller, user_out.plus(cap - 1), &nul[0], 1);
                     }
                 });
                 None -> _;
@@ -199,23 +228,28 @@ void dir_next_user(FsDirNextArgs *args) {
         });
         Err(_) -> _;
     };
-    reply<Result<Option<i32>, FsError>>(args->result_out, &res);
+    reply<Result<Option<i32>, FsError>>(caller, args->result_out, &res);
 }
 
 /**
  * Copies a path argument into the shared kernel path buffer.
+ * @param caller Calling process.
  * @param user_path User address of the path's first byte.
  * @param length Byte length of the path.
+ * @return false when the path is not the caller's to read.
  */
-void copy_in_path(char *user_path, i32 length) {
-    copy_in_text<64>(UserAddress((i32)user_path), length, &g_path);
+bool copy_in_path(Pid caller, char *user_path, i32 length) {
+    return copy_in_text<64>(caller, UserAddress((i32)user_path), length, &g_path);
 }
 
 /**
  * Dispatches a filesystem service OS_CALL request.
  *
  * accept() matches service against each record's bound OsService, so a
- * record is only ever read under its own service number.
+ * record is only ever read under its own service number. Each operation then
+ * checks the ranges it names -- the record itself, result_out, a path, a
+ * buffer -- and does nothing unless all are the caller's: the kernel answers
+ * a refused one with BadAddress.
  *
  * @param caller Calling process, which holds the files it opens.
  * @param service Filesystem service code (FS_OPEN .. FS_IS_DIR).
@@ -224,73 +258,103 @@ void copy_in_path(char *user_path, i32 length) {
  */
 export Result<_, OsServiceError> handle(Pid caller, i32 service, UserAddress args) {
     FsReadArgs read;
-    if (accept<FsReadArgs>(service, args, &read)) {
-        if (!refused(caller, read.fd, read.result_out)) { read_user(&read); }
+    if (accept<FsReadArgs>(service)) {
+        if (fetch<FsReadArgs>(caller, args, &read)
+            && answerable<Result<i32, FsError>>(caller, read.result_out)
+            && user_memory.writable(caller, UserAddress((i32)read.buffer), read.size)
+            && !refused(caller, read.fd, read.result_out)) {
+            read_user(caller, &read);
+        }
         return Ok(_);
     }
     FsWriteArgs write;
-    if (accept<FsWriteArgs>(service, args, &write)) {
-        if (!refused(caller, write.fd, write.result_out)) { write_user(&write); }
+    if (accept<FsWriteArgs>(service)) {
+        if (fetch<FsWriteArgs>(caller, args, &write)
+            && answerable<Result<i32, FsError>>(caller, write.result_out)
+            && user_memory.readable(caller, UserAddress((i32)write.buffer), write.size)
+            && !refused(caller, write.fd, write.result_out)) {
+            write_user(caller, &write);
+        }
         return Ok(_);
     }
     FsDirNextArgs dir_next;
-    if (accept<FsDirNextArgs>(service, args, &dir_next)) { dir_next_user(&dir_next); return Ok(_); }
+    if (accept<FsDirNextArgs>(service)) {
+        if (fetch<FsDirNextArgs>(caller, args, &dir_next)
+            && answerable<Result<Option<i32>, FsError>>(caller, dir_next.result_out)) {
+            dir_next_user(caller, &dir_next);
+        }
+        return Ok(_);
+    }
     FsCloseArgs close;
-    if (accept<FsCloseArgs>(service, args, &close)) {
-        if (fs.usable_by(close.fd, caller)) { fs.close(close.fd); }
+    if (accept<FsCloseArgs>(service)) {
+        if (fetch<FsCloseArgs>(caller, args, &close) && fs.usable_by(close.fd, caller)) { fs.close(close.fd); }
         return Ok(_);
     }
     FsEntrySizeArgs entry_size;
-    if (accept<FsEntrySizeArgs>(service, args, &entry_size)) {
+    if (accept<FsEntrySizeArgs>(service)) {
+        if (!fetch<FsEntrySizeArgs>(caller, args, &entry_size)
+            || !answerable<Result<i32, FsError>>(caller, entry_size.result_out)) { return Ok(_); }
         Result<i32, FsError> r = fs.entry_size(entry_size.entry);
-        reply<Result<i32, FsError>>(entry_size.result_out, &r);
+        reply<Result<i32, FsError>>(caller, entry_size.result_out, &r);
         return Ok(_);
     }
     FsIsDirArgs is_dir;
-    if (accept<FsIsDirArgs>(service, args, &is_dir)) {
+    if (accept<FsIsDirArgs>(service)) {
+        if (!fetch<FsIsDirArgs>(caller, args, &is_dir)
+            || !answerable<Result<bool, FsError>>(caller, is_dir.result_out)) { return Ok(_); }
         Result<bool, FsError> r = fs.is_dir(is_dir.entry);
-        reply<Result<bool, FsError>>(is_dir.result_out, &r);
+        reply<Result<bool, FsError>>(caller, is_dir.result_out, &r);
         return Ok(_);
     }
     FsSeekArgs seek;
-    if (accept<FsSeekArgs>(service, args, &seek)) {
+    if (accept<FsSeekArgs>(service)) {
+        if (!fetch<FsSeekArgs>(caller, args, &seek)
+            || !answerable<Result<i32, FsError>>(caller, seek.result_out)) { return Ok(_); }
         if (refused(caller, seek.fd, seek.result_out)) { return Ok(_); }
         Result<i32, FsError> r = fs.seek(seek.fd, seek.offset, seek.whence);
-        reply<Result<i32, FsError>>(seek.result_out, &r);
+        reply<Result<i32, FsError>>(caller, seek.result_out, &r);
         return Ok(_);
     }
     FsOpenArgs open;
-    if (accept<FsOpenArgs>(service, args, &open)) {
-        copy_in_path(open.path, open.path_length);
+    if (accept<FsOpenArgs>(service)) {
+        if (!fetch<FsOpenArgs>(caller, args, &open)
+            || !answerable<Result<i32, FsError>>(caller, open.result_out)
+            || !copy_in_path(caller, open.path, open.path_length)) { return Ok(_); }
         Result<i32, FsError> r = fs.open(g_path.as_str());
         keep(r, caller);
         log_error_trace(r.is_err());
-        reply<Result<i32, FsError>>(open.result_out, &r);
+        reply<Result<i32, FsError>>(caller, open.result_out, &r);
         return Ok(_);
     }
     FsCreateArgs create;
-    if (accept<FsCreateArgs>(service, args, &create)) {
-        copy_in_path(create.path, create.path_length);
+    if (accept<FsCreateArgs>(service)) {
+        if (!fetch<FsCreateArgs>(caller, args, &create)
+            || !answerable<Result<i32, FsError>>(caller, create.result_out)
+            || !copy_in_path(caller, create.path, create.path_length)) { return Ok(_); }
         Result<i32, FsError> r = fs.create(g_path.as_str());
         keep(r, caller);
         log_error_trace(r.is_err());
-        reply<Result<i32, FsError>>(create.result_out, &r);
+        reply<Result<i32, FsError>>(caller, create.result_out, &r);
         return Ok(_);
     }
     FsRemoveArgs remove;
-    if (accept<FsRemoveArgs>(service, args, &remove)) {
-        copy_in_path(remove.path, remove.path_length);
+    if (accept<FsRemoveArgs>(service)) {
+        if (!fetch<FsRemoveArgs>(caller, args, &remove)
+            || !answerable<Result<_, FsError>>(caller, remove.result_out)
+            || !copy_in_path(caller, remove.path, remove.path_length)) { return Ok(_); }
         Result<_, FsError> r = fs.remove(g_path.as_str());
         log_error_trace(r.is_err());
-        reply<Result<_, FsError>>(remove.result_out, &r);
+        reply<Result<_, FsError>>(caller, remove.result_out, &r);
         return Ok(_);
     }
     FsMkdirArgs mkdir;
-    if (accept<FsMkdirArgs>(service, args, &mkdir)) {
-        copy_in_path(mkdir.path, mkdir.path_length);
+    if (accept<FsMkdirArgs>(service)) {
+        if (!fetch<FsMkdirArgs>(caller, args, &mkdir)
+            || !answerable<Result<i32, FsError>>(caller, mkdir.result_out)
+            || !copy_in_path(caller, mkdir.path, mkdir.path_length)) { return Ok(_); }
         Result<i32, FsError> r = fs.mkdir(g_path.as_str());
         log_error_trace(r.is_err());
-        reply<Result<i32, FsError>>(mkdir.result_out, &r);
+        reply<Result<i32, FsError>>(caller, mkdir.result_out, &r);
         return Ok(_);
     }
     return Err(OsServiceError::UnknownService(service));

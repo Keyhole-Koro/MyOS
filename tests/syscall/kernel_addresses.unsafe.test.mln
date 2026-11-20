@@ -1,0 +1,426 @@
+namespace test_kernel_addresses;
+
+import assert from "@std/testing/assert.mln";
+import { assert_eq } from "@std/testing/assert.mln";
+import allocator from "@std/memory/allocator.mln";
+import heap from "@kernel/mm/heap.mln";
+import mmu from "@kernel/mm/mmu.mln";
+import debug from "@kernel/debug/debug.mln";
+import process from "@kernel/kernel/process.mln";
+import scheduler from "@kernel/kernel/scheduler.mln";
+import { ProcessState } from "@kernel/kernel/process.mln";
+import console from "@os/proc/console.mln";
+import consoles from "@os/proc/consoles.mln";
+import { Console, ConsoleRow } from "@os/proc/consoles.mln";
+import proc_args from "@os/proc/args.mln";
+import os_call_router from "@os/syscall/router.mln";
+import request_channel from "@os/ipc/channel.mln";
+import app_events from "@os/ipc/events.mln";
+import dom from "@os/ui/dom/dom.mln";
+import dom_elements from "@os/ui/dom/dom_elements.mln";
+import desktop from "@os/ui/desktop.mln";
+import fs from "@os/fs/fs.mln";
+import { FsError, SeekWhence } from "@contracts/io/fs.contract.mln";
+import {
+    FsOpenArgs, FsCreateArgs, FsReadArgs, FsWriteArgs, FsSeekArgs, FsDirNextArgs
+} from "@contracts/myos/fs-args.contract.mln";
+import { OsService, LogArgs } from "@contracts/myos/services.contract.mln";
+import {
+    ProcSpawnArgs, ProcExitedArgs, ProcReapArgs, ProcFeedArgs, ProcArgsArgs, ProcStatsArgs, ProcStats
+} from "@contracts/myos/process-args.contract.mln";
+import { Syscall, SyscallStatus } from "@contracts/myos/syscall.contract.mln";
+import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/control.contract.mln";
+import { SpawnError } from "@contracts/process/spawn.contract.mln";
+import { Event, EventKind, Request, RequestDomain } from "@contracts/myapp/message.contract.mln";
+import { UiOp } from "@contracts/myapp/ui.contract.mln";
+import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
+import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
+import { UserAddress } from "@std/core/address.mln";
+import test_user from "../user_process_support.mln";
+
+// What a process can get the OS to read or write for it. The kernel's RAM,
+// MMIO and VRAM are mapped into every address space for the kernel, and an
+// OS_CALL or console hook runs in the kernel, so an address taken as the
+// process gave it reaches them. Each call here is made as the process makes
+// it, through the kernel's syscall dispatch, and every one that names kernel
+// memory -- its record, a string, a buffer, the place its answer goes -- must
+// come back BadAddress, with the address in r2, having read and written
+// nothing. The same calls with the process's own memory still work. The
+// caller's page tables are in use, as in a real syscall: the kernel's memory
+// is mapped there too, for the kernel, which is what made this possible.
+
+i32 SECRET = 0x5A;   // what fills the kernel memory the calls aim at
+i32 BAD = 14;        // SyscallStatus::BadAddress
+i32 OK = 0;          // SyscallStatus::Ok
+
+// The test process's memory, as laid out here.
+i32 ARGS = 0x7FFFC000;    // the record a call names
+i32 RESULT = 0x7FFFC100;  // where a record's answer goes
+i32 TEXTS = 0x7FFFC200;   // strings a record points at
+i32 BUFFER = 0x7FFFC400;  // a read or write buffer
+i32 WORD = 0x7FFFC900;    // a REPLY's answer word
+i32 EVENT = 0x7FFFCA00;   // a POLL's Event
+i32 STATS = 0x7FFFD000;   // a ProcStats
+
+void boot() {
+    heap.init();
+    allocator.configure(heap.alloc, heap.free);
+    desktop.init();
+    request_channel.init();
+    console.init();
+    os_call_router.init();
+    process.init();
+    i32 kernel_pd = case mmu.create_page_directory() of {
+        Some(value) -> value;
+        None -> ({ debug.panic("no page directory"); 0; });
+    };
+    case mmu.setup_identity_kernel_mapping(kernel_pd) of {
+        Ok(_) -> _;
+        Err(_) -> ({ debug.panic("no identity mapping"); });
+    };
+    scheduler.init();
+}
+
+/** A process to make the calls as, current, with its parent. */
+Pid start(Option<Pid> parent) {
+    Pid pid = test_user.spawn(parent);
+    test_user.become(pid);
+    return pid;
+}
+
+/** OS_CALL(service, record) as the current process. @return r1; r2 goes to g_value. */
+i32 g_value = 0;
+
+i32 os_call(i32 service, i32 record) {
+    return (i32)test_user.os_call(service, record, &g_value);
+}
+
+i32 sys(i32 number, i32 arg1, i32 arg2, i32 arg3) {
+    return (i32)test_user.call(number, arg1, arg2, arg3, &g_value);
+}
+
+/** Expects the kernel memory to have kept its value, and BadAddress at `address`. */
+void assert_refused(i32 status, i32 address, i32 secret, i32 n, str message) {
+    assert.assert_true(test_user.kernel_untouched(secret, n, SECRET), "the kernel memory the call names is left as it was");
+    assert_eq<i32>(status, BAD, message);
+    assert_eq<i32>(g_value, address, "r2 names the address refused");
+}
+
+bool stdin_is_empty(Pid pid) {
+    return case consoles.console_by_pid(pid) of {
+        Some(bound) -> ({
+            borrow ConsoleRow row = bound.row();
+            row.in_tail == row.in_head;
+        });
+        None -> true;
+    };
+}
+
+/*@Test "an OS_CALL record in kernel memory is refused" { step: 80000000; }*/
+void an_os_call_record_in_kernel_memory_is_refused() {
+    boot();
+    Pid caller = start(None);
+    // Kernel memory that reads as a harmless record for every service: zero
+    // words, so null pointers and lengths. Taken, it would do something.
+    i32 secret = test_user.kernel_bytes(256, 0);
+    i32 service = OsService::REQUEST;
+    while (service <= OsService::LOG) {
+        assert_eq<i32>(os_call(service, secret), BAD, "a record in kernel memory is refused");
+        assert_eq<i32>(g_value, secret, "r2 names the record");
+        service++;
+    }
+    assert.assert_true(test_user.kernel_untouched(secret, 256, 0), "and the kernel memory is untouched");
+
+    // The same call with a record of its own works.
+    ProcStatsArgs stats = ProcStatsArgs { result_out: (ProcStats*)STATS };
+    test_user.put_bytes(caller, ARGS, (char*)(&stats), sizeof(ProcStatsArgs));
+    assert_eq<i32>(os_call(OsService::PROC_STATS, ARGS), OK, "PROC_STATS with its own record works");
+    ProcStats answer = ProcStats {};
+    test_user.get_bytes(caller, STATS, (char*)(&answer), sizeof(ProcStats));
+    assert_eq<i32>(answer.count, 1, "and its answer counts the one process");
+}
+
+/*@Test "an answer is never written into kernel memory" { step: 80000000; }*/
+void an_answer_is_never_written_into_kernel_memory() {
+    boot();
+    Pid caller = start(None);
+    i32 secret = test_user.kernel_bytes(1024, SECRET);
+    Pid child = test_user.spawn(Some(caller));
+
+    ProcStatsArgs stats = ProcStatsArgs { result_out: (ProcStats*)secret };
+    test_user.put_bytes(caller, ARGS, (char*)(&stats), sizeof(ProcStatsArgs));
+    assert_refused(os_call(OsService::PROC_STATS, ARGS), secret, secret, 1024, "PROC_STATS into kernel memory is refused");
+
+    ProcExitedArgs<Result<bool, ProcessControlError>> exited = ProcExitedArgs<Result<bool, ProcessControlError>> {
+        pid: (i32)child, result_out: (Result<bool, ProcessControlError>*)secret
+    };
+    test_user.put_bytes(caller, ARGS, (char*)(&exited), sizeof(ProcExitedArgs<Result<bool, ProcessControlError>>));
+    assert_refused(os_call(OsService::PROC_EXITED, ARGS), secret, secret, 1024, "PROC_EXITED into kernel memory is refused");
+
+    // A reap frees the child's slot: refused, it must not happen at all.
+    ProcessExitStatus ended = ProcessExitStatus::Code(3);
+    scheduler.terminate(child, ended);
+    console.sweep();
+    ProcReapArgs<Result<ProcessExitStatus, ProcessControlError>> reap = ProcReapArgs<Result<ProcessExitStatus, ProcessControlError>> {
+        pid: (i32)child, result_out: (Result<ProcessExitStatus, ProcessControlError>*)secret
+    };
+    test_user.put_bytes(caller, ARGS, (char*)(&reap), sizeof(ProcReapArgs<Result<ProcessExitStatus, ProcessControlError>>));
+    assert_refused(os_call(OsService::PROC_REAP, ARGS), secret, secret, 1024, "PROC_REAP into kernel memory is refused");
+    assert.assert_true(process.get_state(child).is_some(), "and the child is not reaped");
+    reap.result_out = (Result<ProcessExitStatus, ProcessControlError>*)RESULT;
+    test_user.put_bytes(caller, ARGS, (char*)(&reap), sizeof(ProcReapArgs<Result<ProcessExitStatus, ProcessControlError>>));
+    assert_eq<i32>(os_call(OsService::PROC_REAP, ARGS), OK, "the reap with its own result_out works");
+    assert.assert_true(process.get_state(child).is_none(), "and takes the child");
+
+    str path = "nothing";
+    test_user.put_str(caller, TEXTS, path);
+    ProcSpawnArgs<Result<Pid, SpawnError>> spawn = ProcSpawnArgs<Result<Pid, SpawnError>> {
+        path: (char*)TEXTS, path_length: path.length, args: (char*)TEXTS, args_length: 0,
+        stdout_node: 0, result_out: (Result<Pid, SpawnError>*)secret
+    };
+    test_user.put_bytes(caller, ARGS, (char*)(&spawn), sizeof(ProcSpawnArgs<Result<Pid, SpawnError>>));
+    assert_refused(os_call(OsService::PROC_SPAWN, ARGS), secret, secret, 1024, "PROC_SPAWN into kernel memory is refused");
+
+    proc_args.set(caller, "alpha");
+    ProcArgsArgs args = ProcArgsArgs { out: (char*)secret, capacity: 16 };
+    test_user.put_bytes(caller, ARGS, (char*)(&args), sizeof(ProcArgsArgs));
+    assert_refused(os_call(OsService::PROC_ARGS, ARGS), secret, secret, 1024, "PROC_ARGS into kernel memory is refused");
+    args.out = (char*)BUFFER;
+    test_user.put_bytes(caller, ARGS, (char*)(&args), sizeof(ProcArgsArgs));
+    assert_eq<i32>(os_call(OsService::PROC_ARGS, ARGS), OK, "PROC_ARGS into its own memory works");
+    assert_eq<i32>(g_value, 5, "and says how long the arguments are");
+    assert_eq<i32>(test_user.byte_at(caller, BUFFER + 4), 'a', "and copies them");
+
+    // The filesystem answers BadFd for a descriptor the caller does not
+    // hold, through the same result_out.
+    FsSeekArgs seek = FsSeekArgs { fd: 3, offset: 0, whence: SeekWhence::Set, result_out: (Result<i32, FsError>*)secret };
+    test_user.put_bytes(caller, ARGS, (char*)(&seek), sizeof(FsSeekArgs));
+    assert_refused(os_call(OsService::FS_SEEK, ARGS), secret, secret, 1024, "FS_SEEK into kernel memory is refused");
+}
+
+/*@Test "a buffer in kernel memory is neither read nor written" {
+    disk: true;
+    step: 300000000;
+}*/
+void a_buffer_in_kernel_memory_is_neither_read_nor_written() {
+    boot();
+    fs.init();
+    Pid caller = start(None);
+    i32 secret = test_user.kernel_bytes(64, SECRET);
+    i32 fd = case fs.create("f") of {
+        Ok(value) -> value;
+        Err(_) -> ({ debug.panic("no file to test with"); 0; });
+    };
+    fs.give_to(fd, caller);
+
+    FsWriteArgs write = FsWriteArgs { fd: fd, buffer: (char*)secret, size: 16, result_out: (Result<i32, FsError>*)RESULT };
+    test_user.put_bytes(caller, ARGS, (char*)(&write), sizeof(FsWriteArgs));
+    assert_refused(os_call(OsService::FS_WRITE, ARGS), secret, secret, 64, "FS_WRITE from kernel memory is refused");
+    assert_eq<i32>(fs.seek(fd, 0, SeekWhence::End).unwrap_or(-1), 0, "and writes nothing to the file");
+
+    test_user.put_str(caller, BUFFER, "sixteen bytes ok");
+    write.buffer = (char*)BUFFER;
+    test_user.put_bytes(caller, ARGS, (char*)(&write), sizeof(FsWriteArgs));
+    assert_eq<i32>(os_call(OsService::FS_WRITE, ARGS), OK, "FS_WRITE from its own memory works");
+    assert_eq<i32>(fs.seek(fd, 0, SeekWhence::Set).unwrap_or(-1), 0, "back to the start");
+
+    FsReadArgs read = FsReadArgs { fd: fd, buffer: (char*)secret, size: 16, result_out: (Result<i32, FsError>*)RESULT };
+    test_user.put_bytes(caller, ARGS, (char*)(&read), sizeof(FsReadArgs));
+    assert_refused(os_call(OsService::FS_READ, ARGS), secret, secret, 64, "FS_READ into kernel memory is refused");
+    assert_eq<i32>(fs.seek(fd, 0, SeekWhence::Cur).unwrap_or(-1), 0, "and reads nothing from the file");
+    read.buffer = (char*)(BUFFER + 32);
+    test_user.put_bytes(caller, ARGS, (char*)(&read), sizeof(FsReadArgs));
+    assert_eq<i32>(os_call(OsService::FS_READ, ARGS), OK, "FS_READ into its own memory works");
+    assert_eq<i32>(test_user.byte_at(caller, BUFFER + 32 + 15), 'k', "and gets every byte");
+
+    FsOpenArgs open = FsOpenArgs { path: (char*)secret, path_length: 8, result_out: (Result<i32, FsError>*)RESULT };
+    test_user.put_bytes(caller, ARGS, (char*)(&open), sizeof(FsOpenArgs));
+    assert_refused(os_call(OsService::FS_OPEN, ARGS), secret, secret, 64, "FS_OPEN of a path in kernel memory is refused");
+
+    test_user.put_str(caller, TEXTS, "g");
+    FsCreateArgs create = FsCreateArgs { path: (char*)TEXTS, path_length: 1, result_out: (Result<i32, FsError>*)secret };
+    test_user.put_bytes(caller, ARGS, (char*)(&create), sizeof(FsCreateArgs));
+    assert_refused(os_call(OsService::FS_CREATE, ARGS), secret, secret, 64, "FS_CREATE answering into kernel memory is refused");
+    assert.assert_true(fs.open("g").is_err(), "and creates nothing");
+
+    test_user.put_str(caller, TEXTS, "/");
+    FsDirNextArgs next = FsDirNextArgs {
+        path: (char*)TEXTS, path_length: 1, start: 0,
+        name_out: (char*)secret, name_cap: 16, result_out: (Result<Option<i32>, FsError>*)RESULT
+    };
+    test_user.put_bytes(caller, ARGS, (char*)(&next), sizeof(FsDirNextArgs));
+    assert_refused(os_call(OsService::FS_DIR_NEXT_AT, ARGS), secret, secret, 64, "a directory name into kernel memory is refused");
+
+    LogArgs log = LogArgs { text: (char*)secret, length: 8 };
+    test_user.put_bytes(caller, ARGS, (char*)(&log), sizeof(LogArgs));
+    assert_refused(os_call(OsService::LOG, ARGS), secret, secret, 64, "LOG from kernel memory is refused");
+
+    Pid child = test_user.spawn(Some(caller));
+    assert.assert_true(console.bind(caller, child, 9).is_ok(), "the child has a console");
+    ProcFeedArgs feed = ProcFeedArgs { pid: (i32)child, line: (char*)secret, line_length: 8 };
+    test_user.put_bytes(caller, ARGS, (char*)(&feed), sizeof(ProcFeedArgs));
+    assert_refused(os_call(OsService::PROC_FEED, ARGS), secret, secret, 64, "PROC_FEED from kernel memory is refused");
+    assert.assert_true(stdin_is_empty(child), "and feeds nothing");
+
+    ProcSpawnArgs<Result<Pid, SpawnError>> spawn = ProcSpawnArgs<Result<Pid, SpawnError>> {
+        path: (char*)secret, path_length: 8, args: (char*)TEXTS, args_length: 0,
+        stdout_node: 0, result_out: (Result<Pid, SpawnError>*)RESULT
+    };
+    test_user.put_bytes(caller, ARGS, (char*)(&spawn), sizeof(ProcSpawnArgs<Result<Pid, SpawnError>>));
+    assert_refused(os_call(OsService::PROC_SPAWN, ARGS), secret, secret, 64, "PROC_SPAWN of a path in kernel memory is refused");
+    spawn.path = (char*)TEXTS;
+    spawn.args = (char*)secret;
+    spawn.args_length = 8;
+    test_user.put_bytes(caller, ARGS, (char*)(&spawn), sizeof(ProcSpawnArgs<Result<Pid, SpawnError>>));
+    assert_refused(os_call(OsService::PROC_SPAWN, ARGS), secret, secret, 64, "and so are its arguments");
+}
+
+/** A UI request from the test process, its record written into ARGS. */
+void put_request(Pid caller, i32 op, i32 a0, i32 a1, i32 a2, i32 s0, i32 s0_len, i32 result_out, i32 result_size) {
+    Request request = Request {
+        domain: RequestDomain::UI, op: op, owner: 0,
+        a0: a0, a1: a1, a2: a2, a3: 0, a4: 0, a5: 0, s0: (char*)s0, s1: (char*)0,
+        result_out: result_out, result_size: result_size,
+        s0_len: s0_len, s1_len: 0,
+    };
+    test_user.put_bytes(caller, ARGS, (char*)(&request), sizeof(Request));
+}
+
+/*@Test "the request gateway copies only the caller's memory" { step: 120000000; }*/
+void the_request_gateway_copies_only_the_callers_memory() {
+    boot();
+    Pid caller = start(None);
+    i32 secret = test_user.kernel_bytes(64, SECRET);
+    dom.set_current_owner(Some(caller));
+    NodeId node = case dom_elements.create_text("old", 0, 0) of {
+        Ok(id) -> id;
+        Err(_) -> ({ debug.panic("no node"); (NodeId)0; });
+    };
+    dom.set_current_owner(None);
+
+    put_request(caller, UiOp::SET_TEXT, (i32)node, 0, 0, secret, 8, 0, 0);
+    assert_refused(os_call(OsService::REQUEST, ARGS), secret, secret, 64, "a string in kernel memory is refused");
+    assert.assert_true(!request_channel.serve(), "and nothing is queued");
+    assert.assert_str_eq(dom.text_of(node), "old", "so the node keeps its text");
+
+    put_request(caller, UiOp::TEXT_COPY, (i32)node, secret, 16, 0, 0, RESULT, sizeof(Result<i32, UiError>));
+    assert_refused(os_call(OsService::REQUEST, ARGS), secret, secret, 64, "a TEXT_COPY into kernel memory is refused");
+    put_request(caller, UiOp::CREATE_WINDOW, 0, 0, 0, TEXTS, 1, secret, sizeof(Result<NodeId, UiError>));
+    assert_refused(os_call(OsService::REQUEST, ARGS), secret, secret, 64, "a result_out in kernel memory is refused");
+    assert.assert_true(!request_channel.serve(), "and neither is queued");
+
+    test_user.put_str(caller, TEXTS, "new");
+    put_request(caller, UiOp::SET_TEXT, (i32)node, 0, 0, TEXTS, 3, 0, 0);
+    assert_eq<i32>(os_call(OsService::REQUEST, ARGS), OK, "a request from its own memory is queued");
+    assert_eq<i32>(g_value, 1, "and says so");
+    assert.assert_true(request_channel.serve(), "and served");
+    assert.assert_str_eq(dom.text_of(node), "new", "and takes effect");
+
+    assert_refused(os_call(OsService::REPLY, secret), secret, secret, 64, "a REPLY into kernel memory is refused");
+    assert_eq<i32>(os_call(OsService::REPLY, WORD), OK, "and loses no reply");
+    assert_eq<i32>(g_value, 1, "the reply is still there for its own memory");
+
+    app_events.push(caller, (i32)node, EventKind::CLICK, 5, 0, "hi");
+    assert_refused(os_call(OsService::POLL, secret), secret, secret, 64, "a POLL into kernel memory is refused");
+    assert_eq<i32>(os_call(OsService::POLL, EVENT), OK, "and loses no event");
+    assert_eq<i32>(g_value, 1, "the event is still there for its own memory");
+    Event event;
+    test_user.get_bytes(caller, EVENT, (char*)(&event), sizeof(Event));
+    assert_eq<i32>((i32)event.kind, (i32)EventKind::CLICK, "and arrives whole");
+}
+
+/*@Test "the console hooks use only the caller's memory" { step: 120000000; }*/
+void the_console_hooks_use_only_the_callers_memory() {
+    boot();
+    Pid parent = test_user.spawn(None);
+    Pid caller = start(Some(parent));
+    i32 secret = test_user.kernel_bytes(64, SECRET);
+    NodeId terminal = case dom_elements.create_terminal("t", 0, 0, 400, 200, 1024) of {
+        Ok(id) -> id;
+        Err(_) -> ({ debug.panic("no terminal"); (NodeId)0; });
+    };
+    assert.assert_true(console.bind(parent, caller, (i32)terminal).is_ok(), "the caller writes to the terminal");
+
+    assert_refused(sys(Syscall::WRITE, 1, secret, 8), secret, secret, 64, "SYS_WRITE from kernel memory is refused");
+    assert.assert_str_eq(dom.text_of(terminal), "", "and shows nothing");
+    test_user.put_str(caller, BUFFER, "hi\n");
+    assert_eq<i32>(sys(Syscall::WRITE, 1, BUFFER, 3), OK, "SYS_WRITE from its own memory works");
+    assert.assert_str_eq(dom.text_of(terminal), "hi\n", "and shows its bytes");
+
+    assert.assert_true(console.feed_line(parent, caller, "line").is_ok(), "a line waits on its stdin");
+    assert_refused(sys(Syscall::READ, 0, secret, 4), secret, secret, 64, "SYS_READ into kernel memory is refused");
+    assert_eq<i32>(sys(Syscall::READ, 0, test_user.TEXT, 4), BAD, "SYS_READ into its read-only text is refused");
+    assert_eq<i32>(sys(Syscall::READ, 0, BUFFER, 16), OK, "SYS_READ into its own memory works");
+    assert_eq<i32>(g_value, 5, "and takes the whole line, none of it lost");
+
+    assert_refused(sys(Syscall::SPAWN, secret, 0, 0), secret, secret, 64, "SYS_SPAWN of a path in kernel memory is refused");
+    // A path that runs to the end of the user half without a NUL, and one
+    // that ends there.
+    test_user.put_str(caller, 0x7FFFFFFB, "hello");
+    assert_eq<i32>(sys(Syscall::SPAWN, 0x7FFFFFFB, 0, 0), BAD, "a path that runs off the end of the user half is refused");
+    assert_eq<i32>(g_value, 0x80000000, "where it leaves");
+    test_user.put_byte(caller, 0x7FFFFFFF, 0);
+    assert_eq<i32>(sys(Syscall::SPAWN, 0x7FFFFFFB, 0, 0), (i32)SyscallStatus::SpawnFailed,
+                   "one that ends right there is read whole: there is just no such program");
+}
+
+/*@Test "ranges that wrap, straddle or are empty" {
+    disk: true;
+    step: 300000000;
+}*/
+void ranges_that_wrap_straddle_or_are_empty() {
+    boot();
+    fs.init();
+    Pid caller = start(None);
+    i32 secret = test_user.kernel_bytes(64, SECRET);
+    i32 fd = case fs.create("f") of {
+        Ok(value) -> value;
+        Err(_) -> ({ debug.panic("no file to test with"); 0; });
+    };
+    fs.give_to(fd, caller);
+    test_user.put_str(caller, BUFFER, "0123456789");
+    FsWriteArgs write = FsWriteArgs { fd: fd, buffer: (char*)BUFFER, size: 10, result_out: (Result<i32, FsError>*)RESULT };
+    test_user.put_bytes(caller, ARGS, (char*)(&write), sizeof(FsWriteArgs));
+    assert_eq<i32>(os_call(OsService::FS_WRITE, ARGS), OK, "the file has ten bytes");
+    assert.assert_true(fs.seek(fd, 0, SeekWhence::Set).is_ok(), "back to its start");
+
+    FsReadArgs read = FsReadArgs { fd: fd, buffer: (char*)0x7FFFFFF0, size: 32, result_out: (Result<i32, FsError>*)RESULT };
+    test_user.put_bytes(caller, ARGS, (char*)(&read), sizeof(FsReadArgs));
+    assert_eq<i32>(os_call(OsService::FS_READ, ARGS), BAD, "a buffer past the end of the user half is refused");
+    assert_eq<i32>(g_value, 0x7FFFFFF0, "at its start");
+    read.buffer = (char*)(ARGS - 16);
+    test_user.put_bytes(caller, ARGS, (char*)(&read), sizeof(FsReadArgs));
+    assert_eq<i32>(os_call(OsService::FS_READ, ARGS), BAD, "a buffer from below the stack into it is refused");
+    read.buffer = (char*)test_user.TEXT;
+    read.size = 4;
+    test_user.put_bytes(caller, ARGS, (char*)(&read), sizeof(FsReadArgs));
+    assert_eq<i32>(os_call(OsService::FS_READ, ARGS), BAD, "a read into read-only text is refused");
+    write.size = 0x7FFFFFFF;
+    test_user.put_bytes(caller, ARGS, (char*)(&write), sizeof(FsWriteArgs));
+    assert_eq<i32>(os_call(OsService::FS_WRITE, ARGS), BAD, "a size that wraps the address space is refused");
+    assert_eq<i32>(fs.seek(fd, 0, SeekWhence::Cur).unwrap_or(-1), 0, "and none of them moved the file");
+
+    read.buffer = (char*)0x7FFFF000;
+    read.size = 4096;
+    test_user.put_bytes(caller, ARGS, (char*)(&read), sizeof(FsReadArgs));
+    assert_eq<i32>(os_call(OsService::FS_READ, ARGS), OK, "a buffer that ends at the end of the user half works");
+    Result<i32, FsError> got = Ok(-1);
+    test_user.get_bytes(caller, RESULT, (char*)(&got), sizeof(Result<i32, FsError>));
+    assert_eq<i32>(got.unwrap_or(-1), 10, "and reads the file");
+
+    // Empty: nothing is read or written, so nothing is checked.
+    read.buffer = (char*)secret;
+    read.size = 0;
+    test_user.put_bytes(caller, ARGS, (char*)(&read), sizeof(FsReadArgs));
+    assert_eq<i32>(os_call(OsService::FS_READ, ARGS), OK, "an empty read works wherever it points");
+    assert.assert_true(test_user.kernel_untouched(secret, 64, SECRET), "and writes nothing");
+    LogArgs log = LogArgs { text: (char*)secret, length: 0 };
+    test_user.put_bytes(caller, ARGS, (char*)(&log), sizeof(LogArgs));
+    assert_eq<i32>(os_call(OsService::LOG, ARGS), OK, "so does an empty log line");
+    ProcArgsArgs args = ProcArgsArgs { out: (char*)secret, capacity: 16 };
+    test_user.put_bytes(caller, ARGS, (char*)(&args), sizeof(ProcArgsArgs));
+    assert_eq<i32>(os_call(OsService::PROC_ARGS, ARGS), OK, "no arguments to copy is no copy");
+    assert_eq<i32>(g_value, 0, "of nothing");
+    assert.assert_true(test_user.kernel_untouched(secret, 64, SECRET), "kernel memory stays as it was");
+}
