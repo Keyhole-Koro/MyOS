@@ -151,15 +151,20 @@ bool stage_request_outputs(Pid caller, i32 slot_index, Request *request) {
         request->a2 = gateway_slots[slot_index].out_cap;
     }
 
-    if (request->result_out != 0 && request->result_size > 0) {
+    // The server writes its whole typed answer through result_out, whatever
+    // result_size says, and it runs on its own task, in the kernel's address
+    // space. So a caller's result_out never reaches it: any one is staged,
+    // and result_size only says how much of the answer to copy back.
+    if (request->result_out != 0) {
         i32 size = request->result_size;
+        if (size < 0) { size = 0; }
         if (size > RESULT_CAP) { size = RESULT_CAP; }
         UserAddress result = UserAddress(request->result_out);
         if (!user_memory.writable(caller, result, size)) { return false; }
-        gateway_slots[slot_index].result_user = result;
+        if (size > 0) { gateway_slots[slot_index].result_user = result; }
         gateway_slots[slot_index].result_size = size;
         request->result_out = gateway_slots[slot_index].result;
-        request->result_size = gateway_slots[slot_index].result_size;
+        request->result_size = size;
     }
     return true;
 }

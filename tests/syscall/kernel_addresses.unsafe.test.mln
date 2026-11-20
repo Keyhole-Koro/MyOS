@@ -33,6 +33,7 @@ import { Pid, ProcessControlError, ProcessExitStatus } from "@contracts/process/
 import { SpawnError } from "@contracts/process/spawn.contract.mln";
 import { Event, EventKind, Request, RequestDomain } from "@contracts/myapp/message.contract.mln";
 import { UiOp } from "@contracts/myapp/ui.contract.mln";
+import { AppOp } from "@contracts/myapp/lifecycle.contract.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
@@ -328,6 +329,50 @@ void the_request_gateway_copies_only_the_callers_memory() {
     Event event;
     test_user.get_bytes(caller, EVENT, (char*)(&event), sizeof(Event));
     assert_eq<i32>((i32)event.kind, (i32)EventKind::CLICK, "and arrives whole");
+}
+
+/**
+ * A request whose answer the caller does not want copied back -- a
+ * result_out with no result_size -- still has the server answer through
+ * result_out, and the server runs on its own task, in the kernel's address
+ * space. The gateway stages that result_out like any other.
+ */
+/*@Test "a result_out with no size never reaches the server" { step: 120000000; }*/
+void a_result_out_with_no_size_never_reaches_the_server() {
+    boot();
+    Pid caller = start(None);
+    i32 secret = test_user.kernel_bytes(64, SECRET);
+    test_user.put_str(caller, TEXTS, "W");
+
+    put_request(caller, UiOp::CREATE_WINDOW, 0, 0, 0, TEXTS, 1, secret, 0);
+    assert_eq<i32>(os_call(OsService::REQUEST, ARGS), OK, "a window whose answer is not wanted is queued");
+    assert.assert_true(request_channel.serve(), "and made");
+    assert.assert_true(test_user.kernel_untouched(secret, 64, SECRET), "its answer did not go to the kernel memory named");
+    assert_eq<i32>(os_call(OsService::REPLY, WORD), OK, "the reply comes");
+    assert.assert_true(test_user.kernel_untouched(secret, 64, SECRET), "and copies nothing there");
+
+    put_request(caller, UiOp::TEXT_COPY, 0, BUFFER, 16, 0, 0, secret, -8);
+    assert_eq<i32>(os_call(OsService::REQUEST, ARGS), OK, "nor does a negative size");
+    assert.assert_true(request_channel.serve(), "served");
+    assert.assert_true(test_user.kernel_untouched(secret, 64, SECRET), "the answer stays in the gateway");
+    assert_eq<i32>(os_call(OsService::REPLY, WORD), OK, "and its reply comes");
+
+    user_key(caller, secret);
+    assert_eq<i32>(os_call(OsService::REQUEST, ARGS), OK, "the shell's requests are staged the same way");
+    assert.assert_true(request_channel.serve(), "served");
+    assert.assert_true(test_user.kernel_untouched(secret, 64, SECRET), "its answer stays in the gateway too");
+}
+
+/** An APP CLAIM_KEY request whose result_out names `result_out` and wants nothing back. */
+void user_key(Pid caller, i32 result_out) {
+    test_user.put_str(caller, TEXTS, "Ctrl+K");
+    Request request = Request {
+        domain: RequestDomain::APP, op: AppOp::CLAIM_KEY, owner: 0,
+        a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0, s0: (char*)TEXTS, s1: (char*)0,
+        result_out: result_out, result_size: 0,
+        s0_len: 6, s1_len: 0,
+    };
+    test_user.put_bytes(caller, ARGS, (char*)(&request), sizeof(Request));
 }
 
 /*@Test "the console hooks use only the caller's memory" { step: 120000000; }*/
