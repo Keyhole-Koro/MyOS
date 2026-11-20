@@ -124,8 +124,8 @@ export void init() {
 /**
  * Enqueues a request into the global UI server request channel.
  *
- * Encodes a Request into the 24-word IPC message. Words 0..12 carry the
- * Request and word 13 carries the caller's reply channel handle.
+ * Encodes a Request into the 24-word IPC message. Words 0..14 carry the
+ * Request and word 15 carries the caller's reply channel handle.
  *
  * @param request Request to enqueue.
  * @param reply_channel Channel that should receive the response.

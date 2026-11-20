@@ -196,7 +196,7 @@ bool ready(Pid pid) {
  * `request_channel`.
  *
  * @param pid Process ID of the caller.
- * @param user_request Virtual address of user Request structure (13 words).
+ * @param user_request Virtual address of user Request structure (15 words).
  * @return true when queued; false when the shared request channel is full.
  *         A full channel is transient and may be retried. The PID comes from
  *         the current-process syscall context and must be valid.
