@@ -92,6 +92,19 @@ i32 alloc_or_panic(i32 n) {
 }
 
 /**
+ * Zeroes a kernel staging buffer.
+ * @param at Its first byte, word-aligned.
+ * @param n Its size in bytes, a multiple of 4.
+ */
+void clear(i32 at, i32 n) {
+    i32 k = 0;
+    while (k < n) {
+        mem.write_word(at + k, 0);
+        k = k + 4;
+    }
+}
+
+/**
  * Reads the fixed-width Request wire record and decodes it into named fields.
  * @param caller Process that sent it.
  * @param user_request User-space address of a 15-word Request.
@@ -199,6 +212,11 @@ bool ready(Pid pid) {
         gateway_slots[i].out = alloc_or_panic(OUT_CAP);
         check_result_capacity();
         gateway_slots[i].result = alloc_or_panic(RESULT_CAP);
+        // A reply copies out of these even when the server wrote nothing
+        // there, and the heap hands back whatever a free left: they start
+        // empty, so what a process gets back is never someone else's.
+        clear(gateway_slots[i].out, OUT_CAP);
+        clear(gateway_slots[i].result, RESULT_CAP);
     }
     if (!gateway_slots[i].events_bound) {
         app_events.bind(pid, gateway_slots[i].event_ch);

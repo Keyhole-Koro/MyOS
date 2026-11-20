@@ -52,6 +52,7 @@ import test_user from "../user_process_support.mln";
 // is mapped there too, for the kernel, which is what made this possible.
 
 i32 SECRET = 0x5A;   // what fills the kernel memory the calls aim at
+i32 FILL = 120;      // 'x': a byte of the caller's that nothing should write
 i32 BAD = 14;        // SyscallStatus::BadAddress
 i32 OK = 0;          // SyscallStatus::Ok
 
@@ -373,6 +374,43 @@ void user_key(Pid caller, i32 result_out) {
         s0_len: 6, s1_len: 0,
     };
     test_user.put_bytes(caller, ARGS, (char*)(&request), sizeof(Request));
+}
+
+/**
+ * The gateway's buffers for a process come from the kernel heap, which
+ * hands back what a free left there. A reply copies out of them even when
+ * the server wrote nothing: an operation with no typed answer, or a
+ * TEXT_COPY of a node that does not exist.
+ */
+/*@Test "an answer the server never wrote carries no kernel bytes" { step: 150000000; }*/
+void an_answer_the_server_never_wrote_carries_no_kernel_bytes() {
+    boot();
+    Pid caller = start(None);
+    dom.set_current_owner(Some(caller));
+    NodeId node = case dom_elements.create_text("t", 0, 0) of {
+        Ok(id) -> id;
+        Err(_) -> ({ debug.panic("no node"); (NodeId)0; });
+    };
+    dom.set_current_owner(None);
+    // Kernel bytes a free left behind, where the caller's first request
+    // will have its buffers made.
+    heap.free(test_user.kernel_bytes(8192, SECRET));
+
+    test_user.fill(caller, RESULT, 16, FILL);
+    put_request(caller, UiOp::SET_CHECKED, (i32)node, 1, 0, 0, 0, RESULT, 16);
+    assert_eq<i32>(os_call(OsService::REQUEST, ARGS), OK, "a request with no typed answer");
+    assert.assert_true(request_channel.serve(), "is served");
+    assert_eq<i32>(os_call(OsService::REPLY, WORD), OK, "and answered");
+    assert_eq<i32>(test_user.byte_at(caller, RESULT), 0, "what comes back in its result slot is no kernel byte");
+    assert_eq<i32>(test_user.byte_at(caller, RESULT + 15), 0, "nor any of the rest");
+
+    test_user.fill(caller, BUFFER, 64, FILL);
+    put_request(caller, UiOp::TEXT_COPY, 9999, BUFFER, 64, 0, 0, RESULT, sizeof(Result<i32, UiError>));
+    assert_eq<i32>(os_call(OsService::REQUEST, ARGS), OK, "a TEXT_COPY of no node");
+    assert.assert_true(request_channel.serve(), "is served");
+    assert_eq<i32>(os_call(OsService::REPLY, WORD), OK, "and answered");
+    assert_eq<i32>(test_user.byte_at(caller, BUFFER), 0, "the text it gets back is empty");
+    assert_eq<i32>(test_user.byte_at(caller, BUFFER + 1), FILL, "and nothing follows it");
 }
 
 /*@Test "the console hooks use only the caller's memory" { step: 120000000; }*/
