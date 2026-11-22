@@ -22,6 +22,7 @@ import { TaskbarTarget } from "dom/dom_render.mln";
 import graphics from "graphics.mln";
 import { CursorShape } from "graphics.mln";
 import mouse from "@kernel/io/mouse.mln";
+import timeline from "@kernel/debug/timeline.mln";
 import { PointerButton } from "@contracts/input/pointer.contract.mln";
 import keyboard from "@kernel/io/keyboard.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
@@ -69,8 +70,10 @@ i32 WAKE_BITS = KernelSignal::INPUT | KernelSignal::PROCESS_ENDED | KernelSignal
  * Renders damaged DOM scene regions and flips the display front/back buffers.
  */
 void present_frame() {
+    timeline.begin("paint");
     dom_render.render_scene();
     graphics.present();
+    timeline.end("paint");
 }
 
 /**
@@ -80,6 +83,9 @@ void present_frame() {
  */
 export void paint_first_frame() {
     graphics.show_cursor(1);
+    // From here on the mouse IRQ moves the cursor (mouse.set_cursor_follower),
+    // so it keeps up with the pointer while a frame is being painted.
+    mouse.set_cursor_follower(graphics.set_cursor);
     dom_render.render_all();
     graphics.present();
 }
@@ -490,6 +496,7 @@ export void run() {
         // runs is kept, and the wait below returns at once.
         scheduler.arm_notification(WAKE_BITS);
         i32 deadline = 0;
+        timeline.begin("pass");
         {
             // One pass holds the DOM; the lock is given back before sleeping.
             dom.lock();
@@ -498,6 +505,7 @@ export void run() {
             // Consume all queued mouse events. Clicks are dispatched at the
             // event's own coordinates: where the press happened, not where the
             // pointer is now.
+            timeline.begin("input");
             while (mouse.has_event()) {
                 i32 ex = mouse.event_x();
                 i32 ey = mouse.event_y();
@@ -545,13 +553,13 @@ export void run() {
                 keyboard.pop_event();
                 dom_widgets.dispatch_key_event(t, c, m);
             }
+            timeline.end("input");
 
-            // Live state drives the cursor and hover. Moving the pointer is two
-            // register writes and does not dirty the scene; only a change in what
-            // is hovered does.
+            // Live state drives hover. The mouse IRQ has already moved the
+            // cursor (paint_first_frame); moving the pointer does not dirty
+            // the scene, only a change in what is hovered does.
             i32 mx = mouse.x();
             i32 my = mouse.y();
-            graphics.set_cursor(mx, my);
 
             if (mx != g_hover_x || my != g_hover_y || dom.revision() != g_hover_revision) {
                 Option<NodeId> hit = dom_hit_test.find_at(mx, my);
@@ -569,16 +577,22 @@ export void run() {
             dom_menu.menu_hover(mx, my);
 
             // Timers (clock, animations) run on this task between events.
+            timeline.begin("timers");
             dom_widgets.tick();
+            timeline.end("timers");
 
             // Application service work is answered here, on this task. The app
             // task sleeps on each request until its reply; its handlers run over
             // there, on events the DOM emitted above.
+            timeline.begin("requests");
             bool served = g_request_pump();
+            timeline.end("requests");
 
             // The server's own queued handlers (taskbar, menus, the shell's
             // window-close hook) run here, between input and paint.
+            timeline.begin("events");
             dom.drain_events();
+            timeline.end("events");
 
             // The setters above record what changed, so the damage region is the
             // authority on whether a repaint is needed. A pass that answered
@@ -611,6 +625,7 @@ export void run() {
                 deadline = scheduler.ticks() + 1;
             }
         }
+        timeline.end("pass");
         i32 woke = scheduler.await_notification(WAKE_BITS, deadline);
         if (woke & KernelSignal::PROCESS_ENDED) { ended = true; }
     }

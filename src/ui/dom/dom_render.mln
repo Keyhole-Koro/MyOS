@@ -1,5 +1,6 @@
 namespace dom_render;
 import debug from "@kernel/debug/debug.mln";
+import timeline from "@kernel/debug/timeline.mln";
 import blob from "@std/memory/blob.mln";
 import graphics from "@os/ui/graphics.mln";
 import theme from "@os/ui/theme.mln";
@@ -1093,16 +1094,25 @@ export void paint_desktop() {
     i32 bottom = theme.DESKTOP_BOTTOM;
     i32 dw = graphics.display_width();
     i32 dh = graphics.display_height();
+    timeline.begin("background");
     graphics.fill_gradient_v(0, 0, dw, dh, top, bottom);
+    timeline.end("background");
 
     Option<NodeId> taskbar = dom.taskbar_id();
     Option<NodeId> menu = dom_menu.menu_id();
     for (NodeId child_id in dom.children(dom.desktop_id())) {
         if (!dom.holds(taskbar, child_id) && !dom.holds(menu, child_id)) {
+            // On the timeline each window's paint is a span under its title.
+            str title = dom.text_of(child_id);
+            if (title.is_empty()) { title = "window"; }
+            timeline.begin(title);
             render(&dom.row_of(child_id));
+            timeline.end(title);
         }
     }
+    timeline.begin("taskbar");
     case dom.row_in(taskbar) of { Some(row) -> render(&row); None -> _; };
+    timeline.end("taskbar");
     case dom.row_in(menu) of { Some(row) -> render(&row); None -> _; };
 }
 
@@ -1135,7 +1145,9 @@ export void render_scene() {
     while (i < count) {
         dom.select_damage(i);
         graphics.set_clip(dom.paint_x(), dom.paint_y(), dom.paint_width(), dom.paint_height());
+        timeline.begin("damaged area");
         paint_desktop();
+        timeline.end("damaged area");
         i++;
     }
     dom.select_full_paint();

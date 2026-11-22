@@ -189,6 +189,11 @@ class MyOS:
         result = self._request("screen.screenshot", {"path": str(path)})
         return Path(result["path"])
 
+    def cursor(self) -> tuple[int, int]:
+        """Where the hardware cursor is now, as the guest last set it."""
+        result = self._request("screen.cursor", {})
+        return int(result["x"]), int(result["y"])
+
     def _pointer_sequence(self, events: list[dict[str, Any]]) -> None:
         self._request("input.pointer.sequence", {"events": events})
 

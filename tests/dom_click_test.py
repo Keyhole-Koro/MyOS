@@ -36,6 +36,12 @@ def main() -> int:
 
             # Boot's windows arrive in any order, and each lands on top.
             expect(os.get_by_role("window", name="Terminal")).to_be_visible()
+
+            # The mouse IRQ moves the cursor; the UI task no longer does.
+            for x, y in ((700, 500), (1900, 1300), (12, 1500)):
+                os._pointer_sequence([{"type": "move", "x": x, "y": y}])
+                assert os.cursor() == (x, y), f"the cursor stayed at {os.cursor()}, not ({x}, {y})"
+
             os.raise_window("Editor")
 
             # A menu button opens its menu; Esc closes it.
