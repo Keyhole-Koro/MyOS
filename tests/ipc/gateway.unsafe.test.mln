@@ -69,3 +69,45 @@ void a_result_without_a_size_is_not_written_where_the_app_pointed() {
     assert_eq<i32>(status, (i32)RequestStatus::MISSING_RESULT, "it is refused for want of a result");
     assert.assert_true(test_user.kernel_untouched(guard, 64, GUARD), "and nothing was written where result_out pointed");
 }
+
+/**
+ * A process that sent requests and never took the replies would fill its
+ * reply channel, and the server, which cannot drop an answer, would stop the
+ * OS. It would also overwrite the first request's staged strings with the
+ * second's. So a process has one request out at a time; the next one waits,
+ * as for a full channel, until it takes the reply.
+ */
+/*@Test "a process has one request out at a time" { step: 200000000; }*/
+void a_process_has_one_request_out_at_a_time() {
+    boot();
+    Pid app = test_user.spawn(None);
+    Pid other = test_user.spawn(None);
+    test_user.become(app);
+    Request ask = Request {
+        domain: RequestDomain::UI, op: UiOp::CREATE_TIMER, owner: 0,
+        a0: 1000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0, s0: (char*)0, s1: (char*)0,
+        result_out: 0, result_size: 0,
+        s0_len: 0, s1_len: 0,
+    };
+    test_user.put_bytes(app, ARGS, (char*)(&ask), sizeof(Request));
+    test_user.put_bytes(other, ARGS, (char*)(&ask), sizeof(Request));
+
+    assert.assert_true(request_gateway.request(app, UserAddress(ARGS)), "the first request is queued");
+    i32 refused = 0;
+    i32 k = 0;
+    while (k < 40) {
+        if (!request_gateway.request(app, UserAddress(ARGS))) { refused++; }
+        k++;
+    }
+    assert_eq<i32>(refused, 40, "the next ones wait for its reply");
+    assert.assert_true(request_gateway.request(other, UserAddress(ARGS)), "another process sends its own");
+    assert.assert_true(request_channel.serve(), "the service answers both");
+    assert.assert_true(!request_gateway.request(app, UserAddress(ARGS)), "an answer not yet taken still holds the next");
+
+    assert.assert_true(request_gateway.reply(app, UserAddress(WORD)), "the answer comes back");
+    assert.assert_true(!request_gateway.reply(app, UserAddress(WORD)), "once: the refused ones were never queued");
+    assert.assert_true(request_gateway.request(app, UserAddress(ARGS)), "then the next request goes");
+    assert.assert_true(request_channel.serve(), "and is answered");
+    assert.assert_true(request_gateway.reply(app, UserAddress(WORD)), "and its answer comes back");
+    assert.assert_true(request_gateway.reply(other, UserAddress(WORD)), "the other process's answer waited for it");
+}

@@ -54,6 +54,9 @@ i32 RESULT_CAP = 64;
  * @property result Kernel address of the typed Result value returned to the user.
  * @property result_user User-space address that receives the typed Result value.
  * @property result_size Size in bytes of the staged typed Result value.
+ * @property pending A request of this process's is queued or being answered,
+ *   and its reply is not taken yet. Until then its strings and destinations
+ *   are staged here, so the process has one request out at a time.
  */
 struct GatewaySlot {
     ChannelId reply_ch;
@@ -67,6 +70,7 @@ struct GatewaySlot {
     i32 result;
     UserAddress result_user;
     i32 result_size;
+    bool pending;
 };
 
 GatewaySlot gateway_slots[16];
@@ -240,11 +244,12 @@ bool ready(Pid pid) {
  *
  * @param pid Process ID of the caller.
  * @param user_request Virtual address of user Request structure (15 words).
- * @return true when queued; false when the shared request channel is full.
- *         A full channel is transient and may be retried. The PID comes from
- *         the current-process syscall context and must be valid. False also
- *         when a range the request names was refused; the kernel then
- *         answers BadAddress, not 0.
+ * @return true when queued; false when the shared request channel is full,
+ *         or when this process already has a request out whose reply it has
+ *         not taken. Both are transient: the caller waits for REQUEST_SPACE
+ *         and sends it again. The PID comes from the current-process syscall
+ *         context and must be valid. False also when a range the request
+ *         names was refused; the kernel then answers BadAddress, not 0.
  */
 export bool request(Pid pid, UserAddress user_request) {
     if (!ready(pid)) { debug.panic("request_gateway: invalid caller PID"); }
@@ -252,6 +257,15 @@ export bool request(Pid pid, UserAddress user_request) {
         Some(v) -> v;
         None -> ({ debug.panic("request_gateway: PID slot disappeared"); return false; });
     };
+    // One request out at a time. The first one's strings and destinations
+    // stay staged in this slot until its reply is taken, and a process that
+    // sent requests without taking replies would fill its reply channel,
+    // which the server cannot answer into. A second one waits as for a full
+    // channel; taking the reply wakes it (reply).
+    if (gateway_slots[i].pending) {
+        scheduler.arm_notification(TransportSignal::REQUEST_SPACE);
+        return false;
+    }
     Request request;
     if (!read_user_request(pid, user_request, &request)) { return false; }
     request.owner = (i32)pid;
@@ -265,6 +279,7 @@ export bool request(Pid pid, UserAddress user_request) {
         return false;
     }
     scheduler.disarm_notification(TransportSignal::REQUEST_SPACE);
+    gateway_slots[i].pending = true;
     return true;
 }
 
@@ -293,6 +308,10 @@ export bool reply(Pid pid, UserAddress user_out) {
         return false;
     }
     scheduler.disarm_notification(TransportSignal::REPLY);
+    // The process may send its next request; another of its threads may be
+    // waiting to.
+    gateway_slots[i].pending = false;
+    scheduler.notify_pid(pid, TransportSignal::REQUEST_SPACE);
     // The request checked these destinations. One that is gone since (a
     // thread's stack, say) is refused here: the reply is still taken, and
     // the call answers BadAddress.
@@ -361,6 +380,7 @@ export void process_gone(Pid pid) {
     i32 w[24];
     while (ipc.recv(gateway_slots[i].reply_ch, &w[0])) { }
     while (ipc.recv(gateway_slots[i].event_ch, &w[0])) { }
+    gateway_slots[i].pending = false;
     gateway_slots[i].out_user = UserAddress(0);
     gateway_slots[i].result_user = UserAddress(0);
     gateway_slots[i].result_size = 0;

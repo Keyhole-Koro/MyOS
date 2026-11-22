@@ -164,6 +164,8 @@ export bool serve() {
         if (m.domain == RequestDomain::UI) { r[0] = ui_protocol.handle(&m); }
         if (m.domain == RequestDomain::APP) { r[0] = shell_protocol.handle(&m); }
         ChannelId reply_channel = ChannelId(w[RequestWord::REPLY_CHANNEL]);
+        // The gateway lets a process have one request out at a time, so its
+        // reply channel always has room for the answer.
         if (!ipc.send(reply_channel, &r[0])) {
             debug.panic("request_channel: reply channel full");
         }
