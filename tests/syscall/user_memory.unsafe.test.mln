@@ -231,9 +231,13 @@ void a_c_string_stops_at_its_nul_up_to_the_end_of_the_user_half() {
     assert.assert_true(user_memory.copy_in_c_string<8>(pid, at(0), &path), "a C string is copied");
     assert.assert_str_eq(path.as_str(), "abc", "up to its NUL");
 
+    test_user.put_str(pid, AT, "abcdefg");
+    test_user.put_byte(pid, AT + 7, 0);
+    assert.assert_true(user_memory.copy_in_c_string<8>(pid, at(0), &path), "a C string the text just holds is copied");
+    assert.assert_str_eq(path.as_str(), "abcdefg", "whole");
     test_user.put_str(pid, AT, "abcdefghij");
-    assert.assert_true(user_memory.copy_in_c_string<8>(pid, at(0), &path), "a long C string is copied");
-    assert.assert_str_eq(path.as_str(), "abcdefg", "up to the text's capacity");
+    assert.assert_true(!user_memory.copy_in_c_string<8>(pid, at(0), &path), "a longer one is refused");
+    assert_eq<i32>(path.len(), 0, "not cut to the text's capacity");
 
     test_user.put_str(pid, 0x7FFFFFFC, "xyz");
     test_user.put_byte(pid, 0x7FFFFFFF, 0);

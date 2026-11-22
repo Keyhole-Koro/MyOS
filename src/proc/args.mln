@@ -14,7 +14,8 @@ import { Pid } from "@contracts/process/control.contract.mln";
  * The arguments a process slot's process was started with.
  * @property pid The process they were given for: a slot's next process has
  *           none until it is given some, rather than the last one's.
- * @property text The arguments, cut at ARGS_MAX bytes.
+ * @property text The arguments, at most ARGS_MAX bytes: PROC_SPAWN refuses
+ *           longer ones.
  */
 struct ProcArgs {
     i32 pid;

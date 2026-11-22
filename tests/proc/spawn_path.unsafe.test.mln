@@ -8,24 +8,31 @@ import debug from "@kernel/debug/debug.mln";
 import process from "@kernel/kernel/process.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
 import console from "@os/proc/console.mln";
+import proc_args from "@os/proc/args.mln";
 import os_call_router from "@os/syscall/router.mln";
 import request_channel from "@os/ipc/channel.mln";
 import desktop from "@os/ui/desktop.mln";
 import fs from "@os/fs/fs.mln";
 import { ProcSpawnArgs } from "@contracts/myos/process-args.contract.mln";
 import { OsService } from "@contracts/myos/services.contract.mln";
+import { Syscall, SyscallStatus } from "@contracts/myos/syscall.contract.mln";
+import { ARGS_MAX } from "@contracts/myos/process-args.contract.mln";
 import { Pid } from "@contracts/process/control.contract.mln";
 import { SpawnError } from "@contracts/process/spawn.contract.mln";
 import { Option } from "@std/core/option.mln";
+import { Text } from "@std/text/text.mln";
 import { Result } from "@std/core/result.mln";
 import test_user from "../user_process_support.mln";
 
-// PROC_SPAWN takes a path of at most 63 bytes. A longer one names no file the
-// filesystem has; cut to 63 bytes, it would start another program.
+// PROC_SPAWN and SYS_SPAWN take a path of at most 63 bytes. A longer one
+// names no file the filesystem has; cut, it would start another program.
+// PROC_SPAWN's arguments are refused past ARGS_MAX bytes rather than reach
+// the program cut.
 
 i32 ARGS = 0x7FFFC000;    // the record
 i32 RESULT = 0x7FFFC100;  // where its answer goes
 i32 PATH = 0x7FFFC200;    // the path it names
+i32 TEXT = 0x7FFFC300;    // the arguments it passes
 
 void boot() {
     heap.init();
@@ -69,11 +76,17 @@ void program_at(str path) {
 
 // PROC_SPAWN of `path` by `caller`.
 Result<Pid, SpawnError> spawn(Pid caller, str path) {
+    return spawn_with(caller, path, 0);
+}
+
+// PROC_SPAWN of `path` by `caller`, with `length` bytes of arguments, all 'a'.
+Result<Pid, SpawnError> spawn_with(Pid caller, str path, i32 length) {
     test_user.put_str(caller, PATH, path);
+    test_user.fill(caller, TEXT, length, 97);
     Result<Pid, SpawnError> answer = Err(SpawnError::NoHandler);
     test_user.put_bytes(caller, RESULT, (char*)(&answer), sizeof(Result<Pid, SpawnError>));
     ProcSpawnArgs<Result<Pid, SpawnError>> args = ProcSpawnArgs<Result<Pid, SpawnError>> {
-        path: (char*)PATH, path_length: path.length, args: (char*)PATH, args_length: 0,
+        path: (char*)PATH, path_length: path.length, args: (char*)TEXT, args_length: length,
         stdout_node: 0, result_out: (Result<Pid, SpawnError>*)RESULT
     };
     test_user.put_bytes(caller, ARGS, (char*)(&args), sizeof(ProcSpawnArgs<Result<Pid, SpawnError>>));
@@ -89,6 +102,19 @@ bool is_not_found(Result<Pid, SpawnError> answer) {
 
 bool started(Result<Pid, SpawnError> answer) {
     return case answer of { Ok(_) -> true; Err(_) -> false; };
+}
+
+bool arguments_too_long(Result<Pid, SpawnError> answer) {
+    return case answer of { Err(SpawnError::ArgumentsTooLong) -> true; _ -> false; };
+}
+
+// SYS_SPAWN of `path`, NUL-terminated, by the current process.
+// @return Whether it started a program.
+bool sys_spawn(Pid caller, str path) {
+    test_user.put_str(caller, PATH, path);
+    test_user.put_byte(caller, PATH + path.length, 0);
+    i32 value = 0;
+    return test_user.call(Syscall::SPAWN, PATH, 0, 0, &value) == SyscallStatus::Ok;
 }
 
 /*@Test "a spawn path too long to hold is refused, not cut" {
@@ -108,4 +134,47 @@ void a_spawn_path_too_long_to_hold_is_refused_not_cut() {
     assert.assert_true(is_not_found(spawn(caller, "/aaaaaaaaaaaaaaa/bbbbbbbbbbbbbbb/ccccccccccccccc/ddddddddddddddde")),
         "a 64-byte path starts nothing: NotFound");
     assert.assert_true(started(spawn(caller, program)), "the program its first 63 bytes name starts by its own path");
+}
+
+/*@Test "arguments too long to keep are refused, not cut" {
+    disk: true;
+    step: 400000000;
+}*/
+void arguments_too_long_to_keep_are_refused_not_cut() {
+    boot();
+    Pid caller = test_user.spawn(None);
+    test_user.become(caller);
+    program_at("/prog");
+
+    Pid child = case spawn_with(caller, "/prog", ARGS_MAX) of {
+        Ok(pid) -> pid;
+        Err(_) -> ({ assert.assert_true(false, "ARGS_MAX bytes of arguments start the program"); return; });
+    };
+    Text<128> given = proc_args.given_to(child);
+    assert.assert_true(given.len() == ARGS_MAX, "and reach it whole");
+    assert.assert_true(arguments_too_long(spawn_with(caller, "/prog", ARGS_MAX + 1)),
+        "one byte more starts nothing: ArgumentsTooLong");
+}
+
+/*@Test "SYS_SPAWN takes a whole path or none" {
+    disk: true;
+    step: 400000000;
+}*/
+void sys_spawn_takes_a_whole_path_or_none() {
+    boot();
+    Pid caller = test_user.spawn(None);
+    test_user.become(caller);
+    make_dir("/aaaaaaaaaaaaaaa");
+    program_at("/aaaaaaaaaaaaaaa/bbbbbbbbbbbbbb");
+    assert.assert_true(sys_spawn(caller, "/aaaaaaaaaaaaaaa/bbbbbbbbbbbbbb"), "a 31-byte path starts its program");
+    assert.assert_true(!sys_spawn(caller, "/aaaaaaaaaaaaaaa/bbbbbbbbbbbbbbX"),
+        "a 32-byte path does not start the program its first 31 bytes name");
+
+    make_dir("/aaaaaaaaaaaaaaa/bbbbbbbbbbbbbbb");
+    make_dir("/aaaaaaaaaaaaaaa/bbbbbbbbbbbbbbb/ccccccccccccccc");
+    str program = "/aaaaaaaaaaaaaaa/bbbbbbbbbbbbbbb/ccccccccccccccc/dddddddddddddd";
+    program_at(program);
+    assert.assert_true(sys_spawn(caller, program), "a 63-byte path starts its program");
+    assert.assert_true(!sys_spawn(caller, "/aaaaaaaaaaaaaaa/bbbbbbbbbbbbbbb/ccccccccccccccc/ddddddddddddddde"),
+        "a 64-byte path starts nothing");
 }

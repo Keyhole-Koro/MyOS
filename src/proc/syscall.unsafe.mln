@@ -74,10 +74,13 @@ export Result<i32, OsServiceError> handle(Pid caller, i32 service, UserAddress a
             || !copy_in_text<128>(caller, UserAddress((i32)request.args), request.args_length, &g_args)) {
             return Ok(0);
         }
-        // A path longer than g_path holds names no file the filesystem has;
-        // cut, it would name another one.
+        // Nothing is cut. Arguments longer than a process keeps (proc_args)
+        // would reach it cut; a path longer than g_path holds names no file
+        // the filesystem has, and cut, it would name another one.
         Result<Pid, SpawnError> result = Err(SpawnError::NotFound);
-        if (request.path_length <= g_path.capacity()) {
+        if (request.args_length > g_args.capacity()) {
+            result = Err(SpawnError::ArgumentsTooLong);
+        } else if (request.path_length <= g_path.capacity()) {
             result = console.spawn_file(Some(caller), g_path.as_str());
         }
         case result of {

@@ -441,15 +441,16 @@ export Result<Pid, SpawnError> spawn_file(Option<Pid> parent, str path) {
  * SYS_SPAWN hook: launches the program and binds a successful child to the parent's console.
  * @param user_path Address of a null-terminated path string in user space.
  * @return The new process ID; Err(NotFound), with nothing started, when the
- *         path is not the caller's to read (the kernel answers BadAddress).
+ *         path is not the caller's to read (the kernel answers BadAddress)
+ *         or is longer than a path can be (63 bytes, as for PROC_SPAWN).
  */
 Result<Pid, SpawnError> on_spawn(UserAddress user_path) {
     Pid parent = case thread.current_pid() of {
         Some(value) -> value;
         None -> ({ debug.panic("SYS_SPAWN hook called without a current process"); });
     };
-    Text<32> path = Text<32> {};
-    if (!user_memory.copy_in_c_string<32>(parent, user_path, &path)) { return Err(SpawnError::NotFound); }
+    Text<64> path = Text<64> {};
+    if (!user_memory.copy_in_c_string<64>(parent, user_path, &path)) { return Err(SpawnError::NotFound); }
     Result<Pid, SpawnError> result = spawn_file(Some(parent), path.as_str());
     case result of {
         Ok(pid) -> ({

@@ -87,30 +87,33 @@ export bool copy_in_text<const N>(Pid caller, UserAddress user, i32 length, borr
 }
 
 /**
- * Copies a NUL-terminated string from user space into a kernel Text: up to
- * its NUL, or as much as the Text holds. It reads a byte at a time, and none
- * past the NUL, so a string that ends right before memory the caller does
- * not have is taken whole.
+ * Copies a NUL-terminated string from user space into a kernel Text, whole:
+ * a string longer than the Text holds is refused, not cut. It reads a byte at
+ * a time, and none past the NUL, so a string that ends right before memory
+ * the caller does not have is taken whole.
  *
  * @param caller Process whose memory it is.
  * @param user Virtual memory address of the first byte.
  * @param dst Destination, replaced by the copy; left empty when refused.
- * @return false when a byte before the NUL is not the caller's to read.
+ * @return false when a byte up to the NUL is not the caller's to read (the
+ *         kernel then answers BadAddress), or the string does not fit.
  */
 export bool copy_in_c_string<const N>(Pid caller, UserAddress user, borrow Text<N> dst) {
     dst.clear();
     char c[1];
     i32 k = 0;
-    while (k < dst.capacity()) {
+    while (k <= dst.capacity()) {
         if (!copy_in(caller, user.plus(k), &c[0], 1)) {
             dst.clear();
             return false;
         }
         if (c[0] == 0) { return true; }
+        if (k == dst.capacity()) { break; } // a byte more than it holds
         dst.push((u8)c[0]);
         k++;
     }
-    return true;
+    dst.clear();
+    return false;
 }
 
 /**
