@@ -26,7 +26,7 @@ export const i32 TEXT = 0x40000000;
 i32 g_frame[16];
 
 /** @return A 40-byte MBIN v2 image whose program is one halt. */
-i32 halt_image() {
+export i32 halt_image() {
     i32 image = case heap.alloc(40) of {
         Ok(value) -> value;
         Err(_) -> ({ debug.panic("no memory for a test image"); 0; });

@@ -58,6 +58,7 @@ impl From<SsdError> for FsError = FsError::IoError;
 enum PathError {
     EmptyName,
     MissingDirectory,
+    NameTooLong,   // a name longer than an entry holds; cut, it would name another
 }
 
 
@@ -341,17 +342,19 @@ Option<i32> find_entry_in(i32 parent_code, str name) {
 }
 
 // Split `path` into the directory holding its last component (as a parent
-// code) and that component. Empty names and missing/non-directory parents
-// are returned as typed path errors.
+// code) and that component. Empty names, names longer than an entry holds and
+// missing/non-directory parents are returned as typed path errors.
 Result<i32, PathError> split_path(str path, borrow Text<16> out_name) {
     out_name.clear();
     i32 i = 0;
     if (path.byte(0) == '/') { i = 1; }
     i32 parent_code = 0;
     while (1) {
-        // Copy one component; push() drops what does not fit.
+        // Copy one component. One that does not fit is an error: cut, it
+        // would name another entry.
         out_name.clear();
         while (i < path.length && path.byte(i) != '/') {
+            if (out_name.len() == out_name.capacity()) { return Err(PathError::NameTooLong); }
             out_name.push((u8)path.byte(i));
             i++;
         }
@@ -536,6 +539,7 @@ Result<i32, FsError> make_entry(str path, i32 flags) {
     i32 parent_code = case split_path(path, &clean_name) of {
         Ok(v) -> v;
         Err(PathError::EmptyName) -> ({ return Err(FsError::InvalidName); });
+        Err(PathError::NameTooLong) -> ({ return Err(FsError::InvalidName); });
         Err(PathError::MissingDirectory) -> ({ return Err(FsError::NotFound); });
     };
     if (clean_name.is_empty()) { return Err(FsError::InvalidName); }

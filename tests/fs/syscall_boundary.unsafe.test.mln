@@ -10,7 +10,9 @@ import scheduler from "@kernel/kernel/scheduler.mln";
 import fs from "@os/fs/fs.mln";
 import fs_syscall from "@os/fs/syscall.mln";
 import { FsError, SeekWhence } from "@contracts/io/fs.contract.mln";
-import { FsDirNextArgs, FsReadArgs, FsSeekArgs, FsWriteArgs } from "@contracts/myos/fs-args.contract.mln";
+import {
+    FsCreateArgs, FsDirNextArgs, FsReadArgs, FsRemoveArgs, FsSeekArgs, FsWriteArgs
+} from "@contracts/myos/fs-args.contract.mln";
 import { OsService } from "@contracts/myos/services.contract.mln";
 import { Pid } from "@contracts/process/control.contract.mln";
 import { Result } from "@std/core/result.mln";
@@ -22,8 +24,9 @@ import test_user from "../user_process_support.mln";
 // The filesystem OS_CALLs as a process sees them. The caller picks every
 // size in the record, so these pin how fs_syscall bounds them: a directory
 // name never spills past min(name_cap, 16) bytes, reads and writes larger
-// than the 512-byte staging buffer arrive whole, and a descriptor another
-// process holds answers BadFd. Records, names and buffers are in the two
+// than the 512-byte staging buffer arrive whole, a descriptor another
+// process holds answers BadFd, and a path or a name too long to hold is
+// refused rather than cut. Records, names and buffers are in the two
 // processes' own memory, as the OS takes them.
 
 i32 FILL = 120; // 'x': marks a byte nobody should have written
@@ -224,4 +227,80 @@ void another_processs_descriptor_answers_bad_fd() {
 
     assert_eq<i32>(count_of(read_as(g_owner, fd, 8)), 8, "the owner's offset did not move");
     fs.close(fd);
+}
+
+bool is_invalid_name(Result<i32, FsError> answer) {
+    return case answer of { Err(FsError::InvalidName) -> true; _ -> false; };
+}
+
+// FS_REMOVE of `path` by the owner: true when it removed it.
+Result<_, FsError> remove_as_owner(str path) {
+    test_user.put_str(g_owner, PATH, path);
+    Result<_, FsError> answer = Err(FsError::IoError);
+    test_user.put_bytes(g_owner, RESULT, (char*)(&answer), sizeof(Result<_, FsError>));
+    FsRemoveArgs args = FsRemoveArgs { path: (char*)PATH, path_length: path.length, result_out: (Result<_, FsError>*)RESULT };
+    test_user.put_bytes(g_owner, ARGS, (char*)(&args), sizeof(FsRemoveArgs));
+    fs_syscall.handle(g_owner, OsService::FS_REMOVE, UserAddress(ARGS));
+    test_user.get_bytes(g_owner, RESULT, (char*)(&answer), sizeof(Result<_, FsError>));
+    return answer;
+}
+
+// FS_CREATE of `path` by the owner.
+Result<i32, FsError> create_as_owner(str path) {
+    test_user.put_str(g_owner, PATH, path);
+    FsCreateArgs args = FsCreateArgs { path: (char*)PATH, path_length: path.length, result_out: (Result<i32, FsError>*)RESULT };
+    test_user.put_bytes(g_owner, ARGS, (char*)(&args), sizeof(FsCreateArgs));
+    return answer_of(g_owner, OsService::FS_CREATE);
+}
+
+bool is_removed(Result<_, FsError> answer) {
+    return case answer of { Ok(_) -> true; Err(_) -> false; };
+}
+
+bool is_invalid(Result<_, FsError> answer) {
+    return case answer of { Err(FsError::InvalidName) -> true; _ -> false; };
+}
+
+bool exists(str path) {
+    return case fs.open(path) of {
+        Ok(fd) -> ({ fs.close(fd); true; });
+        Err(_) -> false;
+    };
+}
+
+void make_dir(str path) {
+    case fs.mkdir(path) of {
+        Ok(_) -> _;
+        Err(_) -> ({ debug.panic("no directory to test with"); });
+    };
+}
+
+/*@Test "a path or a name too long to hold is refused, not cut" {
+    disk: true;
+    step: 400000000;
+}*/
+void a_path_or_a_name_too_long_to_hold_is_refused_not_cut() {
+    boot();
+    // 63 bytes, the longest path the OS takes: three 15-byte directories and a 14-byte file.
+    make_dir("/aaaaaaaaaaaaaaa");
+    make_dir("/aaaaaaaaaaaaaaa/bbbbbbbbbbbbbbb");
+    make_dir("/aaaaaaaaaaaaaaa/bbbbbbbbbbbbbbb/ccccccccccccccc");
+    str kept = "/aaaaaaaaaaaaaaa/bbbbbbbbbbbbbbb/ccccccccccccccc/dddddddddddddd";
+    assert_eq<i32>(kept.length, 63, "the path is 63 bytes");
+    i32 fd = owned_file(kept);
+    fs.close(fd);
+
+    // One byte more: cut to 63, it would name the file above.
+    assert.assert_true(is_invalid(remove_as_owner("/aaaaaaaaaaaaaaa/bbbbbbbbbbbbbbb/ccccccccccccccc/ddddddddddddddde")),
+        "a 64-byte path is InvalidName");
+    assert.assert_true(exists(kept), "and the file its first 63 bytes name stays");
+
+    // A 16-byte name: cut to 15, it would name LONG_NAME.
+    i32 other = owned_file("/abcdefghijklmno");
+    fs.close(other);
+    assert.assert_true(!is_removed(remove_as_owner("/abcdefghijklmnop")), "a 16-byte name removes nothing");
+    assert.assert_true(exists("/abcdefghijklmno"), "the 15-byte one stays");
+    assert.assert_true(is_invalid_name(create_as_owner("/zyxwvutsrqponmlk")), "a 16-byte name is not created");
+    assert.assert_true(!exists("/zyxwvutsrqponml"), "nor its first 15 bytes");
+    assert.assert_true(is_removed(remove_as_owner(kept)), "the 63-byte path still works");
 }

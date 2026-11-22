@@ -232,13 +232,26 @@ void dir_next_user(Pid caller, FsDirNextArgs *args) {
 }
 
 /**
- * Copies a path argument into the shared kernel path buffer.
+ * Whether a path of this length fits the kernel's path buffer whole. One that
+ * does not is answered InvalidName, not cut: what fits names another file,
+ * which the operation would open, create or remove instead.
+ * @param length Byte length of the path.
+ */
+bool path_fits(i32 length) { return length <= g_path.capacity(); }
+
+/**
+ * Copies a path argument into the shared kernel path buffer. A path that
+ * does not fit (path_fits) is not read: g_path is left empty.
  * @param caller Calling process.
  * @param user_path User address of the path's first byte.
  * @param length Byte length of the path.
  * @return false when the path is not the caller's to read.
  */
 bool copy_in_path(Pid caller, char *user_path, i32 length) {
+    if (!path_fits(length)) {
+        g_path.clear();
+        return true;
+    }
     return copy_in_text<64>(caller, UserAddress((i32)user_path), length, &g_path);
 }
 
@@ -320,7 +333,8 @@ export Result<_, OsServiceError> handle(Pid caller, i32 service, UserAddress arg
         if (!fetch<FsOpenArgs>(caller, args, &open)
             || !answerable<Result<i32, FsError>>(caller, open.result_out)
             || !copy_in_path(caller, open.path, open.path_length)) { return Ok(_); }
-        Result<i32, FsError> r = fs.open(g_path.as_str());
+        Result<i32, FsError> r = Err(FsError::InvalidName);
+        if (path_fits(open.path_length)) { r = fs.open(g_path.as_str()); }
         keep(r, caller);
         log_error_trace(r.is_err());
         reply<Result<i32, FsError>>(caller, open.result_out, &r);
@@ -331,7 +345,8 @@ export Result<_, OsServiceError> handle(Pid caller, i32 service, UserAddress arg
         if (!fetch<FsCreateArgs>(caller, args, &create)
             || !answerable<Result<i32, FsError>>(caller, create.result_out)
             || !copy_in_path(caller, create.path, create.path_length)) { return Ok(_); }
-        Result<i32, FsError> r = fs.create(g_path.as_str());
+        Result<i32, FsError> r = Err(FsError::InvalidName);
+        if (path_fits(create.path_length)) { r = fs.create(g_path.as_str()); }
         keep(r, caller);
         log_error_trace(r.is_err());
         reply<Result<i32, FsError>>(caller, create.result_out, &r);
@@ -342,7 +357,8 @@ export Result<_, OsServiceError> handle(Pid caller, i32 service, UserAddress arg
         if (!fetch<FsRemoveArgs>(caller, args, &remove)
             || !answerable<Result<_, FsError>>(caller, remove.result_out)
             || !copy_in_path(caller, remove.path, remove.path_length)) { return Ok(_); }
-        Result<_, FsError> r = fs.remove(g_path.as_str());
+        Result<_, FsError> r = Err(FsError::InvalidName);
+        if (path_fits(remove.path_length)) { r = fs.remove(g_path.as_str()); }
         log_error_trace(r.is_err());
         reply<Result<_, FsError>>(caller, remove.result_out, &r);
         return Ok(_);
@@ -352,7 +368,8 @@ export Result<_, OsServiceError> handle(Pid caller, i32 service, UserAddress arg
         if (!fetch<FsMkdirArgs>(caller, args, &mkdir)
             || !answerable<Result<i32, FsError>>(caller, mkdir.result_out)
             || !copy_in_path(caller, mkdir.path, mkdir.path_length)) { return Ok(_); }
-        Result<i32, FsError> r = fs.mkdir(g_path.as_str());
+        Result<i32, FsError> r = Err(FsError::InvalidName);
+        if (path_fits(mkdir.path_length)) { r = fs.mkdir(g_path.as_str()); }
         log_error_trace(r.is_err());
         reply<Result<i32, FsError>>(caller, mkdir.result_out, &r);
         return Ok(_);

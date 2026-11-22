@@ -1,0 +1,111 @@
+namespace test_spawn_path;
+
+import assert from "@std/testing/assert.mln";
+import allocator from "@std/memory/allocator.mln";
+import heap from "@kernel/mm/heap.mln";
+import mmu from "@kernel/mm/mmu.mln";
+import debug from "@kernel/debug/debug.mln";
+import process from "@kernel/kernel/process.mln";
+import scheduler from "@kernel/kernel/scheduler.mln";
+import console from "@os/proc/console.mln";
+import os_call_router from "@os/syscall/router.mln";
+import request_channel from "@os/ipc/channel.mln";
+import desktop from "@os/ui/desktop.mln";
+import fs from "@os/fs/fs.mln";
+import { ProcSpawnArgs } from "@contracts/myos/process-args.contract.mln";
+import { OsService } from "@contracts/myos/services.contract.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
+import { SpawnError } from "@contracts/process/spawn.contract.mln";
+import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
+import test_user from "../user_process_support.mln";
+
+// PROC_SPAWN takes a path of at most 63 bytes. A longer one names no file the
+// filesystem has; cut to 63 bytes, it would start another program.
+
+i32 ARGS = 0x7FFFC000;    // the record
+i32 RESULT = 0x7FFFC100;  // where its answer goes
+i32 PATH = 0x7FFFC200;    // the path it names
+
+void boot() {
+    heap.init();
+    allocator.configure(heap.alloc, heap.free);
+    desktop.init();
+    request_channel.init();
+    console.init();
+    os_call_router.init();
+    process.init();
+    i32 kernel_pd = case mmu.create_page_directory() of {
+        Some(value) -> value;
+        None -> ({ debug.panic("no page directory"); 0; });
+    };
+    case mmu.setup_identity_kernel_mapping(kernel_pd) of {
+        Ok(_) -> _;
+        Err(_) -> ({ debug.panic("no identity mapping"); });
+    };
+    scheduler.init();
+    fs.init();
+}
+
+void make_dir(str path) {
+    case fs.mkdir(path) of {
+        Ok(_) -> _;
+        Err(_) -> ({ debug.panic("no directory to test with"); });
+    };
+}
+
+// An executable at `path`: one halt.
+void program_at(str path) {
+    i32 fd = case fs.create(path) of {
+        Ok(value) -> value;
+        Err(_) -> ({ debug.panic("no file to test with"); 0; });
+    };
+    case fs.write(fd, test_user.halt_image(), 40) of {
+        Ok(_) -> _;
+        Err(_) -> ({ debug.panic("the image is not written"); });
+    };
+    fs.close(fd);
+}
+
+// PROC_SPAWN of `path` by `caller`.
+Result<Pid, SpawnError> spawn(Pid caller, str path) {
+    test_user.put_str(caller, PATH, path);
+    Result<Pid, SpawnError> answer = Err(SpawnError::NoHandler);
+    test_user.put_bytes(caller, RESULT, (char*)(&answer), sizeof(Result<Pid, SpawnError>));
+    ProcSpawnArgs<Result<Pid, SpawnError>> args = ProcSpawnArgs<Result<Pid, SpawnError>> {
+        path: (char*)PATH, path_length: path.length, args: (char*)PATH, args_length: 0,
+        stdout_node: 0, result_out: (Result<Pid, SpawnError>*)RESULT
+    };
+    test_user.put_bytes(caller, ARGS, (char*)(&args), sizeof(ProcSpawnArgs<Result<Pid, SpawnError>>));
+    i32 value = 0;
+    test_user.os_call(OsService::PROC_SPAWN, ARGS, &value);
+    test_user.get_bytes(caller, RESULT, (char*)(&answer), sizeof(Result<Pid, SpawnError>));
+    return answer;
+}
+
+bool is_not_found(Result<Pid, SpawnError> answer) {
+    return case answer of { Err(SpawnError::NotFound) -> true; _ -> false; };
+}
+
+bool started(Result<Pid, SpawnError> answer) {
+    return case answer of { Ok(_) -> true; Err(_) -> false; };
+}
+
+/*@Test "a spawn path too long to hold is refused, not cut" {
+    disk: true;
+    step: 400000000;
+}*/
+void a_spawn_path_too_long_to_hold_is_refused_not_cut() {
+    boot();
+    Pid caller = test_user.spawn(None);
+    test_user.become(caller);
+    make_dir("/aaaaaaaaaaaaaaa");
+    make_dir("/aaaaaaaaaaaaaaa/bbbbbbbbbbbbbbb");
+    make_dir("/aaaaaaaaaaaaaaa/bbbbbbbbbbbbbbb/ccccccccccccccc");
+    str program = "/aaaaaaaaaaaaaaa/bbbbbbbbbbbbbbb/ccccccccccccccc/dddddddddddddd";
+    program_at(program);
+
+    assert.assert_true(is_not_found(spawn(caller, "/aaaaaaaaaaaaaaa/bbbbbbbbbbbbbbb/ccccccccccccccc/ddddddddddddddde")),
+        "a 64-byte path starts nothing: NotFound");
+    assert.assert_true(started(spawn(caller, program)), "the program its first 63 bytes name starts by its own path");
+}
