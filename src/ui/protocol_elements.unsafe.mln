@@ -21,6 +21,7 @@ import { Request } from "@contracts/myapp/message.contract.mln";
 import { UiOp } from "@contracts/myapp/ui.contract.mln";
 import { Result } from "@std/core/result.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
 
 /**
  * Assigns an automation test identifier to a node if specified.
@@ -51,8 +52,13 @@ export Result<NodeId, UiError> create(Request *m) {
     i32 h = m->a3;
     NodeId id = NodeId(0);
     if (op == UiOp::APPEND_CHILD) {
+        NodeId parent = NodeId(m->a0);
         NodeId child = NodeId(m->a1);
-        dom.append_child(NodeId(m->a0), child)?;
+        // Both must be the caller's: an app neither moves another's node into
+        // its own tree nor puts its own into another's.
+        if (!dom.owns(Pid(m->owner), parent)) { return Err(UiError::NodeNotFound(parent)); }
+        if (!dom.owns(Pid(m->owner), child)) { return Err(UiError::NodeNotFound(child)); }
+        dom.append_child(parent, child)?;
         return Ok(child);
     }
     if (op == UiOp::CREATE_TIMER) {

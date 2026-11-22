@@ -7,9 +7,13 @@ import allocator from "@std/memory/allocator.mln";
 import dom from "@os/ui/dom/dom.mln";
 import { NodeStyle } from "@os/ui/dom/dom.mln";
 import dom_elements from "@os/ui/dom/dom_elements.mln";
+import dom_focus from "@os/ui/dom/dom_focus.mln";
+import dom_widgets from "@os/ui/dom/dom_widgets.mln";
 import desktop from "@os/ui/desktop.mln";
 import ui_protocol from "@os/ui/protocol.mln";
 import { Result } from "@std/core/result.mln";
+import { Option } from "@std/core/option.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
 import { NodeId, UiError } from "@contracts/ui/widget.contract.mln";
 import { Request, RequestDomain, RequestStatus } from "@contracts/myapp/message.contract.mln";
 import { UiOp } from "@contracts/myapp/ui.contract.mln";
@@ -17,9 +21,9 @@ import { UiOp } from "@contracts/myapp/ui.contract.mln";
 // ui_protocol.handle runs what an app sends, so these pin how it checks the
 // wire: TEXT_COPY stays inside the app's capacity and ends in a NUL, a
 // request that must answer through result_out is refused without one,
-// ADD_STYLE sets only the bits an app may set, and an unknown operation is
-// refused. Paging is off here, so kernel buffers stand in for the staged
-// ones the gateway passes.
+// ADD_STYLE sets only the bits an app may set, an unknown operation is
+// refused, and an app reaches only its own nodes. Paging is off here, so
+// kernel buffers stand in for the staged ones the gateway passes.
 
 i32 FILL = 120; // 'x': marks a byte nobody should have written
 i32 NO_ANSWER = -99999;
@@ -44,21 +48,76 @@ void fill(char *p, i32 n) {
     }
 }
 
-NodeId text_node(str text) {
-    return case dom_elements.create_text(text, 0, 0) of {
+// The process that sends every request here, and another one.
+Pid SENDER = Pid(1);
+Pid OTHER = Pid(2);
+
+NodeId created(Result<NodeId, UiError> result) {
+    return case result of {
         Ok(value) -> value;
-        Err(_) -> ({ assert.assert_true(false, "the text node is created"); (NodeId)0; });
+        Err(_) -> ({ assert.assert_true(false, "the node is created"); (NodeId)0; });
     };
 }
 
-RequestStatus send(i32 op, i32 a0, i32 a1, i32 a2, i32 result_out) {
+// A text node `owner` owns, made as its requests make them; None is the system.
+NodeId text_owned_by(Option<Pid> owner, str text) {
+    Option<Pid> outer = dom.current_owner();
+    dom.set_current_owner(owner);
+    NodeId id = created(dom_elements.create_text(text, 0, 0));
+    dom.set_current_owner(outer);
+    return id;
+}
+
+NodeId text_node(str text) { return text_owned_by(Some(SENDER), text); }
+
+// A window on the desktop with a text field in it, both `owner`'s.
+NodeId window_with_field(Pid owner, NodeId *field) {
+    Option<Pid> outer = dom.current_owner();
+    dom.set_current_owner(Some(owner));
+    NodeId win = created(dom_elements.create_window("w", 0, 0, 300, 200));
+    *field = created(dom_elements.create_text_input("type", 10, 10, 200, 30, 16));
+    dom.set_current_owner(outer);
+    case dom.append_child(win, *field) of { Ok(_) -> _; Err(_) -> assert.assert_true(false, "the field is in the window"); };
+    case dom.append_child(dom.desktop_id(), win) of { Ok(_) -> _; Err(_) -> assert.assert_true(false, "the window is up"); };
+    return win;
+}
+
+RequestStatus send_with(i32 op, i32 a0, i32 a1, i32 a2, i32 result_out, char *s0) {
     Request request = Request {
-        domain: RequestDomain::UI, op: op, owner: 1,
-        a0: a0, a1: a1, a2: a2, a3: 0, a4: 0, a5: 0, s0: (char*)0, s1: (char*)0,
+        domain: RequestDomain::UI, op: op, owner: (i32)SENDER,
+        a0: a0, a1: a1, a2: a2, a3: 0, a4: 0, a5: 0, s0: s0, s1: (char*)0,
         result_out: result_out, result_size: 0,
         s0_len: 0, s1_len: 0,
     };
     return ui_protocol.handle(&request);
+}
+
+RequestStatus send(i32 op, i32 a0, i32 a1, i32 a2, i32 result_out) {
+    return send_with(op, a0, a1, a2, result_out, (char*)0);
+}
+
+// APPEND_CHILD of child under parent.
+Result<NodeId, UiError> append(NodeId parent, NodeId child) {
+    Result<NodeId, UiError> answer = Ok((NodeId)0);
+    send(UiOp::APPEND_CHILD, (i32)parent, (i32)child, 0, (i32)(&answer));
+    return answer;
+}
+
+bool is_node_gone(Result<NodeId, UiError> answer) {
+    return case answer of { Err(UiError::NodeNotFound(_)) -> true; _ -> false; };
+}
+
+i32 text_length(NodeId id) {
+    str text = dom.text_of(id);
+    return text.length;
+}
+
+bool has_child(NodeId parent, NodeId child) {
+    bool found = false;
+    for (NodeId each in dom.children(parent)) {
+        if (each == child) { found = true; }
+    }
+    return found;
 }
 
 // TEXT_COPY of node `id` into out, with the status in *status.
@@ -167,4 +226,69 @@ void an_unknown_operation_is_refused() {
         "nor is the one after the last");
     assert.assert_true(send(9999, 0, 0, 0, 0) == RequestStatus::INVALID_OPERATION, "nor a large number");
     assert.assert_true(send(-1, 0, 0, 0, 0) == RequestStatus::INVALID_OPERATION, "nor a negative one");
+}
+
+/*@Test "an app reads and changes only its own nodes" { step: 200000000; }*/
+void an_app_reads_and_changes_only_its_own_nodes() {
+    setup();
+    NodeId mine = text_node("mine");
+    NodeId theirs = text_owned_by(Some(OTHER), "theirs");
+    NodeId system = text_owned_by(None, "system");
+    char out[8];
+    RequestStatus status = RequestStatus::INVALID_DOMAIN;
+
+    fill(&out[0], 8);
+    assert.assert_true(is_node_not_found(text_copy(theirs, &out[0], 8, &status)),
+        "another app's node reads as one that does not exist");
+    assert.assert_true(status == RequestStatus::OK, "answered through result_out");
+    assert_eq<i32>(byte_at(&out[0], 0), FILL, "and nothing is copied");
+    assert.assert_true(is_node_not_found(text_copy(system, &out[0], 8, &status)), "and so does the system's");
+    assert_eq<i32>(byte_at(&out[0], 0), FILL, "nothing of it either");
+    assert_eq<i32>(copied(text_copy(mine, &out[0], 8, &status)), 4, "the app's own node reads");
+
+    char text[4];
+    text[0] = 'n'; text[1] = 'e'; text[2] = 'w'; text[3] = (char)0;
+    assert.assert_true(send_with(UiOp::SET_TEXT, (i32)theirs, 0, 0, 0, &text[0]) == RequestStatus::OK,
+        "a change to another app's node is answered");
+    assert.assert_str_eq(dom.text_of(theirs), "theirs", "and changes nothing");
+    send_with(UiOp::SET_TEXT, (i32)system, 0, 0, 0, &text[0]);
+    assert.assert_str_eq(dom.text_of(system), "system", "nor does one to the system's");
+    send_with(UiOp::SET_TEXT, (i32)mine, 0, 0, 0, &text[0]);
+    assert.assert_str_eq(dom.text_of(mine), "new", "the app's own node changes");
+
+    i32 style = (i32)dom.row_of(theirs).style;
+    send(UiOp::ADD_STYLE, (i32)theirs, 0xFFFF, 0, 0);
+    assert_eq<i32>((i32)dom.row_of(theirs).style, style, "its style stays");
+    send(UiOp::FOCUS, (i32)theirs, 0, 0, 0);
+    assert.assert_true(!dom.holds(dom.focus_id(), theirs), "and it does not take the keyboard");
+
+    assert.assert_true(is_node_gone(append(mine, theirs)), "the app cannot take another's node into its tree");
+    assert.assert_true(!has_child(mine, theirs), "it stays where it was");
+    assert.assert_true(is_node_gone(append(theirs, mine)), "nor put its own into another's");
+    assert.assert_true(!has_child(theirs, mine), "which keeps its children");
+    NodeId more = text_node("more");
+    assert.assert_true(!is_node_gone(append(mine, more)), "its own nodes go together");
+    assert.assert_true(has_child(mine, more), "and are linked");
+}
+
+/*@Test "a simulated key reaches only the sender's own window" { step: 200000000; }*/
+void a_simulated_key_reaches_only_the_senders_own_window() {
+    setup();
+    NodeId their_field = (NodeId)0;
+    NodeId their_win = window_with_field(OTHER, &their_field);
+    dom_widgets.focus_window(their_win);
+    dom_focus.set_focus(their_field);
+    assert.assert_true(send(UiOp::SEND_KEY, 3, 'x', 0, 0) == RequestStatus::OK, "a key sent over another app's window is answered");
+    assert_eq<i32>(text_length(their_field), 0, "and types nothing into its field");
+
+    NodeId my_field = (NodeId)0;
+    NodeId my_win = window_with_field(SENDER, &my_field);
+    dom_widgets.focus_window(my_win);
+    dom_focus.set_focus(their_field);
+    send(UiOp::SEND_KEY, 3, 'y', 0, 0);
+    assert_eq<i32>(text_length(their_field), 0, "nor while the keyboard is in that field");
+
+    dom_focus.set_focus(my_field);
+    send(UiOp::SEND_KEY, 3, 'z', 0, 0);
+    assert.assert_str_eq(dom.text_of(my_field), "z", "the app's own focused field takes it");
 }

@@ -423,6 +423,19 @@ export Result<Option<Pid>, UiError> owner_of(NodeId id) {
 }
 
 /**
+ * Whether a process owns a node.
+ * @param owner Process ID.
+ * @param id DOM node ID.
+ * @return False for a node the system or another process owns, and for one that does not exist.
+ */
+export bool owns(Pid owner, NodeId id) {
+    return case owner_of(id) of {
+        Ok(held) -> case held of { Some(pid) -> pid == owner; None -> false; };
+        Err(_) -> false;
+    };
+}
+
+/**
  * Assigns an owner process ID recursively to a node and its descendants.
  * @param id Root DOM node ID of the subtree.
  * @param owner Process ID to assign.

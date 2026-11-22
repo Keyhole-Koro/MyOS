@@ -297,6 +297,9 @@ export void window_ready(Pid owner, NodeId win) {
         Some(value) -> value;
         None -> ({ return; });
     };
+    // set_owner below hands the whole tree to the instance: a window it did
+    // not make, another app's or the system's, stays where it is.
+    if (!dom.owns(owner, win)) { return; }
     borrow InstanceRow row = instance.row();
     if (!has_window(&row)) {
         dom_automation.note_app_starting(-1);
@@ -322,13 +325,6 @@ export void window_ready(Pid owner, NodeId win) {
     }
 }
 
-bool owns(Pid owner, NodeId win) {
-    return case dom.owner_of(win) of {
-        Ok(value) -> case value of { Some(pid) -> pid == owner; None -> false; };
-        Err(_) -> false;
-    };
-}
-
 // A dialog sits over the instance's window, and closing it comes back as a
 // CLOSE naming it, so the instance can tell it from its window.
 /**
@@ -341,7 +337,7 @@ export void show_dialog(Pid owner, NodeId win) {
         Some(value) -> value;
         None -> ({ return; });
     };
-    if (!owns(owner, win)) { return; }
+    if (!dom.owns(owner, win)) { return; }
     borrow InstanceRow row = instance.row();
     NodeId main_window = case row.win of { Some(value) -> value; None -> ({ return; }); };
     borrow NodeRow over = case dom.find_row(main_window) of { Some(found) -> found; None -> ({ return; }); };
@@ -370,7 +366,7 @@ export void show_dialog(Pid owner, NodeId win) {
  * @param win DOM node ID of the dialog.
  */
 export void hide_dialog(Pid owner, NodeId win) {
-    if (!owns(owner, win)) { return; }
+    if (!dom.owns(owner, win)) { return; }
     borrow NodeRow dialog = case dom.find_row(win) of { Some(found) -> found; None -> ({ return; }); };
     dom.damage_row(&dialog);
     dom.unlink(&dialog);
@@ -411,7 +407,7 @@ void window_closed(Option<Pid> owner, NodeId win, i32 arg) {
                     // Its window or one of its dialogs: the app decides what
                     // closing means, so a dialog it still counts as up is
                     // never taken from under it.
-                    if (current || owns(pid, win)) {
+                    if (current || dom.owns(pid, win)) {
                         push_app_event(pid, win, ShellEventKind::CLOSE, 0, 0, "");
                         return;
                     }
