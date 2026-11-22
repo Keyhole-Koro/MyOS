@@ -430,6 +430,26 @@ void dma_shape(i32 radius, i32 spread) {
  * Writes command code to DMA2D command register to trigger hardware execution.
  * @param cmd DMA2D command code (e.g. DMA2D_CMD_SOLID_FILL).
  */
+/**
+ * Moves the w x h pixels at (sx, sy) to (dx, dy) on the display, as a window
+ * being dragged moves: the device stages the source, so the two may overlap.
+ * The clip does not apply; the caller keeps both rectangles on the display.
+ * @param sx Left of the pixels now. @param sy Top of the pixels now.
+ * @param w Width. @param h Height.
+ * @param dx Left to move them to. @param dy Top to move them to.
+ */
+@safe
+export void move_pixels(i32 sx, i32 sy, i32 w, i32 h, i32 dx, i32 dy) {
+    clear_clip();
+    i32 width = display_config.width();
+    i32* src = (i32*)DMA2D_SRC_ADDR;
+    i32* src_stride = (i32*)DMA2D_SRC_STRIDE_ADDR;
+    *src = VRAM_BASE + (sy * width + sx) * 4;
+    *src_stride = width;
+    dma_dest(dx, dy, w, h);
+    dma_run(DMA2D_CMD_COPY);
+}
+
 void dma_run(i32 cmd) {
     i32* c = (i32*)DMA2D_CMD_ADDR;
     *c = cmd;
@@ -883,13 +903,15 @@ export void draw_label(i32 x, i32 y, str s, i32 color, bool bold, i32 scale) {
             cx = x;
             cy = cy + line_h;
             tabs = 0;
+            // Lines only go down: one below the clip ends the text.
+            if (cy >= g_clip.y1) { return; }
         } else if (c == 9) {
             tabs++;
             cx = x + tabs * TAB_STOP * scale;
         } else {
             // Skip glyphs entirely outside the clip without touching DMA2D.
             i32 adv = font_sans.advance(face, c);
-            if (cx < g_clip.x1) {
+            if (cx < g_clip.x1 && cy < g_clip.y1 && cy + line_h > g_clip.y0) {
                 if (cx + adv + 4 > g_clip.x0) {
                     draw_glyph(cx, cy, c, color, bold, scale);
                 }
@@ -945,19 +967,26 @@ export i32 mono_line_height(i32 scale) {
 @safe
 export void draw_mono(i32 x, i32 y, str s, i32 color, i32 scale) {
     i32 face = font_mono.face_for(scale);
+    // A line wholly above or below the clip draws nothing: a terminal or a
+    // text area repainting a damaged strip skips its other lines here.
+    if (y >= g_clip.y1 || y + font_mono.line_height(face) <= g_clip.y0) { return; }
     i32 cell = font_mono.advance(face, ' ');
+    i32 cx = x;
     i32 i = 0;
     while (i < s.length) {
-        i32 cx = x + i * cell;
         if (cx >= g_clip.x1) { return; }
-        i32 c = s.byte(i);
-        i32 w = font_mono.width(face, c);
-        i32 h = font_mono.height(face, c);
-        if (cx + cell + 4 > g_clip.x0 && w > 0 && h > 0) {
-            i32 gx = cx + font_mono.bearing_x(face, c);
-            i32 gy = y + font_mono.bearing_y(face, c);
-            mask_blit(font_mono.data(face, c), w, gx, gy, w, h, color);
+        if (cx + cell + 4 > g_clip.x0) {
+            i32 c = s.byte(i);
+            i32 w = font_mono.width(face, c);
+            i32 h = font_mono.height(face, c);
+            if (w > 0 && h > 0) {
+                i32 gx = cx + font_mono.bearing_x(face, c);
+                i32 gy = y + font_mono.bearing_y(face, c);
+                mask_blit(font_mono.data(face, c), w, gx, gy, w, h, color);
+            }
         }
+        // Added, not multiplied: the CPU has no multiply instruction.
+        cx = cx + cell;
         i++;
     }
 }

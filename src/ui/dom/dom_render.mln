@@ -16,7 +16,7 @@ import dom_window_chrome from "dom_window_chrome.mln";
 import dom from "dom.mln";
 import { NodeRow } from "dom_model.mln";
 import { Blob } from "@std/memory/blob.mln";
-import { NodeKind, NodeRole, NodeState, NodeStyle, Children } from "dom.mln";
+import { NodeKind, NodeRole, NodeState, NodeStyle, Children, WindowMove } from "dom.mln";
 import { Option } from "@std/core/option.mln";
 import { Text } from "@std/text/text.mln";
 import { NodeId } from "@contracts/ui/widget.contract.mln";
@@ -1128,9 +1128,68 @@ export void render_all() {
 }
 
 /**
+ * Whether a window's painted pixels can be copied to where it moved: it is
+ * the top window, and both its places are on the display and clear of what
+ * is drawn over windows (the taskbar, an open menu).
+ * @param m The move.
+ * @param n The window's row, already at its new place.
+ */
+bool can_copy(WindowMove m, borrow NodeRow n) {
+    if (n.kind != NodeKind::WINDOW || (n.state & NodeState::VISIBLE) == 0) { return false; }
+    if (m.from_x == n.x && m.from_y == n.y) { return false; }
+    i32 dw = graphics.display_width();
+    i32 dh = graphics.display_height();
+    if (m.from_x < 0 || m.from_y < 0 || m.from_x + n.w > dw || m.from_y + n.h > dh) { return false; }
+    if (n.x < 0 || n.y < 0 || n.x + n.w > dw || n.y + n.h > dh) { return false; }
+    Option<NodeId> taskbar = dom.taskbar_id();
+    Option<NodeId> menu = dom_menu.menu_id();
+    Option<NodeId> top = None;
+    for (NodeId child_id in dom.children(dom.desktop_id())) {
+        if (!dom.holds(taskbar, child_id) && !dom.holds(menu, child_id)) { top = Some(child_id); }
+    }
+    if (!dom.holds(top, n.id)) { return false; }
+    i32 fx1 = m.from_x + n.w;
+    i32 fy1 = m.from_y + n.h;
+    i32 nx1 = n.x + n.w;
+    i32 ny1 = n.y + n.h;
+    if (dom.extent_touches(taskbar, m.from_x, m.from_y, fx1, fy1) || dom.extent_touches(taskbar, n.x, n.y, nx1, ny1)) {
+        return false;
+    }
+    // Damage waiting elsewhere is under the window or outside it, and is
+    // repainted after the copy; damage in the window itself settled the move
+    // the plain way already (dom.damage_row).
+    return !dom.extent_touches(menu, m.from_x, m.from_y, fx1, fy1) && !dom.extent_touches(menu, n.x, n.y, nx1, ny1);
+}
+
+/**
+ * Settles a window dragged since the last paint: its pixels are copied to
+ * its new place and only the strips around it are damaged, or, when a copy
+ * would show something stale, it is damaged where it was and where it is.
+ * @param m The move dom.take_move gave.
+ */
+void settle_move(WindowMove m) {
+    borrow NodeRow n = case dom.find_row(m.id) of { Some(row) -> row; None -> ({ return; }); };
+    if (!can_copy(m, &n)) {
+        // On the timeline, so a slow drag frame says why it was.
+        timeline.mark("window move not copied");
+        dom.damage_whole_move(m);
+        return;
+    }
+    timeline.begin("move window");
+    graphics.move_pixels(m.from_x, m.from_y, n.w, n.h, n.x, n.y);
+    // The rounded corners show what was behind the window: repaint them.
+    dom.damage_around_move(m, (theme.WINDOW_RADIUS + 2) * dom.ui_scale());
+    timeline.end("move window");
+}
+
+/**
  * Repaints only damaged regions using clip rectangles, falling back to full repaint if empty.
  */
 export void render_scene() {
+    case dom.take_move() of {
+        Some(m) -> settle_move(m);
+        None -> _;
+    };
     if (dom.damage_count() == 0) {
         render_all();
         return;

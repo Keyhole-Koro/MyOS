@@ -136,6 +136,17 @@ struct DamageRect {
 DamageRect g_damage[8];
 i32 g_damage_count = 0;
 
+// A window dragged between two paints is not damaged where it was and where
+// it is: the paint copies its pixels from where they were painted to its new
+// place, and repaints only around it (damage_around_move). g_moved is the
+// window, g_moved_x/y where it was last painted.
+Option<NodeId> g_moved;
+i32 g_moved_x = 0;
+i32 g_moved_y = 0;
+// A move this frame was repainted the plain way (settle_move): the window is
+// no longer where it was painted, so until the next paint every move is.
+bool g_moves_plain = false;
+
 // The frame render_scene is painting: the damage list as it stood when the
 // paint began (take_damage). The list itself starts over then, so damage
 // added while the frame paints is kept for the next one. That happens: a
@@ -715,8 +726,17 @@ void damage_rect(DamageRect rect) {
  * @return The extent in display coordinates.
  */
 DamageRect node_extent(borrow NodeRow n) {
-    i32 x = n.x;
-    i32 y = n.y;
+    return extent_at(&n, n.x, n.y);
+}
+
+/**
+ * The extent a node would have with its top-left at (x, y).
+ * @param n DOM Node row.
+ * @param x Left of the node's own box.
+ * @param y Top of the node's own box.
+ * @return The extent in display coordinates.
+ */
+DamageRect extent_at(borrow NodeRow n, i32 x, i32 y) {
     i32 w = n.w;
     i32 h = n.h;
     if (n.kind == NodeKind::WINDOW) {
@@ -736,7 +756,152 @@ DamageRect node_extent(borrow NodeRow n) {
  * @param n DOM Node row.
  */
 export void damage_row(borrow NodeRow n) {
+    // A window whose move is waiting for the paint is repainted the plain
+    // way once anything in it changes: its painted pixels are stale.
+    if (in_moved_window(n.id)) { settle_move(); }
     damage_rect(node_extent(&n));
+}
+
+// --- a window moved by copying its pixels ----------------------------------
+// (g_moved, declared with the damage list, is the window waiting for it.)
+
+/** A window move the next paint settles: the window, and where its pixels are. */
+export struct WindowMove {
+    NodeId id;
+    i32 from_x;
+    i32 from_y;
+};
+
+/** Damages the waiting move the plain way: where the window was painted and where it is. */
+void settle_move() {
+    case take_move() of {
+        Some(m) -> damage_whole_move(m);
+        None -> _;
+    };
+    g_moves_plain = true;
+}
+
+/** @return Whether a node is the window whose move is waiting, or inside it. */
+bool in_moved_window(NodeId id) {
+    NodeId window = case g_moved of { Some(value) -> value; None -> ({ return false; }); };
+    Option<NodeId> at = Some(id);
+    i32 depth = 0;
+    while (depth < 16) {
+        NodeId node = case at of { Some(value) -> value; None -> ({ return false; }); };
+        if (node == window) { return true; }
+        at = parent_id(node);
+        depth++;
+    }
+    return false;
+}
+
+/**
+ * Takes the window move waiting for this paint. The caller copies its pixels
+ * and calls damage_around_move, or calls damage_whole_move instead.
+ * @return The move, or None.
+ */
+export Option<WindowMove> take_move() {
+    g_moves_plain = false;
+    NodeId id = case g_moved of { Some(value) -> value; None -> ({ return None; }); };
+    g_moved = None;
+    return Some(WindowMove { id: id, from_x: g_moved_x, from_y: g_moved_y });
+}
+
+/**
+ * Repaints a moved window the plain way: its extent where it was painted, and where it is.
+ * @param m The move.
+ */
+export void damage_whole_move(WindowMove m) {
+    borrow NodeRow n = case find_row(m.id) of { Some(row) -> row; None -> ({ return; }); };
+    damage_rect(extent_at(&n, m.from_x, m.from_y));
+    damage_rect(node_extent(&n));
+}
+
+/**
+ * Damages what copying a moved window's pixels leaves wrong: the box around
+ * its old and new extents but for its body, as four strips, the top and
+ * bottom ones reaching `corner` rows into the body, where its rounded
+ * corners show what was behind them. The strips are kept apart: merged, they
+ * would be the whole box again.
+ * @param m The move, its pixels already copied to the window's place.
+ * @param corner Rows of the body's top and bottom to repaint.
+ */
+export void damage_around_move(WindowMove m, i32 corner) {
+    borrow NodeRow n = case find_row(m.id) of { Some(row) -> row; None -> ({ return; }); };
+    DamageRect was = extent_at(&n, m.from_x, m.from_y);
+    DamageRect now = node_extent(&n);
+    i32 x0 = was.x0 < now.x0 ? was.x0 : now.x0;
+    i32 y0 = was.y0 < now.y0 ? was.y0 : now.y0;
+    i32 x1 = was.x1 > now.x1 ? was.x1 : now.x1;
+    i32 y1 = was.y1 > now.y1 ? was.y1 : now.y1;
+    i32 top = n.y + corner;
+    i32 bottom = n.y + n.h - corner;
+    DamageRect above = DamageRect { x0: x0, y0: y0, x1: x1, y1: top };
+    DamageRect below = DamageRect { x0: x0, y0: bottom, x1: x1, y1: y1 };
+    DamageRect left = DamageRect { x0: x0, y0: top, x1: n.x, y1: bottom };
+    DamageRect right = DamageRect { x0: n.x + n.w, y0: top, x1: x1, y1: bottom };
+    damage_apart(above);
+    damage_apart(below);
+    damage_apart(left);
+    damage_apart(right);
+}
+
+/**
+ * Adds a rectangle to the damage list as its own entry: merged only into an
+ * entry that already holds all of it, or, with the list full, as damage_rect does.
+ * @param rect Rectangle in display coordinates.
+ */
+void damage_apart(DamageRect rect) {
+    i32 display_width = ui_metrics.display_width();
+    i32 display_height = ui_metrics.display_height();
+    if (rect.x0 < 0) { rect.x0 = 0; }
+    if (rect.y0 < 0) { rect.y0 = 0; }
+    if (rect.x1 > display_width) { rect.x1 = display_width; }
+    if (rect.y1 > display_height) { rect.y1 = display_height; }
+    if (rect.x1 <= rect.x0 || rect.y1 <= rect.y0) { return; }
+    {
+        bool was_enabled = irq.save_disable();
+        defer irq.restore(was_enabled);
+        i32 i = 0;
+        while (i < g_damage_count) {
+            DamageRect held = g_damage[i];
+            if (held.x0 <= rect.x0 && held.y0 <= rect.y0 && held.x1 >= rect.x1 && held.y1 >= rect.y1) { return; }
+            i++;
+        }
+        if (g_damage_count < DAMAGE_MAX) {
+            g_damage[g_damage_count] = rect;
+            g_damage_count = g_damage_count + 1;
+            return;
+        }
+    }
+    damage_rect(rect);
+}
+
+/**
+ * @return Whether any damage waiting for the paint overlaps the rectangle.
+ * @param x0 Left. @param y0 Top. @param x1 Right, exclusive. @param y1 Bottom, exclusive.
+ */
+export bool damage_touches(i32 x0, i32 y0, i32 x1, i32 y1) {
+    bool was_enabled = irq.save_disable();
+    defer irq.restore(was_enabled);
+    i32 i = 0;
+    while (i < g_damage_count) {
+        DamageRect held = g_damage[i];
+        if (held.x0 < x1 && x0 < held.x1 && held.y0 < y1 && y0 < held.y1) { return true; }
+        i++;
+    }
+    return false;
+}
+
+/**
+ * @return Whether a node's painted extent overlaps the rectangle; false for None.
+ * @param id The node. @param x0 Left. @param y0 Top. @param x1 Right, exclusive. @param y1 Bottom, exclusive.
+ */
+export bool extent_touches(Option<NodeId> id, i32 x0, i32 y0, i32 x1, i32 y1) {
+    NodeId node = case id of { Some(value) -> value; None -> ({ return false; }); };
+    borrow NodeRow n = case find_row(node) of { Some(row) -> row; None -> ({ return false; }); };
+    DamageRect e = node_extent(&n);
+    return e.x0 < x1 && x0 < e.x1 && e.y0 < y1 && y0 < e.y1;
 }
 
 /**
@@ -753,7 +918,7 @@ export void damage_node(NodeId id) {
  * @return 1 if damage regions exist, 0 otherwise.
  */
 export bool has_damage() {
-    return g_damage_count > 0;
+    return g_damage_count > 0 || g_moved.is_some();
 }
 
 /**
@@ -919,6 +1084,26 @@ export void set_bounds(NodeId id, i32 x, i32 y, i32 w, i32 h) {
  */
 export void move_node(NodeId id, i32 dx, i32 dy) {
     borrow NodeRow n = case find_row(id) of { Some(row) -> row; None -> ({ return; }); };
+    if (n.kind == NodeKind::WINDOW && !g_moves_plain) {
+        // Its pixels move at the next paint (take_move): until then the
+        // screen has it where it was painted, wherever moves since put it.
+        // That holds only from a place nothing waits to repaint.
+        bool start = !holds(g_moved, id);
+        if (start && damage_touches(n.x, n.y, n.x + n.w, n.y + n.h)) {
+            g_moves_plain = true;
+        } else {
+            if (start) {
+                settle_move();
+                g_moves_plain = false;
+                g_moved = Some(id);
+                g_moved_x = n.x;
+                g_moved_y = n.y;
+            }
+            offset_subtree(id, dx, dy);
+            touch();
+            return;
+        }
+    }
     damage_row(&n);
     offset_subtree(id, dx, dy);
     damage_row(&n);
