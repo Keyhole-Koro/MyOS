@@ -1,0 +1,183 @@
+namespace test_user;
+
+import heap from "@kernel/mm/heap.mln";
+import mem from "@kernel/mm/mem.mln";
+import mmu from "@kernel/mm/mmu.mln";
+import debug from "@kernel/debug/debug.mln";
+import loader from "@kernel/kernel/loader.mln";
+import process from "@kernel/kernel/process.mln";
+import thread from "@kernel/kernel/thread.mln";
+import syscall from "@kernel/kernel/syscall.mln";
+import { Pid } from "@contracts/process/control.contract.mln";
+import { SyscallStatus, Syscall } from "@contracts/myos/syscall.contract.mln";
+import { Option } from "@std/core/option.mln";
+import { Result } from "@std/core/result.mln";
+
+// Processes for tests to make syscalls as, and their memory. A process here
+// never runs: its program is one halt instruction. A test writes into its
+// memory through the frames its page tables name, whichever page tables are
+// in use. Its four stack pages, 0x7FFFC000 up to the end of the user half,
+// are free for records, strings and buffers; its text is read-only.
+
+/** A test process's text: its own, but read-only. */
+export const i32 TEXT = 0x40000000;
+
+/** A frame as a process's syscall trap leaves it. */
+i32 g_frame[16];
+
+/** @return A 40-byte MBIN v2 image whose program is one halt. */
+i32 halt_image() {
+    i32 image = case heap.alloc(40) of {
+        Ok(value) -> value;
+        Err(_) -> ({ debug.panic("no memory for a test image"); 0; });
+    };
+    mem.write_word(image + 0, 0x4D42494E);  // magic: 'MBIN'
+    mem.write_word(image + 4, 2);           // version
+    mem.write_word(image + 8, TEXT);        // entry_point
+    mem.write_word(image + 12, 36);         // text_offset
+    mem.write_word(image + 16, 4);          // text_size
+    mem.write_word(image + 20, 40);         // data_offset
+    mem.write_word(image + 24, 0);          // data_size
+    mem.write_word(image + 28, 0);          // bss_size
+    mem.write_word(image + 32, 0);          // sections_offset: none
+    mem.write_word(image + 36, 0xFC000000); // halt
+    return image;
+}
+
+/**
+ * Loads a process that never runs.
+ * @param parent Its parent, or None for one the OS owns.
+ * @return Its pid.
+ */
+export Pid spawn(Option<Pid> parent) {
+    i32 image = halt_image();
+    Pid pid = case loader.spawn_from_buffer(parent, image, 40) of {
+        Ok(value) -> value;
+        Err(_) -> ({ debug.panic("the test process was not loaded"); return Pid(0); });
+    };
+    heap.free(image);
+    return pid;
+}
+
+/**
+ * Makes a process's thread the current one, and its page tables the ones in
+ * use, as a syscall from it finds them.
+ * @param pid A process spawn() loaded.
+ */
+export void become(Pid pid) {
+    i32 slot = 0;
+    while (slot < thread.high_water()) {
+        bool owned = case thread.owner_pid_at(slot) of { Some(owner) -> (i32)owner == (i32)pid; None -> false; };
+        if (owned) {
+            thread.set_current_slot(slot);
+            thread.make_running(slot);
+            mmu.enable_paging(process.get_pdbr(pid).unwrap_or(0));
+            return;
+        }
+        slot++;
+    }
+    debug.panic("the test process has no thread");
+}
+
+/** @return Where `at`, an address in pid's memory, lies in the kernel's. */
+i32 physical(Pid pid, i32 at) {
+    i32 pdbr = process.get_pdbr(pid).unwrap_or(0);
+    i32 pte = case mmu.user_mapping(pdbr, at) of {
+        Some(value) -> value;
+        None -> ({ debug.panic("not the test process's memory"); 0; });
+    };
+    return (pte & 0xFFFFF000) + (at & 0xFFF);
+}
+
+/** Writes one byte of a process's memory. */
+export void put_byte(Pid pid, i32 at, i32 value) { mem.write_byte(physical(pid, at), value); }
+
+/** @return One byte of a process's memory. */
+export i32 byte_at(Pid pid, i32 at) { return mem.read_byte(physical(pid, at)); }
+
+/** Writes bytes into a process's memory, one page at a time. */
+export void put_bytes(Pid pid, i32 at, char *bytes, i32 n) {
+    i32 k = 0;
+    while (k < n) {
+        put_byte(pid, at + k, (i32)bytes[k] & 0xFF);
+        k++;
+    }
+}
+
+/** Reads bytes out of a process's memory. */
+export void get_bytes(Pid pid, i32 at, char *bytes, i32 n) {
+    i32 k = 0;
+    while (k < n) {
+        bytes[k] = (char)byte_at(pid, at + k);
+        k++;
+    }
+}
+
+/** Writes a string into a process's memory, with no terminator. */
+export void put_str(Pid pid, i32 at, str text) { put_bytes(pid, at, text.data, text.length); }
+
+/** Fills bytes of a process's memory. */
+export void fill(Pid pid, i32 at, i32 n, i32 value) {
+    i32 k = 0;
+    while (k < n) {
+        put_byte(pid, at + k, value);
+        k++;
+    }
+}
+
+/**
+ * @return Kernel heap memory, n bytes of `value`: what a process must never
+ *         get the OS to read or write.
+ */
+export i32 kernel_bytes(i32 n, i32 value) {
+    i32 at = case heap.alloc(n) of {
+        Ok(pointer) -> pointer;
+        Err(_) -> ({ debug.panic("no kernel memory for a test"); 0; });
+    };
+    i32 k = 0;
+    while (k < n) {
+        mem.write_byte(at + k, value);
+        k++;
+    }
+    return at;
+}
+
+/** @return Whether n kernel bytes at `at` all still hold `value`. */
+export bool kernel_untouched(i32 at, i32 n, i32 value) {
+    i32 k = 0;
+    while (k < n) {
+        if (mem.read_byte(at + k) != value) { return false; }
+        k++;
+    }
+    return true;
+}
+
+/**
+ * Makes a syscall as the current process does: through dispatch, with its
+ * arguments in the frame's registers.
+ * @param value Gets r2: the value, or the failure's detail.
+ * @return r1: the status.
+ */
+export SyscallStatus call(i32 number, i32 arg1, i32 arg2, i32 arg3, i32 *value) {
+    i32 frame = (i32)(&g_frame[0]);
+    i32 offset = 0;
+    while (offset < 64) {
+        mem.write_word(frame + offset, 0);
+        offset = offset + 4;
+    }
+    mem.write_word(frame + 24, number); // r1
+    mem.write_word(frame + 8, arg1);    // r5
+    mem.write_word(frame + 4, arg2);    // r6
+    mem.write_word(frame + 0, arg3);    // r7
+    SyscallStatus status = SyscallStatus::Ok;
+    case syscall.dispatch(frame) of {
+        Ok(outcome) -> ({ status = outcome.status; *value = outcome.value; });
+        Err(error) -> ({ status = syscall.error_status(error); *value = 0; });
+    };
+    return status;
+}
+
+/** OS_CALL(service, args) as the current process makes it; see call(). */
+export SyscallStatus os_call(i32 service, i32 args, i32 *value) {
+    return call(Syscall::OS_CALL, service, args, 0, value);
+}

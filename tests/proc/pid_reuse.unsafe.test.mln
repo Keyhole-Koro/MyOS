@@ -27,7 +27,7 @@ import dom from "@os/ui/dom/dom.mln";
 import dom_elements from "@os/ui/dom/dom_elements.mln";
 import desktop from "@os/ui/desktop.mln";
 import { Pid, ProcessControlError, ProcessControlStatus, ProcessExitStatus } from "@contracts/process/control.contract.mln";
-import { Event, EventKind, Request, RequestDomain } from "@contracts/myapp/message.contract.mln";
+import { EventKind, Request, RequestDomain } from "@contracts/myapp/message.contract.mln";
 import { KeyClaimError } from "@contracts/myapp/lifecycle.contract.mln";
 import { UiOp } from "@contracts/myapp/ui.contract.mln";
 import { OsService, OsServiceError } from "@contracts/myos/services.contract.mln";
@@ -42,6 +42,8 @@ import fs from "@os/fs/fs.mln";
 import fs_syscall from "@os/fs/syscall.mln";
 import { FsError, SeekWhence } from "@contracts/io/fs.contract.mln";
 import { FsCloseArgs, FsReadArgs } from "@contracts/myos/fs-args.contract.mln";
+import { SyscallStatus } from "@contracts/myos/syscall.contract.mln";
+import test_user from "../user_process_support.mln";
 
 // What the end of a process leaves behind, on the real process table, loader,
 // console, gateway, DOM and file table. The lowest free slot is taken first, so
@@ -250,6 +252,17 @@ bool has_no_output(Pid pid) {
     return case console.output_of(pid) of { Some(_) -> false; None -> true; };
 }
 
+// What a process names to an OS_CALL is in its own memory: its first stack
+// page has room, and these tiny programs never reach it.
+i32 ARGS = 0x7FFFC000;
+i32 RESULT = 0x7FFFC100;
+i32 TEXTS = 0x7FFFC200;
+i32 BUFFER = 0x7FFFC400;
+i32 EVENT = 0x7FFFC800;
+
+/** Writes an argument record into a process's memory, at ARGS. */
+void put_args(Pid pid, char *record, i32 size) { test_user.put_bytes(pid, ARGS, record, size); }
+
 /*@Test "the lowest free slot goes to the next process" { step: 20000000; }*/
 void the_lowest_free_slot_goes_to_the_next_process() {
     process.init();
@@ -382,42 +395,69 @@ void a_refused_call_says_so_across_the_syscall_boundary() {
     i32 accepted = (i32)ProcessControlStatus::Accepted;
     i32 refused = (i32)ProcessControlStatus::Refused;
 
+    UserAddress args = UserAddress(ARGS);
+
     ProcBindArgs bind = ProcBindArgs { pid: (i32)child, output_node: 9 };
-    UserAddress bind_args = UserAddress((i32)(&bind));
-    Result<i32, OsServiceError> bound = process_syscall.handle(stranger, OsService::PROC_BIND, bind_args);
+    put_args(stranger, (char*)(&bind), sizeof(ProcBindArgs));
+    put_args(parent, (char*)(&bind), sizeof(ProcBindArgs));
+    Result<i32, OsServiceError> bound = process_syscall.handle(stranger, OsService::PROC_BIND, args);
     assert_eq<i32>(bound.ok().unwrap_or(-1), refused, "PROC_BIND refuses a stranger");
     assert.assert_true(has_no_output(child), "and binds nothing");
-    Result<i32, OsServiceError> rebound = process_syscall.handle(parent, OsService::PROC_BIND, bind_args);
+    Result<i32, OsServiceError> rebound = process_syscall.handle(parent, OsService::PROC_BIND, args);
     assert_eq<i32>(rebound.ok().unwrap_or(-1), accepted, "PROC_BIND accepts the parent");
     assert.assert_true(output_is(child, 9), "and binds");
 
     str line = "x";
-    ProcFeedArgs feed = ProcFeedArgs { pid: (i32)child, line: line.data, line_length: line.length };
-    UserAddress feed_args = UserAddress((i32)(&feed));
-    Result<i32, OsServiceError> fed = process_syscall.handle(stranger, OsService::PROC_FEED, feed_args);
+    test_user.put_str(stranger, TEXTS, line);
+    ProcFeedArgs feed = ProcFeedArgs { pid: (i32)child, line: (char*)TEXTS, line_length: line.length };
+    put_args(stranger, (char*)(&feed), sizeof(ProcFeedArgs));
+    Result<i32, OsServiceError> fed = process_syscall.handle(stranger, OsService::PROC_FEED, args);
     assert_eq<i32>(fed.ok().unwrap_or(-1), refused, "PROC_FEED refuses a stranger");
     assert.assert_true(stdin_is_empty(child), "and feeds nothing");
 
     ProcUnbindArgs unbind = ProcUnbindArgs { pid: (i32)child };
-    UserAddress unbind_args = UserAddress((i32)(&unbind));
-    Result<i32, OsServiceError> unbound = process_syscall.handle(stranger, OsService::PROC_UNBIND, unbind_args);
+    put_args(stranger, (char*)(&unbind), sizeof(ProcUnbindArgs));
+    Result<i32, OsServiceError> unbound = process_syscall.handle(stranger, OsService::PROC_UNBIND, args);
     assert_eq<i32>(unbound.ok().unwrap_or(-1), refused, "PROC_UNBIND refuses a stranger");
     assert.assert_true(output_is(child, 9), "and unbinds nothing");
 
     Result<bool, ProcessControlError> exited = Ok(true);
+    test_user.put_bytes(stranger, RESULT, (char*)(&exited), sizeof(Result<bool, ProcessControlError>));
     ProcExitedArgs<Result<bool, ProcessControlError>> query = ProcExitedArgs<Result<bool, ProcessControlError>> {
-        pid: (i32)child, result_out: &exited
+        pid: (i32)child, result_out: (Result<bool, ProcessControlError>*)RESULT
     };
-    process_syscall.handle(stranger, OsService::PROC_EXITED, UserAddress((i32)(&query)));
+    put_args(stranger, (char*)(&query), sizeof(ProcExitedArgs<Result<bool, ProcessControlError>>));
+    process_syscall.handle(stranger, OsService::PROC_EXITED, args);
+    test_user.get_bytes(stranger, RESULT, (char*)(&exited), sizeof(Result<bool, ProcessControlError>));
     assert_query_refused(exited, "PROC_EXITED refuses a stranger");
 
     ProcessExitStatus untouched = ProcessExitStatus::Code(0);
     Result<ProcessExitStatus, ProcessControlError> reaped = Ok(untouched);
+    test_user.put_bytes(stranger, RESULT, (char*)(&reaped), sizeof(Result<ProcessExitStatus, ProcessControlError>));
     ProcReapArgs<Result<ProcessExitStatus, ProcessControlError>> reap = ProcReapArgs<Result<ProcessExitStatus, ProcessControlError>> {
-        pid: (i32)child, result_out: &reaped
+        pid: (i32)child, result_out: (Result<ProcessExitStatus, ProcessControlError>*)RESULT
     };
-    process_syscall.handle(stranger, OsService::PROC_REAP, UserAddress((i32)(&reap)));
+    put_args(stranger, (char*)(&reap), sizeof(ProcReapArgs<Result<ProcessExitStatus, ProcessControlError>>));
+    process_syscall.handle(stranger, OsService::PROC_REAP, args);
+    test_user.get_bytes(stranger, RESULT, (char*)(&reaped), sizeof(Result<ProcessExitStatus, ProcessControlError>));
     assert_reap_refused(reaped, "PROC_REAP refuses a stranger");
+
+    // Memory that is not the caller's is refused before anything else, and
+    // says so in r1: BadAddress, with the address in r2. The kernel's own
+    // memory most of all: here, the parent's record built on this stack.
+    test_user.become(parent);
+    i32 value = 0;
+    i32 kernel_record = (i32)(&bind);
+    SyscallStatus status = test_user.os_call(OsService::PROC_UNBIND, kernel_record, &value);
+    assert_eq<i32>((i32)status, (i32)SyscallStatus::BadAddress, "a record in kernel memory is refused");
+    assert_eq<i32>(value, kernel_record, "at its address");
+    assert.assert_true(output_is(child, 9), "and unbinds nothing");
+    i32 secret = test_user.kernel_bytes(64, 0x5A);
+    query.result_out = (Result<bool, ProcessControlError>*)secret;
+    put_args(parent, (char*)(&query), sizeof(ProcExitedArgs<Result<bool, ProcessControlError>>));
+    status = test_user.os_call(OsService::PROC_EXITED, ARGS, &value);
+    assert_eq<i32>((i32)status, (i32)SyscallStatus::BadAddress, "an answer into kernel memory is refused");
+    assert.assert_true(test_user.kernel_untouched(secret, 64, 0x5A), "and is not written");
 }
 
 // The OS's release comes between the exit and the reap, so the slot, and with it
@@ -462,8 +502,7 @@ void an_ended_process_leaves_the_next_holder_of_its_pid_nothing() {
     boot();
     Pid parent = spawn_waiting(None, 0);
     Pid stale = spawn_exiting(Some(parent), 11);
-    Event event;
-    UserAddress out = UserAddress((i32)(&event));
+    UserAddress out = UserAddress(EVENT);
     i32 timers = dom.timer_count();
 
     // What the process's first POLL, CREATE_BUTTON and CLAIM_KEY do.
@@ -482,14 +521,14 @@ void an_ended_process_leaves_the_next_holder_of_its_pid_nothing() {
     assert.assert_true(console.feed_line(parent, stale, "unread").is_ok(), "and feeds its stdin");
 
     // Its last request is still queued when it ends: nothing has served it yet.
-    Result<NodeId, UiError> created;
     Request last = Request {
         domain: RequestDomain::UI, op: UiOp::CREATE_TIMER, owner: 0,
         a0: 1000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0, s0: (char*)0, s1: (char*)0,
-        result_out: (i32)(&created), result_size: sizeof(Result<NodeId, UiError>),
+        result_out: RESULT, result_size: sizeof(Result<NodeId, UiError>),
         s0_len: 0, s1_len: 0,
     };
-    assert.assert_true(request_gateway.request(stale, UserAddress((i32)(&last))), "the request is queued");
+    put_args(stale, (char*)(&last), sizeof(Request));
+    assert.assert_true(request_gateway.request(stale, UserAddress(ARGS)), "the request is queued");
 
     irq.enable();
     wait_for_exit(parent, stale);
@@ -675,16 +714,20 @@ void a_file_belongs_to_the_process_that_opened_it() {
     assert.assert_true(!fs.usable_by(fd, stranger), "a stranger does not");
     assert.assert_true(fs.usable_by(1, stranger), "stdout is everybody's");
 
-    char buffer[4];
     Result<i32, FsError> answer = Ok(0);
-    FsReadArgs read = FsReadArgs { fd: fd, buffer: &buffer[0], size: 4, result_out: &answer };
-    fs_syscall.handle(stranger, OsService::FS_READ, UserAddress((i32)(&read)));
+    test_user.put_bytes(stranger, RESULT, (char*)(&answer), sizeof(Result<i32, FsError>));
+    FsReadArgs read = FsReadArgs { fd: fd, buffer: (char*)BUFFER, size: 4, result_out: (Result<i32, FsError>*)RESULT };
+    put_args(stranger, (char*)(&read), sizeof(FsReadArgs));
+    fs_syscall.handle(stranger, OsService::FS_READ, UserAddress(ARGS));
+    test_user.get_bytes(stranger, RESULT, (char*)(&answer), sizeof(Result<i32, FsError>));
     bool bad_fd = case answer of { Err(FsError::BadFd(_)) -> true; _ -> false; };
     assert.assert_true(bad_fd, "a stranger's read gets BadFd");
 
     FsCloseArgs close = FsCloseArgs { fd: fd };
-    fs_syscall.handle(stranger, OsService::FS_CLOSE, UserAddress((i32)(&close)));
+    put_args(stranger, (char*)(&close), sizeof(FsCloseArgs));
+    put_args(holder, (char*)(&close), sizeof(FsCloseArgs));
+    fs_syscall.handle(stranger, OsService::FS_CLOSE, UserAddress(ARGS));
     assert.assert_true(fs.seek(fd, 0, SeekWhence::Set).is_ok(), "and its close closes nothing");
-    fs_syscall.handle(holder, OsService::FS_CLOSE, UserAddress((i32)(&close)));
+    fs_syscall.handle(holder, OsService::FS_CLOSE, UserAddress(ARGS));
     assert.assert_true(fs.seek(fd, 0, SeekWhence::Set).is_err(), "the holder's close does");
 }

@@ -1,6 +1,7 @@
 namespace ssd;
 
 import mem from "@kernel/mm/mem.mln";
+import irq from "@kernel/arch/irq.mln";
 import { wfi_cpu } from "@kernel/arch/wfi.masm";
 import { Result } from "@std/core/result.mln";
 
@@ -34,9 +35,17 @@ export enum SsdError {
 
 /**
  * Waits for an in-flight SSD command to complete.
+ *
+ * Interrupts stay held while it waits. With them enabled, the completion's
+ * interrupt could be taken between reading BUSY and the WFI, which would then
+ * wait for an interrupt that had already come. Held, WFI does not stall (the
+ * CPU keeps reading STATUS), and the completion's interrupt is taken when they
+ * are restored.
  * @return Ok(DONE) after a completed transfer, or Err(DeviceError).
  */
 Result<SsdStatus, SsdError> wait_for_completion() {
+    bool was_enabled = irq.save_disable();
+    defer irq.restore(was_enabled);
     i32 status = mem.read_word(SSD_STATUS_ADDR);
     while (status == SsdStatus::BUSY) {
         wfi_cpu();

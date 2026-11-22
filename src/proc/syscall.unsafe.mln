@@ -40,7 +40,23 @@ i32 answer(Result<_, ProcessControlError> result) {
 }
 
 /**
+ * Checks a record's reply slot before the operation that fills it runs.
+ * @param caller Calling process.
+ * @param user_out The record's result_out user address.
+ * @return false when the slot is not the caller's to write.
+ */
+bool answerable<T>(Pid caller, T *user_out) {
+    return user_memory.writable(caller, UserAddress((i32)user_out), sizeof(T));
+}
+
+/**
  * Dispatches a process OS_CALL request and performs user-memory copies where needed.
+ *
+ * Each service checks every range its record names -- the record, its
+ * strings, result_out -- before it acts, and acts on none unless all are the
+ * caller's: a refused range makes the kernel answer BadAddress, so a spawn,
+ * reap or feed that cannot answer does not happen. The word returned then is
+ * never seen.
  *
  * @param caller Calling process: the parent of what it spawns, and the only
  *               process that may control those children.
@@ -52,9 +68,12 @@ i32 answer(Result<_, ProcessControlError> result) {
 export Result<i32, OsServiceError> handle(Pid caller, i32 service, UserAddress args) {
     if (service == OsService::PROC_SPAWN) {
         ProcSpawnArgs<Result<Pid, SpawnError>> request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        copy_in_text<64>(UserAddress((i32)request.path), request.path_length, &g_path);
-        copy_in_text<128>(UserAddress((i32)request.args), request.args_length, &g_args);
+        if (!user_memory.copy_in(caller, args, (char*)(&request), sizeof(request))
+            || !answerable<Result<Pid, SpawnError>>(caller, request.result_out)
+            || !copy_in_text<64>(caller, UserAddress((i32)request.path), request.path_length, &g_path)
+            || !copy_in_text<128>(caller, UserAddress((i32)request.args), request.args_length, &g_args)) {
+            return Ok(0);
+        }
         Result<Pid, SpawnError> result = console.spawn_file(Some(caller), g_path.as_str());
         case result of {
             Ok(pid) -> ({ proc_args.set(pid, g_args.as_str()); });
@@ -72,6 +91,7 @@ export Result<i32, OsServiceError> handle(Pid caller, i32 service, UserAddress a
             };
         }
         user_memory.copy_out(
+            caller,
             UserAddress((i32)request.result_out),
             (char*)(&result),
             sizeof(Result<Pid, SpawnError>)
@@ -80,19 +100,23 @@ export Result<i32, OsServiceError> handle(Pid caller, i32 service, UserAddress a
     }
     if (service == OsService::PROC_BIND) {
         ProcBindArgs request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
+        if (!user_memory.copy_in(caller, args, (char*)(&request), sizeof(request))) { return Ok(0); }
         return Ok(answer(console.bind(caller, Pid(request.pid), request.output_node)));
     }
     if (service == OsService::PROC_UNBIND) {
         ProcUnbindArgs request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
+        if (!user_memory.copy_in(caller, args, (char*)(&request), sizeof(request))) { return Ok(0); }
         return Ok(answer(console.unbind(caller, Pid(request.pid))));
     }
     if (service == OsService::PROC_EXITED) {
         ProcExitedArgs<Result<bool, ProcessControlError>> request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
+        if (!user_memory.copy_in(caller, args, (char*)(&request), sizeof(request))
+            || !answerable<Result<bool, ProcessControlError>>(caller, request.result_out)) {
+            return Ok(0);
+        }
         Result<bool, ProcessControlError> result = console.has_exited(caller, Pid(request.pid));
         user_memory.copy_out(
+            caller,
             UserAddress((i32)request.result_out),
             (char*)(&result),
             sizeof(Result<bool, ProcessControlError>)
@@ -101,9 +125,14 @@ export Result<i32, OsServiceError> handle(Pid caller, i32 service, UserAddress a
     }
     if (service == OsService::PROC_REAP) {
         ProcReapArgs<Result<ProcessExitStatus, ProcessControlError>> request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
+        // A reap frees the child's slot, so its status must have somewhere to go first.
+        if (!user_memory.copy_in(caller, args, (char*)(&request), sizeof(request))
+            || !answerable<Result<ProcessExitStatus, ProcessControlError>>(caller, request.result_out)) {
+            return Ok(0);
+        }
         Result<ProcessExitStatus, ProcessControlError> result = console.reap(caller, Pid(request.pid));
         user_memory.copy_out(
+            caller,
             UserAddress((i32)request.result_out),
             (char*)(&result),
             sizeof(Result<ProcessExitStatus, ProcessControlError>)
@@ -112,26 +141,33 @@ export Result<i32, OsServiceError> handle(Pid caller, i32 service, UserAddress a
     }
     if (service == OsService::PROC_FEED) {
         ProcFeedArgs request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        copy_in_text<128>(UserAddress((i32)request.line), request.line_length, &g_line);
+        if (!user_memory.copy_in(caller, args, (char*)(&request), sizeof(request))
+            || !copy_in_text<128>(caller, UserAddress((i32)request.line), request.line_length, &g_line)) {
+            return Ok(0);
+        }
         return Ok(answer(console.feed_line(caller, Pid(request.pid), g_line.as_str())));
     }
     if (service == OsService::PROC_ARGS) {
         ProcArgsArgs request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
+        if (!user_memory.copy_in(caller, args, (char*)(&request), sizeof(request))) { return Ok(0); }
         Text<128> given = proc_args.given_to(caller);
         str own = given.as_str();
         i32 length = own.length < request.capacity ? own.length : request.capacity;
-        if (length > 0) { user_memory.copy_out(UserAddress((i32)request.out), own.data, length); }
+        if (length > 0 && !user_memory.copy_out(caller, UserAddress((i32)request.out), own.data, length)) {
+            return Ok(0);
+        }
         return Ok(length);
     }
     if (service == OsService::PROC_STATS) {
         // It controls nothing, so it answers anyone, about every process.
         ProcStatsArgs request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
+        if (!user_memory.copy_in(caller, args, (char*)(&request), sizeof(request))
+            || !answerable<ProcStats>(caller, request.result_out)) {
+            return Ok(0);
+        }
         ProcStats result = ProcStats {};
         proc_stats.fill(&result);
-        user_memory.copy_out(UserAddress((i32)request.result_out), (char*)(&result), sizeof(ProcStats));
+        user_memory.copy_out(caller, UserAddress((i32)request.result_out), (char*)(&result), sizeof(ProcStats));
         return Ok(0);
     }
     return Err(OsServiceError::UnknownService(service));

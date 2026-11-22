@@ -4,6 +4,8 @@ import assert from "@std/testing/assert.mln";
 import { assert_eq } from "@std/testing/assert.mln";
 import allocator from "@std/memory/allocator.mln";
 import heap from "@kernel/mm/heap.mln";
+import mmu from "@kernel/mm/mmu.mln";
+import debug from "@kernel/debug/debug.mln";
 import process from "@kernel/kernel/process.mln";
 import scheduler from "@kernel/kernel/scheduler.mln";
 import request_channel from "@os/ipc/channel.mln";
@@ -15,11 +17,16 @@ import { UiOp } from "@contracts/myapp/ui.contract.mln";
 import { UserAddress } from "@std/core/address.mln";
 import { Option } from "@std/core/option.mln";
 import { Result } from "@std/core/result.mln";
+import test_user from "../user_process_support.mln";
 
 // What crosses the request gateway. The service task answers on the OS's own
 // copies, so an address the app wrote into its Request must never reach it.
+// The app's Request and its answer word sit in the app's own memory, as they
+// do for a real OS_CALL; the gateway refuses records anywhere else.
 
-i32 GUARD = 0x5A5A5A5A;
+i32 GUARD = 0x5A;         // what fills the memory result_out points at
+i32 ARGS = 0x7FFFC000;    // the app's Request
+i32 WORD = 0x7FFFC900;    // where REPLY puts the answer word
 
 void boot() {
     heap.init();
@@ -27,33 +34,38 @@ void boot() {
     desktop.init();
     request_channel.init();
     process.init();
+    i32 kernel_pd = case mmu.create_page_directory() of {
+        Some(value) -> value;
+        None -> ({ debug.panic("no page directory"); 0; });
+    };
+    case mmu.setup_identity_kernel_mapping(kernel_pd) of {
+        Ok(_) -> _;
+        Err(_) -> ({ debug.panic("no identity mapping"); });
+    };
     scheduler.init();
 }
 
-/*@Test "a result without a size is not written where the app pointed" { step: 20000000; }*/
+/*@Test "a result without a size is not written where the app pointed" { step: 120000000; }*/
 void a_result_without_a_size_is_not_written_where_the_app_pointed() {
     boot();
-    Pid app = process.reserve_process(None).ok().unwrap_or(Pid(0));
-    i32 guard[16];
-    i32 k = 0;
-    while (k < 16) { guard[k] = GUARD; k++; }
+    Pid app = test_user.spawn(None);
+    test_user.become(app);
+    i32 guard = test_user.kernel_bytes(64, GUARD);
 
     // CREATE_TIMER answers with a Result<NodeId, UiError>, but this Request
     // gives no size to copy it back with.
     Request ask = Request {
         domain: RequestDomain::UI, op: UiOp::CREATE_TIMER, owner: 0,
         a0: 1000, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0, s0: (char*)0, s1: (char*)0,
-        result_out: (i32)(&guard[0]), result_size: 0,
+        result_out: guard, result_size: 0,
         s0_len: 0, s1_len: 0,
     };
-    assert.assert_true(request_gateway.request(app, UserAddress((i32)(&ask))), "the request is queued");
+    test_user.put_bytes(app, ARGS, (char*)(&ask), sizeof(Request));
+    assert.assert_true(request_gateway.request(app, UserAddress(ARGS)), "the request is queued");
     assert.assert_true(request_channel.serve(), "the service answers it");
+    assert.assert_true(request_gateway.reply(app, UserAddress(WORD)), "the answer comes back");
     i32 status = -1;
-    assert.assert_true(request_gateway.reply(app, UserAddress((i32)(&status))), "the answer comes back");
+    test_user.get_bytes(app, WORD, (char*)(&status), 4);
     assert_eq<i32>(status, (i32)RequestStatus::MISSING_RESULT, "it is refused for want of a result");
-    k = 0;
-    while (k < 16) {
-        assert_eq<i32>(guard[k], GUARD, "and nothing was written where result_out pointed");
-        k++;
-    }
+    assert.assert_true(test_user.kernel_untouched(guard, 64, GUARD), "and nothing was written where result_out pointed");
 }

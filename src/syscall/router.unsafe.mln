@@ -29,7 +29,9 @@ Text<128> g_log_line;
  * Dispatches an OS_CALL request to the corresponding boundary endpoint.
  *
  * Routes IPC requests, filesystem calls, process lifecycle calls, and debug
- * logging based on the service identifier.
+ * logging based on the service identifier. Each endpoint reads and writes
+ * the caller's memory only through user_memory; a range it refuses makes the
+ * kernel answer BadAddress, whatever this returns.
  *
  * @param pid Process ID of the caller.
  * @param service Service code identifying the requested operation (OsService enum).
@@ -58,8 +60,10 @@ Result<i32, OsServiceError> handle(Pid pid, i32 service, UserAddress args) {
     }
     if (service == OsService::LOG) {
         LogArgs request;
-        user_memory.copy_in(args, (char*)(&request), sizeof(request));
-        copy_in_text<128>(UserAddress((i32)request.text), request.length, &g_log_line);
+        if (!user_memory.copy_in(pid, args, (char*)(&request), sizeof(request))
+            || !copy_in_text<128>(pid, UserAddress((i32)request.text), request.length, &g_log_line)) {
+            return Ok(0);
+        }
         debug.printf("[pid %d] ", (i32)pid);
         debug.println(g_log_line.as_str());
         return Ok(0);
